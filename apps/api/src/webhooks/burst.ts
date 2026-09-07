@@ -348,7 +348,11 @@ async function advance(runner: Runner): Promise<void> {
  */
 async function settle(runner: Runner): Promise<void> {
   const profile = SERVICE_PROFILES[runner.webhook.serviceCode as ServiceCode]
-  const deadline = runner.settlingSince! + profile.webhook.timeoutMs + SETTLE_GRACE_MS
+  // Ждать полный таймаут сервиса имеет смысл, когда серия дошла до конца сама.
+  // После явной остановки это лишнее: подвисшие доставки всё равно переведёт
+  // в no_response уборщик планировщика, а «Стоп» должен срабатывать сразу.
+  const patience = runner.stopping ? 0 : profile.webhook.timeoutMs
+  const deadline = runner.settlingSince! + patience + SETTLE_GRACE_MS
 
   const pending = await prisma.webhookDelivery.count({
     where: { burstId: runner.id, state: { in: ['queued', 'dispatched'] } },

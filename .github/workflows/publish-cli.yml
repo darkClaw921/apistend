@@ -34,7 +34,9 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
-      - run: pnpm install --frozen-lockfile
+      # Ставим только сам пакет и его зависимости: apps/api тянет за собой
+      # prisma generate, которому нужна база, а публикации CLI она ни к чему.
+      - run: pnpm install --frozen-lockfile --filter apistend...
 
       - name: Типы
         run: pnpm --filter apistend exec tsc --noEmit

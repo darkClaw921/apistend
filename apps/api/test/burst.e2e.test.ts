@@ -86,7 +86,9 @@ beforeEach(async () => {
   // Серия предыдущего кейса могла не успеть закончиться: остановим, иначе она
   // продолжит писать доставки к уже удалённому вебхуку.
   for (const b of liveBursts(sandboxId)) stopBurst(b.id)
-  await waitFor(() => liveBursts(sandboxId).length === 0, 5_000)
+  // С запасом: остановленная серия ещё пару секунд ждёт последние ответы,
+  // и на медленной машине CI пяти секунд не хватало.
+  await waitFor(() => liveBursts(sandboxId).length === 0, 20_000)
   await prisma.webhookDelivery.deleteMany({ where: { sandboxId } })
   await prisma.eventBurst.deleteMany({ where: { sandboxId } })
   await prisma.webhook.deleteMany({ where: { sandboxId } })
