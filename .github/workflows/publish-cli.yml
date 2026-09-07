@@ -38,11 +38,15 @@ jobs:
       # prisma generate, которому нужна база, а публикации CLI она ни к чему.
       - run: pnpm install --frozen-lockfile --filter apistend...
 
+      # Через `pnpm --filter … exec tsc --noEmit` флаг до tsc не доходит: pnpm
+      # съедает его сам и печатает справку компилятора. Работаем из каталога пакета.
       - name: Типы
-        run: pnpm --filter apistend exec tsc --noEmit
+        run: pnpm run typecheck
+        working-directory: packages/cli
 
       - name: Сборка
-        run: pnpm --filter apistend run build
+        run: pnpm run build
+        working-directory: packages/cli
 
       # Тег и version в package.json должны совпадать. Разошлись — публикация
       # молча выложит не ту версию, а тег в истории будет врать.
@@ -60,19 +64,21 @@ jobs:
       # Самая частая причина сломанной публикации — не то, что попало в tarball:
       # пропавший шебанг, забытый dist, лишние исходники.
       - name: Что уедет в npm
-        run: pnpm --filter apistend exec npm pack --dry-run
+        run: npm pack --dry-run
+        working-directory: packages/cli
 
       - name: Пакет запускается из tarball
         run: |
-          cd packages/cli
           npm pack
           mkdir -p /tmp/smoke && cd /tmp/smoke && npm init -y >/dev/null
           npm i "$GITHUB_WORKSPACE"/packages/cli/apistend-*.tgz
           ./node_modules/.bin/apistend --version
           ./node_modules/.bin/apistend trigger --help | grep -q -- '--rate'
+        working-directory: packages/cli
 
       - name: Публикация
         if: startsWith(github.ref, 'refs/tags/') || inputs.dry_run == false
-        run: pnpm --filter apistend exec npm publish --access public --provenance
+        run: npm publish --access public --provenance
+        working-directory: packages/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
