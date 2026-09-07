@@ -94,6 +94,13 @@ interface Runner {
 
 const runners = new Map<string, Runner>()
 let timer: NodeJS.Timeout | null = null
+/**
+ * Такт занят. setInterval не ждёт завершения предыдущего вызова: если запись пачки
+ * в базу заняла больше ста миллисекунд, следующий такт входит в advance параллельно,
+ * оба видят старое значение sent и отправляют лишнее. На медленной машине серия
+ * из 120 событий уходила в 140 — CI это и поймал.
+ */
+let ticking = false
 let logLine: (msg: string) => void = () => {}
 
 function clamp(value: number, min: number, max: number): number {
@@ -226,11 +233,21 @@ function ensureTimer(): void {
 }
 
 async function tick(): Promise<void> {
+  if (ticking) return
   if (runners.size === 0) {
     if (timer) clearInterval(timer)
     timer = null
     return
   }
+  ticking = true
+  try {
+    await advanceAll()
+  } finally {
+    ticking = false
+  }
+}
+
+async function advanceAll(): Promise<void> {
   for (const runner of [...runners.values()]) {
     try {
       await advance(runner)

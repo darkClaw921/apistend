@@ -258,7 +258,10 @@ describe('серии событий', () => {
       return b?.state === 'done'
     })
     const burst = await prisma.eventBurst.findFirst({ where: { sandboxId } })
+    // Ровно столько, сколько заказано: перебор означал бы, что такты расписания
+    // наложились друг на друга и оба посчитали одно и то же значение sent.
     expect(burst?.sent).toBe(120)
+    expect(hitsOn('/hooks/tally')).toHaveLength(120)
     expect(burst?.succeeded).toBe(120)
     expect(burst?.failed).toBe(0)
     expect(burst?.note).toContain('соб/с фактически')
