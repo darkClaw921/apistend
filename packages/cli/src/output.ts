@@ -15,6 +15,9 @@ export const stamp = (d = new Date()): string => {
 
 const write = (line: string) => process.stdout.write(`${line}\n`)
 
+/** Последняя напечатанная строка прогресса — чтобы не повторять её без терминала. */
+let lastProgressLine: string | null = null
+
 export const out = {
   banner(version: string, account: string, sandbox: string): void {
     write('')
@@ -56,11 +59,20 @@ export const out = {
     const pct = Math.round((sent / count) * 100)
     const rate = lagging ? pc.yellow(`${actualRate} соб/с`) : pc.green(`${actualRate} соб/с`)
     const line = `  ${String(pct).padStart(3)} %  ${sent}/${count}  ${rate} ${pc.dim(`из ${wanted}`)}${lagging ? pc.dim('  приложение не успевает') : ''}`
-    if (process.stdout.isTTY) process.stdout.write(`\r\u001b[2K${line}`)
-    else write(line)
+    if (process.stdout.isTTY) {
+      process.stdout.write(`\r\u001b[2K${line}`)
+      return
+    }
+    // Без терминала строку не перерисовать, она уходит новой. Опрос идёт дважды
+    // в секунду, и в конце серии, когда счётчик уже не растёт, в журнале
+    // копились одинаковые строки. Печатаем только то, что изменилось.
+    if (line === lastProgressLine) return
+    lastProgressLine = line
+    write(line)
   },
 
   burstDone(sent: number, count: number, succeeded: number, failed: number, note: string | null): void {
+    lastProgressLine = null
     if (process.stdout.isTTY) process.stdout.write('\r\u001b[2K')
     const mark = failed > 0 ? pc.yellow('!') : pc.green('>')
     write(`${mark} Серия завершена: отправлено ${sent} из ${count} ${pc.dim('·')} успешно ${pc.green(String(succeeded))} ${pc.dim('·')} ошибок ${failed > 0 ? pc.red(String(failed)) : '0'}`)

@@ -12,7 +12,7 @@ npx apistend listen --forward localhost:3000/webhooks
 ```
 
 ```
-  APIStend CLI 1.5.0
+  APIStend CLI 1.5.1
   Аккаунт: Интеграция 1С · песочница sandbox-01
 
 > Готов! Сессия tnl-8f21 · пересылка на http://localhost:3000/webhooks

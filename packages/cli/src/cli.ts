@@ -6,7 +6,7 @@ import { listen } from './listen.ts'
 import { out } from './output.ts'
 import { maskKey } from './mask.ts'
 
-const VERSION = '1.5.0'
+const VERSION = '1.5.1'
 
 const cli = cac('apistend')
 

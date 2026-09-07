@@ -1,6 +1,6 @@
 {
   "name": "apistend",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Демо-копии API Bitrix24, Ozon Seller и Wildberries: доставка вебхуков на localhost и работа с песочницей из терминала",
   "keywords": [
     "apistend",
