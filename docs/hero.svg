@@ -1,0 +1,176 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 344" width="880" height="344" role="img"
+     aria-label="APIStend: подмена базового адреса боевого API на адрес песочницы и доставка вебхуков на localhost">
+  <title>APIStend — демо-копии боевых API</title>
+  <desc>Запрос к api-seller.ozon.ru заменяется на localhost:8080/oz и возвращает тот же ответ. Событие вебхука уходит на localhost разработчика.</desc>
+
+  <style>
+    /* Цвета — токены проекта из design-handoff/tokens/tokens.css.
+       Панель тёмная намеренно: так герой одинаково читается и на светлой,
+       и на тёмной теме GitHub, без двух файлов и picture/source. */
+    .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .ui   { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .dim  { fill: #5C6A7A; }
+    .txt  { fill: #D5DCE6; }
+    .key  { fill: #7FB3FF; }
+    .str  { fill: #8FD69B; }
+    .num  { fill: #E5B86B; }
+    .acc  { fill: #3B54F5; }
+    .ok   { fill: #8FD69B; }
+    .label { font-size: 10px; letter-spacing: 1.4px; fill: #5C6A7A; }
+
+    /* Один восьмисекундный такт на всё: элементы делят его процентами,
+       поэтому сцена не расползается при смене длительности. */
+    .beat { animation-duration: 8s; animation-iteration-count: infinite; animation-timing-function: ease-out; }
+
+    .real     { animation-name: real; }
+    .strike   { animation-name: strike; }
+    .swapped  { animation-name: swapped; opacity: 0; }
+    .caret    { animation-name: caret; animation-timing-function: steps(1, end); }
+    .answer   { animation-name: answer; opacity: 0; }
+    .hookline { animation-name: hookline; opacity: 0; }
+    .packet   { animation-name: packet; opacity: 0; }
+    .arrived  { animation-name: arrived; opacity: 0; }
+    .hookname { animation-name: hookname; opacity: 0; }
+
+    @keyframes real {
+      0%, 2% { opacity: 0; transform: translateY(4px); }
+      6%, 22% { opacity: 1; transform: translateY(0); }
+      30%, 94% { opacity: .38; transform: translateY(0); }
+      100% { opacity: 0; }
+    }
+    @keyframes strike {
+      0%, 18% { stroke-dashoffset: 219; }
+      26%, 94% { stroke-dashoffset: 0; }
+      100% { stroke-dashoffset: 219; }
+    }
+    @keyframes swapped {
+      0%, 24% { opacity: 0; transform: translateY(6px); }
+      30%, 94% { opacity: 1; transform: translateY(0); }
+      100% { opacity: 0; }
+    }
+    @keyframes caret {
+      0%, 28% { opacity: 0; }
+      30%, 36% { opacity: 1; }
+      38%, 44% { opacity: 0; }
+      46%, 52% { opacity: 1; }
+      54%, 100% { opacity: 0; }
+    }
+    @keyframes answer {
+      0%, 36% { opacity: 0; transform: translateY(6px); }
+      42%, 94% { opacity: 1; transform: translateY(0); }
+      100% { opacity: 0; }
+    }
+    @keyframes hookline {
+      0%, 48% { opacity: 0; }
+      54%, 94% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+    @keyframes packet {
+      0%, 54% { opacity: 0; transform: translateX(0); }
+      57% { opacity: 1; transform: translateX(0); }
+      74% { opacity: 1; transform: translateX(392px); }
+      78%, 100% { opacity: 0; transform: translateX(392px); }
+    }
+    @keyframes hookname {
+      0%, 55% { opacity: 0; }
+      60%, 72% { opacity: 1; }
+      78%, 100% { opacity: 0; }
+    }
+    @keyframes arrived {
+      0%, 73% { opacity: 0; }
+      78%, 94% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    /* Кому анимация мешает — тот видит финальный кадр, а не мигание. */
+    @media (prefers-reduced-motion: reduce) {
+      .beat { animation: none !important; opacity: 1 !important; transform: none !important; }
+      .real { opacity: .38 !important; }
+      .strike { stroke-dashoffset: 0 !important; }
+      .packet { transform: translateX(392px) !important; }
+      .caret { opacity: 0 !important; }
+    }
+  </style>
+
+  <rect width="880" height="344" rx="14" fill="#0D1218"/>
+  <rect x=".5" y=".5" width="879" height="343" rx="13.5" fill="none" stroke="#1E2733"/>
+
+  <!-- Шапка -->
+  <g class="ui">
+    <rect x="28" y="21" width="22" height="22" rx="6" fill="#3B54F5"/>
+    <path d="M34.5 37.5 L39 26.5 L43.5 37.5 M36.2 34 H41.8" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="60" y="30" font-size="14" font-weight="700" fill="#FFFFFF">APIStend</text>
+    <text x="60" y="43" font-size="11" class="dim">демо-копии боевых API для интеграций</text>
+
+    <g transform="translate(0 26)">
+      <circle cx="700" cy="6" r="9" fill="#1FA9E0"/><text x="700" y="9.5" font-size="9" font-weight="700" fill="#fff" text-anchor="middle">B</text>
+      <circle cx="726" cy="6" r="9" fill="#005BFF"/><text x="726" y="9.5" font-size="9" font-weight="700" fill="#fff" text-anchor="middle">O</text>
+      <circle cx="752" cy="6" r="9" fill="#A4139E"/><text x="752" y="9.5" font-size="9" font-weight="700" fill="#fff" text-anchor="middle">W</text>
+      <text x="852" y="10" font-size="11" class="dim" text-anchor="end">2&#8239;421 метод</text>
+    </g>
+  </g>
+  <line x1="0" y1="64" x2="880" y2="64" stroke="#1E2733"/>
+
+  <!-- Подмена адреса -->
+  <text x="28" y="92" class="ui label">ПОДМЕНА БАЗОВОГО АДРЕСА</text>
+
+  <g class="beat real">
+    <text x="28" y="124" class="mono" font-size="14">
+      <tspan class="dim">$ curl </tspan><tspan class="txt">https://api-seller.ozon.ru</tspan><tspan class="dim">/v3/posting/fbs/list</tspan>
+    </text>
+    <line class="beat strike" x1="87" y1="119.5" x2="306" y2="119.5"
+          stroke="#C22B2B" stroke-width="1.6" stroke-linecap="round"
+          stroke-dasharray="219" stroke-dashoffset="219"/>
+  </g>
+
+  <g class="beat swapped">
+    <text x="28" y="156" class="mono" font-size="14">
+      <tspan class="dim">$ curl </tspan><tspan class="acc" font-weight="700">http://localhost:8080/oz</tspan><tspan class="txt">/v3/posting/fbs/list</tspan>
+    </text>
+    <rect class="beat caret" x="450" y="145" width="8" height="14" fill="#3B54F5"/>
+  </g>
+
+  <!-- Ответ -->
+  <g class="beat answer">
+    <rect x="28" y="174" width="824" height="76" rx="10" fill="#151C25" stroke="#1E2733"/>
+    <text x="46" y="200" class="mono" font-size="13">
+      <tspan class="dim">{</tspan> <tspan class="key">"result"</tspan><tspan class="dim">: {</tspan> <tspan class="key">"postings"</tspan><tspan class="dim">: [{</tspan> <tspan class="key">"posting_number"</tspan><tspan class="dim">:</tspan> <tspan class="str">"24219500-0020-1"</tspan><tspan class="dim">,</tspan>
+    </text>
+    <text x="46" y="222" class="mono" font-size="13">
+      <tspan class="key">"status"</tspan><tspan class="dim">:</tspan> <tspan class="str">"awaiting_packaging"</tspan><tspan class="dim">,</tspan> <tspan class="key">"sku"</tspan><tspan class="dim">:</tspan> <tspan class="num">1600000000</tspan> <tspan class="dim">}] } }</tspan>
+    </text>
+    <g transform="translate(616 186)">
+      <rect width="46" height="20" rx="10" fill="#14804A" opacity=".22"/>
+      <text x="23" y="14" class="mono ok" font-size="11" font-weight="700" text-anchor="middle">200</text>
+      <text x="58" y="14" class="mono dim" font-size="11">41 мс · схема из спеки</text>
+    </g>
+  </g>
+
+  <!-- Вебхуки -->
+  <text x="28" y="286" class="ui label">ВЕБХУКИ ПРИХОДЯТ НА ВАШУ МАШИНУ</text>
+
+  <g class="beat hookline">
+    <rect x="28" y="298" width="104" height="30" rx="8" fill="#151C25" stroke="#2A3646"/>
+    <text x="80" y="317" class="mono txt" font-size="11" text-anchor="middle">APIStend</text>
+
+    <line x1="144" y1="313" x2="548" y2="313" stroke="#2A3646" stroke-width="1.5" stroke-dasharray="4 5"/>
+    <path d="M544 309 L552 313 L544 317 Z" fill="#2A3646"/>
+
+    <text x="346" y="303" class="mono dim beat hookname" font-size="11" text-anchor="middle">ONCRMDEALUPDATE</text>
+
+    <rect x="562" y="298" width="290" height="30" rx="8" fill="#151C25" stroke="#2A3646"/>
+    <text x="578" y="317" class="mono" font-size="11">
+      <tspan class="dim">localhost:3000</tspan><tspan class="acc" font-weight="700">/webhooks/bitrix/deal</tspan>
+    </text>
+
+    <g class="beat arrived">
+      <rect x="561" y="297" width="292" height="32" rx="9" fill="none" stroke="#14804A" stroke-width="1.5"/>
+      <text x="836" y="317" class="mono ok" font-size="11" text-anchor="end">200</text>
+    </g>
+  </g>
+
+  <g class="beat packet">
+    <circle cx="152" cy="313" r="4.5" fill="#3B54F5"/>
+    <circle cx="152" cy="313" r="8" fill="#3B54F5" opacity=".22"/>
+  </g>
+</svg>
