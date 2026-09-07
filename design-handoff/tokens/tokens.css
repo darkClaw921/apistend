@@ -1,0 +1,127 @@
+/* APIStend — дизайн-токены.
+   Источник: APIStend.pen (переменные документа). Не редактируйте значения вручную —
+   при изменении макета обновляйте этот файл целиком.
+
+   Вариант A (любой стек): подключите файл и используйте var(--color-accent).
+   Вариант B (Tailwind v4): блок @theme ниже уже даёт утилиты bg-accent, text-primary и т.д. */
+
+:root {
+  /* Поверхности */
+  --color-bg: #F6F7F9;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #F1F3F7;
+  --color-surface-3: #E9ECF2;
+
+  /* Навигация (тёмная) */
+  --color-nav-bg: #0D1218;
+  --color-nav-bg-2: #161D26;
+  --color-nav-text: #9AA6B6;
+  --color-nav-text-active: #FFFFFF;
+
+  /* Границы */
+  --color-border: #E4E8EE;
+  --color-border-strong: #CDD5E0;
+
+  /* Текст */
+  --color-text-primary: #0D1218;
+  --color-text-secondary: #5A6675;
+  --color-text-tertiary: #8B96A5;
+
+  /* Акцент */
+  --color-accent: #3B54F5;
+  --color-accent-hover: #2A41D6;
+  --color-accent-soft: #ECEFFE;
+
+  /* Статусы */
+  --color-success: #14804A;
+  --color-success-soft: #E4F5EC;
+  --color-warning: #B26205;
+  --color-warning-soft: #FCF0DF;
+  --color-danger: #C22B2B;
+  --color-danger-soft: #FBEAEA;
+  --color-info: #0B7FA8;
+  --color-info-soft: #E2F2F8;
+
+  /* Код и терминалы */
+  --color-code-bg: #0D1218;
+  --color-code-surface: #151C25;
+  --color-code-text: #D5DCE6;
+  --color-code-key: #7FB3FF;
+  --color-code-string: #8FD69B;
+  --color-code-number: #E5B86B;
+  --color-code-muted: #5C6A7A;
+  --color-code-template: #C79BF2;
+
+  /* Бренды сервисов (только для точек, логотипов и акцентов сервиса) */
+  --color-brand-bitrix: #1FA9E0;
+  --color-brand-ozon: #005BFF;
+  --color-brand-wb: #A4139E;
+
+  /* Шрифты */
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Радиусы */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 20px;
+
+  /* Шкала отступов */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Каркас приложения */
+  --layout-sidebar: 248px;
+  --layout-topbar: 64px;
+  --layout-content-padding: 24px;
+}
+
+/* ——— Tailwind v4: токены как утилиты ——— */
+@theme {
+  --color-bg: #F6F7F9;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #F1F3F7;
+  --color-surface-3: #E9ECF2;
+  --color-nav-bg: #0D1218;
+  --color-nav-bg-2: #161D26;
+  --color-nav-text: #9AA6B6;
+  --color-border: #E4E8EE;
+  --color-border-strong: #CDD5E0;
+  --color-text-primary: #0D1218;
+  --color-text-secondary: #5A6675;
+  --color-text-tertiary: #8B96A5;
+  --color-accent: #3B54F5;
+  --color-accent-hover: #2A41D6;
+  --color-accent-soft: #ECEFFE;
+  --color-success: #14804A;
+  --color-success-soft: #E4F5EC;
+  --color-warning: #B26205;
+  --color-warning-soft: #FCF0DF;
+  --color-danger: #C22B2B;
+  --color-danger-soft: #FBEAEA;
+  --color-info: #0B7FA8;
+  --color-info-soft: #E2F2F8;
+  --color-code-bg: #0D1218;
+  --color-code-surface: #151C25;
+  --color-code-text: #D5DCE6;
+  --color-code-key: #7FB3FF;
+  --color-code-string: #8FD69B;
+  --color-code-number: #E5B86B;
+  --color-code-muted: #5C6A7A;
+  --color-code-template: #C79BF2;
+  --color-brand-bitrix: #1FA9E0;
+  --color-brand-ozon: #005BFF;
+  --color-brand-wb: #A4139E;
+
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+}

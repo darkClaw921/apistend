@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      tailwind = { config: { corePlugins: { preflight: false } } };
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter%3Awght%40100..900&family=JetBrains+Mono%3Awght%40100..800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      *, ::before, ::after {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body style="background-color: #F1F3F7">
+    <div
+      data-pencil-name="Components"
+      class="box-border w-fit h-fit flex flex-row gap-[40px] p-[40px] justify-start items-center bg-[#F1F3F7] [outline:1px_solid_#E4E8EE] [outline-offset:-0.5px] rounded-[14px]"
+    >
+      <div
+        data-pencil-name="Button Primary"
+        class="box-border w-fit shrink-0 h-fit flex flex-row gap-[8px] p-[10px_16px] justify-start items-center bg-[#3B54F5] rounded-[6px]"
+      >
+        <div
+          data-pencil-name="Label"
+          class="text-[13px]/[normal] box-border text-[#FFFFFF] font-[Inter,system-ui,sans-serif] font-semibold text-left [white-space:nowrap]"
+        >
+          Отправить запрос
+        </div>
+      </div>
+      <div
+        data-pencil-name="Button Secondary"
+        class="box-border w-fit shrink-0 h-fit flex flex-row gap-[8px] p-[9px_15px] justify-start items-center bg-[#FFFFFF] [outline:1px_solid_#CDD5E0] [outline-offset:-0.5px] rounded-[6px]"
+      >
+        <div
+          data-pencil-name="Label"
+          class="text-[13px]/[normal] box-border text-[#0D1218] font-[Inter,system-ui,sans-serif] font-medium text-left [white-space:nowrap]"
+        >
+          Документация
+        </div>
+      </div>
+      <div
+        data-pencil-name="Method Badge"
+        class="box-border w-fit shrink-0 h-fit flex flex-row gap-0 p-[3px_7px] justify-center items-center bg-[#E4F5EC] rounded-[4px]"
+      >
+        <div
+          data-pencil-name="Method"
+          class="text-[11px]/[normal] box-border text-[#14804A] font-['JetBrains_Mono',system-ui,sans-serif] font-bold tracking-[0.4px] text-left [white-space:nowrap]"
+        >
+          GET
+        </div>
+      </div>
+      <div
+        data-pencil-name="Status Chip"
+        class="box-border w-fit shrink-0 h-fit flex flex-row gap-[6px] p-[4px_10px] justify-start items-center bg-[#E4F5EC] rounded-[20px]"
+      >
+        <div
+          data-pencil-name="Dot"
+          class="box-border w-[6px] shrink-0 h-[6px] bg-[#14804A] rounded-full"
+        ></div>
+        <div
+          data-pencil-name="Label"
+          class="text-[12px]/[normal] box-border text-[#14804A] font-[Inter,system-ui,sans-serif] font-medium text-left [white-space:nowrap]"
+        >
+          Работает
+        </div>
+      </div>
+      <div
+        data-pencil-name="Search Field"
+        class="box-border w-[280px] shrink-0 h-fit flex flex-row gap-[8px] p-[8px_12px] justify-start items-center bg-[#FFFFFF] [outline:1px_solid_#E4E8EE] [outline-offset:-0.5px] rounded-[6px]"
+      >
+        <svg
+          data-pencil-name="Search Icon"
+          data-icon-name="search"
+          data-icon-set="lucide"
+          viewBox="0 0 13.99993896484375 14"
+          preserveAspectRatio="xMidYMid meet"
+          xmlns="http://www.w3.org/2000/svg"
+          class="box-border w-[15px] shrink-0 h-[15px]"
+        >
+          <path
+            d="M6.00537 1.17578q-0.04102 0.01367-0.23584 0.02734-0.57422 0.07178-1.16211 0.29053-0.58789 0.21533-1.09375 0.5503-0.39307 0.2666-0.74853 0.61181-0.35547 0.3418-0.62207 0.7041-0.646 0.92285-0.86817 2.03028-0.05811 0.28027-0.07861 0.46142-0.02051 0.18115-0.02051 0.57422 0 0.43408 0.02734 0.68018 0.02734 0.24268 0.12647 0.59472 0.19482 0.75537 0.60156 1.43555 0.40674 0.67676 0.96729 1.18262 0.40674 0.3623 0.81689 0.60156 0.41357 0.23926 0.91944 0.43408 1.06299 0.39307 2.21826 0.29395 1.15527-0.09912 2.1499-0.65967 0.12646-0.06836 0.33496-0.2085 0.2085-0.14014 0.29395-0.21191l0.05468-0.05469 1.10743 1.10742q1.12109 1.104 1.20312 1.15528 0.08545 0.04785 0.23926 0.04785 0.15381 0 0.23584-0.03418 0.08545-0.0376 0.18115-0.1333 0.09912-0.09912 0.1333-0.18115 0.0376-0.08545 0.0376-0.23926 0-0.15381-0.05127-0.23584-0.04785-0.08545-1.15186-1.20654l-1.10742-1.10743 0.05469-0.06836q0.05811-0.05469 0.19824-0.25293 0.82373-1.23047 0.89209-2.70703 0.07178-1.47656-0.63916-2.76513-0.5332-0.96729-1.42187-1.64405-0.88867-0.68018-1.95508-0.9331-0.29395-0.06836-0.54004-0.09571-0.24268-0.03076-0.60498-0.04443-0.43408 0-0.49219 0z m0.7417 1.17578q0.37939 0.01367 0.79297 0.14014 0.41357 0.12646 0.78955 0.32129 0.7417 0.39307 1.28857 1.08008 0.54687 0.68359 0.75538 1.49707 0.07178 0.28027 0.09228 0.49902 0.02051 0.21533 0.02051 0.50928 0 0.70068-0.19483 1.30224-0.39307 1.16211-1.33984 1.91065-0.94336 0.74853-2.16016 0.875-0.19824 0.01367-0.49218 0.00683-0.29395-0.00684-0.48877-0.03418-0.5332-0.08545-1.03907-0.30761-0.50244-0.22559-0.93652-0.56055-0.14014-0.12646-0.35205-0.3418-0.2085-0.21875-0.33154-0.37256-0.57422-0.76904-0.7417-1.69531-0.08545-0.43408-0.06494-0.90918 0.02051-0.4751 0.11963-0.89551 0.29395-1.14844 1.18945-1.95849 0.89551-0.81348 2.05762-1.02539 0.18115-0.02734 0.42041-0.04102 0.23926-0.01367 0.34863-0.01367l0.2666 0.01367z"
+            fill="#8B96A5"
+          ></path>
+        </svg>
+        <div
+          data-pencil-name="Placeholder"
+          class="text-[13px]/[normal] box-border text-[#8B96A5] font-[Inter,system-ui,sans-serif] font-normal text-left [white-space:nowrap]"
+        >
+          Поиск по методам API
+        </div>
+      </div>
+      <div
+        data-pencil-name="Panel Card"
+        class="box-border w-[260px] shrink-0 h-fit flex flex-col gap-[12px] p-[20px] justify-start items-start bg-[#FFFFFF] [outline:1px_solid_#E4E8EE] [outline-offset:-0.5px] rounded-[10px]"
+      >
+        <div
+          data-pencil-name="Card Title"
+          class="text-[14px]/[normal] box-border w-full text-[#0D1218] font-[Inter,system-ui,sans-serif] font-semibold text-left"
+        >
+          Заголовок панели
+        </div>
+        <div
+          data-pencil-name="Card Body"
+          class="text-[13px]/[20px] box-border w-full text-[#5A6675] font-[Inter,system-ui,sans-serif] font-normal text-left"
+        >
+          Описание содержимого панели
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,192 @@
+import type { FastifyInstance } from 'fastify'
+import { z } from 'zod'
+import { SCENARIOS, SERVICE_CODES, SERVICE_PROFILES } from '@apistend/shared'
+import { prisma } from '../db.ts'
+import { requireSandbox } from '../lib/guard.ts'
+import { engine } from '../gateway.ts'
+import { requestId as newRequestId } from '../lib/ids.ts'
+import { enqueueRequestLog } from '../lib/log-buffer.ts'
+import { checkRateLimit } from '../lib/rate-limit.ts'
+import { env } from '../env.ts'
+
+/**
+ * Консоль запросов — серверный прокси.
+ *
+ * Браузерная консоль НЕ ходит в мок напрямую. Причина продуктовая, а не техническая:
+ * боевой Ozon с 16.05.2025 запрещает запросы из браузера, а WB не отдаёт CORS вовсе.
+ * Если бы мок повторял это поведение буквально, собственная консоль APIStend перестала бы
+ * работать. Прокси снимает конфликт и попутно даёт то, что нарисовано в панели деталей
+ * лога: IP клиента и полный боевой URL.
+ *
+ * Произвольный URL сюда передать нельзя — только сервис и путь. Иначе эндпоинт
+ * превратился бы в открытый SSRF-прокси.
+ */
+
+const executeBody = z.object({
+  serviceCode: z.enum(SERVICE_CODES),
+  httpMethod: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']),
+  path: z.string().min(1).max(2_000).startsWith('/', 'Путь должен начинаться со слэша'),
+  query: z.record(z.string(), z.string()).default({}),
+  headers: z.record(z.string(), z.string()).default({}),
+  body: z.unknown().optional(),
+  scenario: z.enum(SCENARIOS).default('success'),
+  apiKeyId: z.string().optional(),
+  delayMs: z.number().int().min(0).max(3_000).optional(),
+})
+
+export function registerConsoleRoutes(app: FastifyInstance): void {
+  app.post('/api/console/execute', async (req, reply) => {
+    const ctx = await requireSandbox(req, reply)
+    if (!ctx) return
+
+    const parsed = executeBody.safeParse(req.body)
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'VALIDATION', issues: parsed.error.issues.map((i) => i.message) })
+    }
+    const input = parsed.data
+
+    // Ключ выбирается с учётом прав: у ключей песочницы разный набор сервисов,
+    // и брать просто первый по дате — значит ловить 400 на ровном месте.
+    // Явно выбранный пользователем ключ уважаем как есть.
+    const apiKey = input.apiKeyId
+      ? await prisma.apiKey.findFirst({ where: { id: input.apiKeyId, sandboxId: ctx.sandbox.id } })
+      : await prisma.apiKey.findFirst({
+          where: {
+            sandboxId: ctx.sandbox.id,
+            status: { not: 'revoked' },
+            kind: 'sandbox',
+            services: { has: input.serviceCode },
+          },
+          orderBy: { createdAt: 'asc' },
+        })
+
+    if (!apiKey) {
+      const anyKey = await prisma.apiKey.findFirst({
+        where: { sandboxId: ctx.sandbox.id, status: { not: 'revoked' }, kind: 'sandbox' },
+      })
+      return reply.code(400).send({
+        error: anyKey ? 'NO_KEY_FOR_SERVICE' : 'NO_KEY',
+        message: anyKey
+          ? `Ни один ключ песочницы не открыт для сервиса ${SERVICE_PROFILES[input.serviceCode].title}. Добавьте сервис ключу или создайте новый.`
+          : 'Нет активного ключа песочницы. Создайте ключ.',
+      })
+    }
+    if (!apiKey.services.includes(input.serviceCode)) {
+      return reply.code(400).send({
+        error: 'KEY_SCOPE',
+        message: `Ключ «${apiKey.name}» не даёт доступ к сервису ${SERVICE_PROFILES[input.serviceCode].title}`,
+      })
+    }
+
+    const reqId = newRequestId()
+    const startedAt = process.hrtime.bigint()
+
+    const rate = checkRateLimit(apiKey.id, input.serviceCode, Date.now())
+    const scenario = rate.allowed ? input.scenario : 'rate_limit'
+
+    // Таймаут показываем сразу, не занимая соединение на 30 секунд:
+    // консоль обязана оставаться отзывчивой.
+    if (scenario === 'timeout') {
+      return reply.send({
+        requestId: reqId,
+        status: 504,
+        statusText: 'Ответ дольше 30 секунд',
+        durationMs: 30_000,
+        sizeBytes: 0,
+        headers: {},
+        body: null,
+        scenario,
+        simulated: true,
+        note: 'Сценарий «Таймаут 30 с»: боевой сервис оборвал бы соединение по времени ожидания',
+      })
+    }
+
+    const result = engine.handle({
+      service: input.serviceCode,
+      httpMethod: input.httpMethod,
+      path: input.path,
+      query: input.query,
+      headers: input.headers,
+      body: input.body ?? null,
+      requestId: reqId,
+      scenario,
+      now: new Date(),
+      salt: ctx.sandbox.dataVolume,
+    })
+
+    const delay = input.delayMs ?? Math.min(ctx.sandbox.latencyMs, result.latencyMs)
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay))
+
+    const payload = result.serialized
+    const durationMs = Math.round(Number(process.hrtime.bigint() - startedAt) / 1_000_000)
+    const upstreamUrl = result.method ? `${result.method.upstreamHost}${input.path}` : null
+
+    enqueueRequestLog({
+      sandboxId: ctx.sandbox.id,
+      apiKeyId: apiKey.id,
+      publicId: reqId,
+      serviceCode: input.serviceCode,
+      httpMethod: input.httpMethod,
+      endpoint: input.path,
+      statusCode: result.status,
+      durationMs,
+      sizeBytes: Buffer.byteLength(payload),
+      upstreamUrl,
+      clientIp: req.ip,
+      scenario,
+      responseSource: result.responseSource,
+      requestHeaders: input.headers,
+      requestBody: input.body ? JSON.stringify(input.body).slice(0, 8_000) : null,
+      responseHeaders: result.headers,
+      // См. комментарий в gateway.ts: детерминированные тела не храним.
+      responseBody: result.responseSource === 'error' ? payload.slice(0, 8_000) : null,
+    })
+
+    return reply.send({
+      requestId: reqId,
+      status: result.status,
+      durationMs,
+      sizeBytes: Buffer.byteLength(payload),
+      headers: result.headers,
+      body: result.body,
+      scenario,
+      responseSource: result.responseSource,
+      readiness: result.method?.readiness ?? null,
+      upstreamUrl,
+      method: result.method
+        ? { id: result.method.id, title: result.method.title, group: result.method.group }
+        : null,
+      curl: buildCurl(input, apiKey.prefix, scenario),
+    })
+  })
+}
+
+/** Превью cURL из макета: показывает ровно тот запрос, который уйдёт из кода пользователя. */
+function buildCurl(
+  input: z.infer<typeof executeBody>,
+  keyPrefix: string,
+  scenario: string,
+): string {
+  const profile = SERVICE_PROFILES[input.serviceCode]
+  const qs = new URLSearchParams(input.query).toString()
+  const url = `${env.publicOrigin}${profile.mountPath}${input.path}${qs ? `?${qs}` : ''}`
+
+  const lines = [`curl -X ${input.httpMethod} \\`, `  '${url}' \\`]
+  if (scenario !== 'success') lines.push(`  -H 'X-Mock-Scenario: ${scenario}' \\`)
+
+  // Заголовок авторизации показываем в родном для сервиса виде.
+  if (input.serviceCode === 'ozon') {
+    lines.push(`  -H 'Client-Id: 123456' \\`, `  -H 'Api-Key: ${keyPrefix}…' \\`)
+  } else if (input.serviceCode === 'wildberries') {
+    lines.push(`  -H 'Authorization: ${keyPrefix}…' \\`)
+  } else {
+    lines.push(`  -H 'X-Mock-Key: ${keyPrefix}…' \\`)
+  }
+
+  if (input.body !== undefined && input.httpMethod !== 'GET') {
+    lines.push(`  -H 'Content-Type: application/json' \\`, `  -d '${JSON.stringify(input.body)}'`)
+  } else {
+    lines[lines.length - 1] = lines[lines.length - 1]!.replace(/ \\$/, '')
+  }
+  return lines.join('\n')
+}

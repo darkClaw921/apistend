@@ -1,0 +1,14 @@
+{
+  "name": "@apistend/catalog-ingest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "ingest": "node --experimental-strip-types src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": { "@apistend/shared": "workspace:*", "yaml": "^2.9.0" },
+  "devDependencies": { "@types/node": "^26.4.1", "typescript": "^7.0.2", "vitest": "^5.0.0" }
+}

@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    # Тесты apps/api сквозные: поднимают настоящий сервер, настоящий CLI
+    # и фейковое приложение. База нужна по-настоящему, мокать её нечем.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: apistend
+          POSTGRES_PASSWORD: apistend
+          POSTGRES_DB: apistend
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U apistend"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://apistend:apistend@localhost:5433/apistend?schema=public
+      JWT_SECRET: ci-only-not-a-secret-0000000000000000000000=
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Схема базы
+        run: pnpm --filter @apistend/api exec prisma migrate deploy
+
+      - name: Клиент Prisma
+        run: pnpm --filter @apistend/api exec prisma generate
+
+      # Каталог методов лежит в репозитории собранным: ингест Bitrix24 требует
+      # 84 МБ документации и полутора тысяч запросов к сайту документации,
+      # и в CI ему делать нечего.
+      - name: Типы
+        run: pnpm -w typecheck
+
+      - name: Тесты
+        run: pnpm -w test

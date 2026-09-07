@@ -1,0 +1,11 @@
+{
+  "service": "ozon",
+  "sourceUrl": "https://docs.ozon.ru/api/seller/",
+  "mirrorUrl": "https://github.com/PCDCK/ozon-mcp",
+  "mirrorLicense": "MIT",
+  "specLicense": null,
+  "snapshotDate": "2026-04-16",
+  "mirrorMethodCount": 420,
+  "liveMethodCount": 467,
+  "note": "Официальный docs.ozon.ru закрыт JS-антиботом. Зеркало отстаёт от живой спеки: 420 методов против 467 живых. Разница закрывается браузерным воркером — задача вне критического пути."
+}

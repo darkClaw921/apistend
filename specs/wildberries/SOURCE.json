@@ -1,0 +1,9 @@
+{
+  "service": "wildberries",
+  "sourceUrl": "https://dev.wildberries.ru/api/swagger/yaml/ru/",
+  "mirrorUrl": "https://github.com/eslazarev/wildberries-sdk/tree/main/specs",
+  "mirrorLicense": "MIT",
+  "specLicense": null,
+  "snapshotDate": "2026-09-07",
+  "note": "Официальный dev.wildberries.ru отдаёт HTTP 498 (антибот). Зеркало обновляется ежедневно кроном. Файл 05-orders-dbs.yaml исключён как дубль 05-dbs.yaml."
+}

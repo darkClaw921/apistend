@@ -1,0 +1,74 @@
+{
+  "name": "apistend",
+  "version": "1.5.0",
+  "description": "Демо-копии API Bitrix24, Ozon Seller и Wildberries: доставка вебхуков на localhost и работа с песочницей из терминала",
+  "keywords": [
+    "apistend",
+    "webhook",
+    "mock",
+    "bitrix24",
+    "ozon",
+    "wildberries",
+    "localhost",
+    "tunnel",
+    "integration-testing",
+    "load-testing"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/darkClaw921/apistend/tree/main/packages/cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/darkClaw921/apistend.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/darkClaw921/apistend/issues"
+  },
+  "type": "module",
+  "bin": {
+    "apistend": "./dist/cli.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.10"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "cac": "^7.0.0",
+    "picocolors": "^1.1.1",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@apistend/shared": "workspace:*",
+    "@types/node": "^26.4.1",
+    "@types/ws": "^8.18.1",
+    "tsdown": "^0.23.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

@@ -1,0 +1,250 @@
+/**
+ * Профили трёх демо-сервисов.
+ *
+ * Значения не выдуманы: сняты с официальной документации и живых ответов боевых API
+ * (см. план проекта, раздел «Что изменило постановку задачи»). Профиль — единственное место,
+ * где живут отличия сервисов друг от друга: конверт ошибки, схема лимитов, политика доставки
+ * событий. Резолвер моков и диспетчер вебхуков не знают про сервисы ничего, кроме профиля.
+ */
+
+export const SERVICE_CODES = ['bitrix24', 'ozon', 'wildberries'] as const
+export type ServiceCode = (typeof SERVICE_CODES)[number]
+
+export function isServiceCode(v: unknown): v is ServiceCode {
+  return typeof v === 'string' && (SERVICE_CODES as readonly string[]).includes(v)
+}
+
+/** Сценарий ответа, переключается заголовком X-Mock-Scenario. */
+export const SCENARIOS = ['success', 'invalid_token', 'not_found', 'rate_limit', 'server_error', 'timeout'] as const
+export type Scenario = (typeof SCENARIOS)[number]
+
+/** Готовность мока — колонка «Мок» на экране «Каталог API». */
+export const READINESS = ['ready', 'updating', 'planned'] as const
+export type Readiness = (typeof READINESS)[number]
+
+/** Откуда взят ответ. Уходит в заголовок X-APIStend-Source. */
+export const RESPONSE_SOURCES = ['example', 'schema', 'generic'] as const
+export type ResponseSource = (typeof RESPONSE_SOURCES)[number]
+
+/** Как метод попал в каталог. Нужен, чтобы не выдавать снимок за живую спеку. */
+export const EXTRACTION_KINDS = ['spec', 'mirror', 'parsed'] as const
+export type ExtractionKind = (typeof EXTRACTION_KINDS)[number]
+
+export interface RateLimitProfile {
+  /** Сколько запросов в окне. */
+  readonly limit: number
+  /** Длина окна в миллисекундах. */
+  readonly windowMs: number
+  /** HTTP-код при превышении. У Bitrix24 это 503, а не 429 — частая ошибка. */
+  readonly statusCode: number
+  /** Отдаётся ли Retry-After. */
+  readonly retryAfterSeconds: number | null
+  /** Человекочитаемое описание для карточки метода. */
+  readonly description: string
+}
+
+export interface WebhookProfile {
+  readonly contentType: 'application/json' | 'application/x-www-form-urlencoded'
+  /** Сколько секунд ждём ответ получателя. */
+  readonly timeoutMs: number
+  /**
+   * Задержки перед повторными попытками, в миллисекундах.
+   * Пустой массив означает «повторов нет» — так ведёт себя боевой Bitrix24.
+   */
+  readonly retryDelaysMs: readonly number[]
+  /** Успех — это только 2xx, или ещё и содержимое тела. */
+  readonly successRule: 'status_2xx' | 'status_200' | 'status_200_and_body'
+  /** Тело, которое обязан вернуть получатель. Проверяется при successRule = status_200_and_body. */
+  readonly expectedResponseBody: Record<string, unknown> | null
+  /** Как подписывается доставка. */
+  readonly signature: 'none' | 'application_token' | 'hmac_sha256'
+  /** Заголовок с подписью, если она есть. */
+  readonly signatureHeader: string | null
+  /** Сколько событий сервис кладёт в один запрос при разборе накопившейся очереди. */
+  readonly maxBatchSize: number
+  /** Ставится ли подписка на паузу после серии неудач. */
+  readonly suspendsAfterFailures: boolean
+  readonly notes: string
+}
+
+export interface ServiceProfile {
+  readonly code: ServiceCode
+  readonly title: string
+  /** Короткая метка для квадрата логотипа: B / O / W. */
+  readonly letter: string
+  /** Двухбуквенный чип в таблице ключей: B24 / OZ / WB. */
+  readonly shortCode: string
+  readonly apiVersion: string
+  /** Боевой адрес, который подменяет пользователь. */
+  readonly replacesUrl: string
+  /**
+   * Префикс пути мока для подстановки вместо боевого адреса.
+   * Поддомены с именами сервисов сознательно не используются: ГК РФ ст. 1484 п. 2 пп. 5
+   * называет доменное имя способом использования товарного знака.
+   */
+  readonly mountPath: string
+  /** Токен цвета сервиса. Используется только как маркер: точка, буква логотипа. */
+  readonly brandToken: `brand-${string}`
+  readonly rateLimit: RateLimitProfile
+  readonly webhook: WebhookProfile
+  /**
+   * Значим ли HTTP-глагол при поиске метода.
+   *
+   * У Bitrix24 имя метода лежит в ПУТИ, а глагол не несёт смысла: один и тот же
+   * crm.deal.add документация разрешает вызывать и GET с query-параметрами,
+   * и POST с JSON, и POST form-urlencoded, и multipart. Мок обязан вести себя так же,
+   * иначе рабочая интеграция на GET получит 404 там, где боевой портал отвечает.
+   */
+  readonly routing: 'method-and-path' | 'path-only'
+  /** Где клиентская библиотека сервиса передаёт ключ. Шлюз обязан принять все варианты. */
+  readonly nativeAuth: {
+    readonly kind: 'path' | 'headers' | 'header'
+    readonly headers?: readonly string[]
+    readonly description: string
+  }
+}
+
+export const SERVICE_PROFILES: Readonly<Record<ServiceCode, ServiceProfile>> = {
+  bitrix24: {
+    code: 'bitrix24',
+    title: 'Bitrix24',
+    letter: 'B',
+    shortCode: 'B24',
+    apiVersion: 'REST API v1',
+    replacesUrl: '<portal>.bitrix24.ru/rest/',
+    mountPath: '/b24',
+    brandToken: 'brand-bitrix',
+    rateLimit: {
+      // Документировано: leaky bucket, ~2 запроса в секунду, бакет 50.
+      // Ответ при превышении — 503 QUERY_LIMIT_EXCEEDED, НЕ 429.
+      limit: 2,
+      windowMs: 1_000,
+      statusCode: 503,
+      retryAfterSeconds: null,
+      description: 'Около 2 запросов в секунду, бакет 50. При превышении — 503 QUERY_LIMIT_EXCEEDED',
+    },
+    webhook: {
+      contentType: 'application/x-www-form-urlencoded',
+      timeoutMs: 30_000,
+      // Дословно из документации: «Повторных отправок нет. Если ваш сервер не ответил
+      // или вернул ошибку, сервер очередей Битрикс24 зафиксирует сбой, но не отправит
+      // событие повторно». Вместо повторов — адаптивный троттлинг очереди.
+      retryDelaysMs: [],
+      successRule: 'status_2xx',
+      expectedResponseBody: null,
+      signature: 'application_token',
+      signatureHeader: null,
+      maxBatchSize: 1,
+      suspendsAfterFailures: false,
+      notes:
+        'Событие несёт только идентификатор (data[FIELDS][ID]) — значения полей не передаются, ' +
+        'клиент обязан дёрнуть crm.deal.get. Тело — form-urlencoded, не JSON. Повторов нет.',
+    },
+    routing: 'path-only',
+    nativeAuth: {
+      kind: 'path',
+      description: 'Ключ в пути входящего вебхука /rest/{user_id}/{code}/{method}.json либо параметр auth=',
+    },
+  },
+
+  ozon: {
+    code: 'ozon',
+    title: 'Ozon Seller API',
+    letter: 'O',
+    shortCode: 'OZ',
+    apiVersion: 'Seller API v3',
+    replacesUrl: 'api-seller.ozon.ru',
+    mountPath: '/oz',
+    brandToken: 'brand-ozon',
+    rateLimit: {
+      limit: 50,
+      windowMs: 1_000,
+      statusCode: 429,
+      retryAfterSeconds: 1,
+      description: 'Около 50 запросов в секунду на аккаунт продавца',
+    },
+    webhook: {
+      contentType: 'application/json',
+      // Обработка дольше 5 секунд — одно из условий автоматической приостановки уведомлений.
+      timeoutMs: 5_000,
+      // «Через несколько секунд система повторит запрос несколько раз. Интервал постепенно
+      // увеличивается. Когда интервал достигает максимума в 10 минут, делается ещё 5 попыток
+      // с интервалом 10 минут». Ниже — эта лестница в явном виде.
+      retryDelaysMs: [
+        5_000, 15_000, 60_000, 300_000, 600_000,
+        600_000, 600_000, 600_000, 600_000, 600_000,
+      ],
+      successRule: 'status_200_and_body',
+      expectedResponseBody: { result: true },
+      signature: 'none',
+      signatureHeader: null,
+      maxBatchSize: 1,
+      suspendsAfterFailures: true,
+      notes:
+        'Успехом считается 200 И тело {"result": true}. Только кода 200 недостаточно. ' +
+        'На проверочный TYPE_PING ответ обязан содержать version, name и time. ' +
+        'Подписка автоматически ставится на паузу и возобновляется только вручную.',
+    },
+    routing: 'method-and-path',
+    nativeAuth: {
+      kind: 'headers',
+      headers: ['Client-Id', 'Api-Key'],
+      description: 'Заголовки Client-Id и Api-Key',
+    },
+  },
+
+  wildberries: {
+    code: 'wildberries',
+    title: 'Wildberries',
+    letter: 'W',
+    shortCode: 'WB',
+    apiVersion: 'Suppliers API v3',
+    replacesUrl: 'suppliers-api.wildberries.ru',
+    mountPath: '/wb',
+    brandToken: 'brand-wb',
+    rateLimit: {
+      limit: 300,
+      windowMs: 60_000,
+      statusCode: 429,
+      retryAfterSeconds: 20,
+      description: 'До 300 запросов в минуту (Маркетплейс, персональный токен), заголовки X-Ratelimit-*',
+    },
+    webhook: {
+      contentType: 'application/json',
+      // «Ваш сервис должен вернуть статус доставки 200 в течение 10 секунд».
+      timeoutMs: 10_000,
+      // «Попытки доставки будут повторяться с нарастающим интервалом от 10 секунд
+      // до 15 минут, после чего событие будет удалено».
+      retryDelaysMs: [10_000, 30_000, 120_000, 450_000, 900_000],
+      successRule: 'status_200',
+      expectedResponseBody: null,
+      signature: 'hmac_sha256',
+      signatureHeader: 'X-Hub-Signature',
+      // «Один запрос может содержать несколько событий... Максимум 100 событий в одном запросе».
+      maxBatchSize: 100,
+      suspendsAfterFailures: true,
+      notes:
+        'События приходят конвертом {sellerId, requestId, events[]}. После простоя накопленные ' +
+        'события приезжают пачкой до 100 штук в одном запросе, а не отдельными POST. ' +
+        'Дедупликация — по idempotencyKey каждого события.',
+    },
+    routing: 'method-and-path',
+    nativeAuth: {
+      kind: 'header',
+      headers: ['Authorization'],
+      description: 'Заголовок Authorization с токеном, без префикса Bearer',
+    },
+  },
+} as const
+
+export const SERVICE_LIST: readonly ServiceProfile[] = SERVICE_CODES.map((c) => SERVICE_PROFILES[c])
+
+/** Разбирает путь вида /wb/api/v3/orders в код сервиса и остаток пути. */
+export function matchMountPath(pathname: string): { service: ServiceCode; rest: string } | null {
+  for (const profile of SERVICE_LIST) {
+    const p = profile.mountPath
+    if (pathname === p) return { service: profile.code, rest: '/' }
+    if (pathname.startsWith(`${p}/`)) return { service: profile.code, rest: pathname.slice(p.length) }
+  }
+  return null
+}

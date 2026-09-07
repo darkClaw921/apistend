@@ -1,0 +1,27 @@
+node_modules/
+.pnpm-store/
+dist/
+build/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+.turbo/
+.env
+.env.local
+.env.*.local
+!.env.example
+.DS_Store
+**/.DS_Store
+*.log
+specs/**/*.cache
+apps/api/prisma/generated/
+# Собранный каталог методов НЕ игнорируем: без него свежий клон не запустится.
+# Пересобрать его можно только скачав 84 МБ документации Bitrix24 и сходив
+# полторы тысячи раз на сайт документации — это не то, что должен делать
+# каждый, кто открыл репозиторий. Сами спецификации лежат в specs/.
+!packages/mock-engine/generated/
+.cache/
+
+# Артефакты npm pack
+*.tgz

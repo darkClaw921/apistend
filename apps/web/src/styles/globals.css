@@ -1,0 +1,172 @@
+@import 'tailwindcss';
+
+/*
+  Дизайн-система лежит в отдельном пакете воркспейса. Tailwind v4 по умолчанию
+  сканирует только дерево вокруг этого CSS-файла, поэтому классы из packages/ui
+  (bg-success-soft, text-warning и остальные «редкие») не попадали в сборку —
+  бейдж GET оставался без фона. Указываем источник явно.
+*/
+@source "../../../../packages/ui/src";
+
+/* ─────────────────────────────────────────────────────────────
+   Дизайн-токены APIStend.
+
+   Источник значений — design-handoff/tokens/tokens.css, снятый из макета APIStend.pen.
+   Правило приёмки (design-handoff/05-qa-checklist.md): ни одного цвета вне токенов.
+   Проверяется поиском по «#» в стилях приложения.
+   ───────────────────────────────────────────────────────────── */
+
+/*
+  `@theme static` — а не просто `@theme`.
+
+  Обычный @theme выбрасывает из сборки токены, которые нигде не использованы как
+  утилита Tailwind. Цвета сервисов подставляются динамически через var(--color-brand-*)
+  в инлайновом стиле (маркер сервиса зависит от данных, а не от класса) — и такие
+  переменные молча исчезали: квадраты B/O/W оставались белыми на белом.
+  static гарантирует, что весь набор токенов доступен через var().
+*/
+@theme static {
+  /* Поверхности */
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-2: #f1f3f7;
+  --color-surface-3: #e9ecf2;
+
+  /* Навигация (тёмная) */
+  --color-nav-bg: #0d1218;
+  --color-nav-bg-2: #161d26;
+  --color-nav-text: #9aa6b6;
+  --color-nav-text-active: #ffffff;
+  --color-nav-section: #5d6a7a;
+  --color-nav-border: #26303c;
+
+  /* Границы */
+  --color-border: #e4e8ee;
+  --color-border-strong: #cdd5e0;
+
+  /* Текст */
+  --color-text-primary: #0d1218;
+  --color-text-secondary: #5a6675;
+  --color-text-tertiary: #8b96a5;
+
+  /* Акцент */
+  --color-accent: #3b54f5;
+  --color-accent-hover: #2a41d6;
+  --color-accent-soft: #eceffe;
+
+  /* Статусы: насыщенный цвет — текст и иконка, *-soft — фон. Никогда наоборот. */
+  --color-success: #14804a;
+  --color-success-soft: #e4f5ec;
+  --color-warning: #b26205;
+  --color-warning-soft: #fcf0df;
+  --color-danger: #c22b2b;
+  --color-danger-soft: #fbeaea;
+  --color-info: #0b7fa8;
+  --color-info-soft: #e2f2f8;
+
+  /* Код и терминалы */
+  --color-code-bg: #0d1218;
+  --color-code-surface: #151c25;
+  --color-code-text: #d5dce6;
+  --color-code-key: #7fb3ff;
+  --color-code-string: #8fd69b;
+  --color-code-number: #e5b86b;
+  --color-code-muted: #5c6a7a;
+  --color-code-template: #c79bf2;
+  /* Чип плейсхолдера {{uuid}} на светлом фоне — 02-components.md, п. 16.
+     Отличается от code-template, который живёт только внутри тёмного редактора. */
+  --color-placeholder: #8b5fbf;
+
+  /* Маркеры сервисов. Только точка, буква логотипа и точка в строке лога.
+     В кнопки и фоны панелей не идут. */
+  --color-brand-bitrix: #1fa9e0;
+  --color-brand-ozon: #005bff;
+  --color-brand-wb: #a4139e;
+
+  /* Значения приходят из next/font: шрифты отдаются со своего домена. */
+  --font-sans: var(--font-inter), 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: var(--font-jetbrains), 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* 6 — элементы управления, 10 — панели, 14 — карточки лендинга, 20 — чипы */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 20px;
+
+  /* Каркас */
+  --spacing-sidebar: 248px;
+  --spacing-topbar: 64px;
+}
+
+@layer base {
+  html {
+    /* Экраны нарисованы под фиксированную высоту: страница целиком не скроллится,
+       скроллятся тела панелей. */
+    height: 100%;
+  }
+
+  body {
+    height: 100%;
+    margin: 0;
+    background-color: var(--color-bg);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  /* Теней в макете нет: глубина задаётся границей и сменой поверхности. */
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  /* Фокус виден всегда — пункт чек-листа доступности. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* Числа в таблицах и KPI не должны «прыгать» при обновлении в реальном времени. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  /* Мягкая пульсация скелетонов: 1.2 с, как задано в 02-components.md. */
+  @keyframes apistend-skeleton {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+  }
+
+  .animate-skeleton {
+    animation: apistend-skeleton 1.2s ease-in-out infinite;
+  }
+
+  /* Подсветка новой строки лога на 1 секунду. */
+  @keyframes apistend-row-in {
+    from { background-color: var(--color-accent-soft); }
+    to { background-color: transparent; }
+  }
+
+  .animate-row-in {
+    animation: apistend-row-in 1s ease-out;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-strong) transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-skeleton,
+  .animate-row-in {
+    animation: none;
+  }
+}

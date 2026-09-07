@@ -1,0 +1,18 @@
+{
+  "service": "bitrix24",
+  "sourceUrl": "https://github.com/bitrix24/b24restdocs",
+  "docsUrl": "https://apidocs.bitrix24.com/",
+  "license": "MIT",
+  "licenseHolder": "Copyright (c) 2024 Bitrix24",
+  "snapshotDate": "2026-09-07",
+  "tarballSha256": "7169b05e9b46719298c4a1c776b343eca43c31833c980b163382ece10ed52c72",
+  "tarballBytes": 26370536,
+  "markdownFiles": 2456,
+  "note": "OpenAPI у Bitrix24 нет. Документация разбирается парсером Diplodoc-YFM (packages/catalog-ingest/src/yfm.ts). Схемы ответа как типа в источнике нет ни у одного метода — ответы строятся из JSON-примеров документации.",
+  "russianTexts": {
+    "sourceUrl": "https://apidocs.bitrix24.ru/",
+    "license": null,
+    "pages": 1680,
+    "note": "MIT-репозиторий b24restdocs существует только на английском: ветки ru у него нет, /ru/ на apidocs.bitrix24.com отдаёт 404. Русские формулировки (заголовок, описание, подписи параметров) берутся с apidocs.bitrix24.ru по тем же путям скриптом scripts/fetch-bitrix24-ru.mjs. Явной лицензии у этого хоста нет — как и у спецификаций Ozon и Wildberries. Структура методов (имена, типы, обязательность, примеры ответа) остаётся из MIT-источника."
+  }
+}

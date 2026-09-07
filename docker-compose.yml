@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: apistend-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: apistend
+      POSTGRES_PASSWORD: apistend
+      POSTGRES_DB: apistend
+    ports:
+      - '5433:5432'
+    volumes:
+      - apistend-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U apistend -d apistend']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  apistend-pgdata:

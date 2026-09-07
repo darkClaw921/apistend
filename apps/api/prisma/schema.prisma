@@ -1,0 +1,529 @@
+// APIStend — модель данных.
+// Источник: design-handoff/03-data-model.md, с правками из плана проекта:
+//  - Webhook.targetPath для локальной доставки (в протоколе туннеля нет абсолютных URL);
+//  - WebhookDelivery хранит сырое тело и content-type (у Bitrix24 это form-urlencoded, не JSON);
+//  - ApiMethod несёт поля происхождения, чтобы неполный каталог не выдавался за полный.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────── Аккаунт ───────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  // Инициалы для аватара в сайдбаре: «ИГ».
+  initials     String
+  // «Бесплатный доступ» — подпись под именем в сайдбаре.
+  planLabel    String   @default("Бесплатный доступ")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sandboxes Sandbox[]
+  sessions  AuthSession[]
+
+  @@map("users")
+}
+
+model AuthSession {
+  id        String   @id @default(cuid())
+  userId    String
+  // Хеш refresh-токена: сам токен в базе не хранится.
+  tokenHash String   @unique
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("auth_sessions")
+}
+
+// ─────────────────────────── Песочница ───────────────────────────
+
+enum DataVolume {
+  min
+  medium
+  full
+}
+
+model Sandbox {
+  id        String     @id @default(cuid())
+  userId    String
+  // «sandbox-01» — значение в переключателе песочницы.
+  name      String
+  // «Интеграция 1С» — попадает в хлебные крошки.
+  project   String
+  status    String     @default("ok")
+  dataVolume DataVolume @default(medium)
+  // Искусственная задержка ответов, 0–3000 мс.
+  latencyMs Int        @default(250)
+  // Доля случайных ошибок, 0–50 %.
+  errorRate Int        @default(5)
+  lastResetAt DateTime @default(now())
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKeys     ApiKey[]
+  requestLogs RequestLog[]
+  webhooks    Webhook[]
+  deliveries  WebhookDelivery[]
+  tunnels     TunnelSession[]
+  scenarios   Scenario[]
+  bursts      EventBurst[]
+  customMocks CustomMock[]
+  alerts      Alert[]
+  overlay     SandboxOverlay[]
+
+  @@unique([userId, name])
+  @@map("sandboxes")
+}
+
+// ─────────────────────────── Каталог ───────────────────────────
+
+enum Readiness {
+  ready
+  updating
+  planned
+}
+
+model ApiMethod {
+  id          String    @id
+  serviceCode String
+  httpMethod  String
+  path        String
+  title       String
+  description String    @db.Text
+  // Раздел внутри сервиса — заголовок группы в списке методов.
+  group       String
+  version     String
+  readiness   Readiness @default(ready)
+  deprecated  Boolean   @default(false)
+  latencyMs   Int       @default(180)
+  callsCount  Int       @default(0)
+
+  // Параметры и сценарии ответа — JSON, форма описана в @apistend/shared.
+  params    Json
+  scenarios Json
+
+  // ── происхождение: без этих полей неполный каталог превращается в ложь ──
+  // example | schema | generic
+  responseSource String
+  // spec | mirror | parsed
+  extraction     String
+  sourceUrl      String
+  // Дата снимка спецификации: показывается рядом со счётчиком методов.
+  snapshotDate   String
+  license        String?
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([serviceCode, httpMethod, path])
+  @@index([serviceCode, group])
+  @@index([serviceCode, readiness])
+  @@map("api_methods")
+}
+
+/// Сводка по сервису для панели «Демо-сервисы» и лендинга.
+/// Числа считаются из api_methods, а не зашиваются в вёрстку.
+model ServiceStat {
+  serviceCode  String   @id
+  status       String   @default("ok")
+  methodsCount Int      @default(0)
+  eventsCount  Int      @default(0)
+  snapshotDate String
+  updatedAt    DateTime @updatedAt
+
+  @@map("service_stats")
+}
+
+// ─────────────────────────── Ключи ───────────────────────────
+
+enum ApiKeyStatus {
+  active
+  expiring
+  revoked
+}
+
+enum ApiKeyKind {
+  /// stend_sbx_… — ключ песочницы, им код пользователя ходит в мок-API.
+  sandbox
+  /// stend_sk_… — серверный ключ, им авторизуется CLI.
+  server
+}
+
+model ApiKey {
+  id        String       @id @default(cuid())
+  sandboxId String
+  name      String
+  /// «Сервер обмена · 1С:УТ 11» — вторая строка в ячейке названия.
+  subtitle  String?
+  kind      ApiKeyKind   @default(sandbox)
+  /// Первые символы ключа: stend_sbx_7f3a. Показываются всегда.
+  prefix    String
+  /// Последние символы: 4c21. Вместе с prefix дают маску stend_sbx_7f3a••••••4c21.
+  suffix    String
+  /// Argon2id от полного ключа. Полный ключ показывается один раз при создании.
+  keyHash   String       @unique
+  services  String[]
+  status    ApiKeyStatus @default(active)
+  rotationDays Int       @default(90)
+  expiresAt DateTime?
+  lastUsedAt DateTime?
+  revokedAt DateTime?
+  revokedBy String?
+  requestsPerDay Int     @default(0)
+  createdAt DateTime     @default(now())
+
+  sandbox    Sandbox      @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  requestLogs RequestLog[]
+  tunnels    TunnelSession[]
+
+  @@index([sandboxId, status])
+  @@map("api_keys")
+}
+
+// ─────────────────────────── Логи ───────────────────────────
+
+model RequestLog {
+  id          String   @id @default(cuid())
+  sandboxId   String
+  apiKeyId    String?
+  /// req_8f3c21a0d7 — показывается в панели деталей запроса.
+  publicId    String   @unique
+  timestamp   DateTime @default(now())
+  serviceCode String
+  httpMethod  String
+  endpoint    String
+  statusCode  Int
+  durationMs  Int
+  sizeBytes   Int
+  /// Боевой адрес, который был бы вызван без APIStend.
+  upstreamUrl String?
+  clientIp    String?
+  scenario    String   @default("success")
+  /// example | schema | generic — откуда взят ответ.
+  responseSource String @default("example")
+
+  requestHeaders  Json
+  requestBody     String? @db.Text
+  responseHeaders Json
+  responseBody    String? @db.Text
+
+  sandbox Sandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  apiKey  ApiKey? @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+
+  @@index([sandboxId, timestamp(sort: Desc)])
+  @@index([sandboxId, statusCode])
+  @@index([sandboxId, serviceCode])
+  @@map("request_logs")
+}
+
+// ─────────────────────────── Вебхуки ───────────────────────────
+
+enum WebhookStatus {
+  active
+  paused
+  failing
+  disabled
+}
+
+enum DeliveryTarget {
+  /// Публичный адрес: сервер APIStend делает запрос сам.
+  public
+  /// localhost разработчика: запрос делает CLI на его машине.
+  local
+}
+
+model Webhook {
+  id          String         @id @default(cuid())
+  sandboxId   String
+  serviceCode String
+  event       String
+  httpMethod  String         @default("POST")
+  target      DeliveryTarget @default(public)
+  /// Для target = public. Абсолютный адрес получателя.
+  targetUrl   String?
+  /// Для target = local. ТОЛЬКО относительный путь: /wb/stocks.
+  /// Базу подставляет CLI из --forward — в протоколе абсолютных URL нет.
+  targetPath  String?
+  status      WebhookStatus  @default(active)
+  /// Секрет подписи. У профилей с HMAC уходит в X-Hub-Signature.
+  secret      String
+  lastAttemptAt DateTime?
+  successRate24h Float       @default(100)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  sandbox    Sandbox           @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+  bursts     EventBurst[]
+
+  @@index([sandboxId, serviceCode])
+  @@map("webhooks")
+}
+
+enum DeliveryState {
+  /// В очереди: агент отключён или ждём слот.
+  queued
+  /// Отдано агенту либо отправлено на публичный адрес, ответа ещё нет.
+  dispatched
+  succeeded
+  failed
+  /// Ответ так и не пришёл в отведённое время. Без этого состояния
+  /// доставка навсегда зависает в «попытка 1/5».
+  no_response
+  /// Выброшено из очереди по переполнению или устареванию.
+  dropped
+}
+
+model WebhookDelivery {
+  id          String        @id @default(cuid())
+  sandboxId   String
+  webhookId   String
+  event       String
+  serviceCode String
+  timestamp   DateTime      @default(now())
+  state       DeliveryState @default(queued)
+  attempt     Int           @default(1)
+  maxAttempts Int           @default(1)
+  statusCode  Int?
+  durationMs  Int?
+  nextRetryAt DateTime?
+
+  /// Куда ушло: относительный путь для local, абсолютный URL для public.
+  targetDisplay String
+  /// Сырое тело запроса как строка. У Bitrix24 это form-urlencoded, а не JSON,
+  /// поэтому JSON-колонка тут была бы ошибкой.
+  rawBody       String  @db.Text
+  contentType   String
+  requestHeaders Json
+  responseBody  String? @db.Text
+  errorKind     String?
+  errorMessage  String?
+
+  /// Серия, в рамках которой создана доставка. null — одиночный «Тест».
+  burstId String?
+
+  sandbox Sandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([sandboxId, timestamp(sort: Desc)])
+  @@index([burstId])
+  @@index([sandboxId, state, timestamp])
+  @@index([webhookId])
+  @@map("webhook_deliveries")
+}
+
+// ─────────────────────────── Туннель ───────────────────────────
+
+model TunnelSession {
+  id        String    @id @default(cuid())
+  sandboxId String
+  apiKeyId  String
+  /// tnl-8f21 — короткий идентификатор для интерфейса. Стабилен для устройства,
+  /// чтобы при обрыве связи в UI ничего не мигало.
+  displayId String
+  /// Хеш одноразового токена подключения (tnlt_…), TTL 10 минут.
+  tokenHash String    @unique
+  deviceId  String
+  deviceName String?
+  agentVersion String
+  /// Абсолютный адрес пересылки — только для показа в интерфейсе.
+  /// Сервер им никогда не пользуется при построении запроса.
+  forwardUrl String
+  signingSecret String
+  connected Boolean   @default(false)
+  latencyMs Int?
+  /// Заготовка под несколько инстансов: пока всегда одно значение.
+  gwNodeId  String    @default("gw-0")
+  connectedAt DateTime?
+  lastSeenAt  DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  sandbox Sandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  apiKey  ApiKey  @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@index([sandboxId, connected])
+  @@index([sandboxId, displayId])
+  @@map("tunnel_sessions")
+}
+
+// ─────────────────────────── Сценарии и свои моки ───────────────────────────
+
+model Scenario {
+  id          String   @id @default(cuid())
+  sandboxId   String
+  name        String
+  serviceCode String
+  /// Сколько событий отправляет один запуск.
+  stepsCount  Int
+  status      String   @default("ready")
+  delayMs     Int      @default(5000)
+  /// Скорость запуска, событий в секунду. Задержка delayMs описывает то же самое,
+  /// но для нагрузочной проверки удобнее задавать скорость, а не интервал:
+  /// «200 событий в секунду» читается, «5 мс между событиями» — нет.
+  ratePerSec  Int      @default(5)
+  repeats     Int      @default(1)
+  errorRate   Int      @default(0)
+  progress    Int      @default(0)
+  lastRunAt   DateTime?
+  lastRunNote String?
+  steps       Json
+
+  sandbox Sandbox      @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  runs    EventBurst[]
+
+  @@index([sandboxId])
+  @@map("scenarios")
+}
+
+/// Состояние серии. Прерванная — это серия, которую застал перезапуск процесса:
+/// расписание живёт в памяти, поэтому после рестарта она не продолжится, и делать
+/// вид, что она всё ещё идёт, нельзя.
+enum BurstState {
+  running
+  done
+  stopped
+  interrupted
+}
+
+/// Серия событий: N доставок с заданной скоростью.
+///
+/// Одна и та же сущность обслуживает и `apistend trigger --count --rate`,
+/// и запуск сценария симуляции из интерфейса — у сценария просто заполнен scenarioId.
+model EventBurst {
+  id          String     @id @default(cuid())
+  sandboxId   String
+  webhookId   String
+  scenarioId  String?
+  event       String
+  serviceCode String
+  state       BurstState @default(running)
+
+  /// Сколько событий заказано и с какой скоростью. Значения уже после обрезки
+  /// по потолкам — что именно попросили, видно в requestedRatePerSec.
+  count            Int
+  ratePerSec       Int
+  requestedCount     Int
+  requestedRatePerSec Int
+  /// Доля доставок, которым сервер намеренно портит полезную нагрузку,
+  /// чтобы приложение получило ошибочный ответ. 0 — не портить.
+  errorRate        Int      @default(0)
+
+  sent      Int @default(0)
+  succeeded Int @default(0)
+  failed    Int @default(0)
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  note       String?
+
+  sandbox  Sandbox   @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  webhook  Webhook   @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  scenario Scenario? @relation(fields: [scenarioId], references: [id], onDelete: SetNull)
+
+  @@index([sandboxId, startedAt(sort: Desc)])
+  @@index([sandboxId, state])
+  @@map("event_bursts")
+}
+
+enum CustomMockStatus {
+  active
+  draft
+  disabled
+}
+
+model CustomMock {
+  id          String           @id @default(cuid())
+  sandboxId   String
+  httpMethod  String
+  path        String
+  title       String
+  status      CustomMockStatus @default(draft)
+  responseStatusCode Int       @default(200)
+  contentType String           @default("application/json")
+  delayMs     Int              @default(250)
+  templatingEnabled Boolean    @default(true)
+  /// Сырой шаблон с плейсхолдерами. Сервер обязан уметь вернуть и его, и результат подстановки.
+  responseBody String          @db.Text
+  headers     Json
+  rules       Json
+  callsCount  Int              @default(0)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  sandbox Sandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+
+  @@unique([sandboxId, httpMethod, path])
+  @@index([sandboxId, status])
+  @@map("custom_mocks")
+}
+
+model Alert {
+  id        String   @id @default(cuid())
+  sandboxId String
+  severity  String
+  title     String
+  meta      String
+  icon      String
+  link      String?
+  createdAt DateTime @default(now())
+
+  sandbox Sandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+
+  @@index([sandboxId])
+  @@map("alerts")
+}
+
+// ─────────────────────────── Датасет ───────────────────────────
+
+/// Общий read-only датасет, собранный на этапе сборки. Одинаков для всех песочниц,
+/// поэтому создание песочницы — операция O(1).
+model DatasetEntity {
+  serviceCode String
+  entityType  String
+  /// Порядковый номер внутри типа. Идентификатор, который отдаёт мок,
+  /// разбирается обратно в пару (entityType, ordinal) — поэтому get(id) работает
+  /// даже для записи, не попавшей в list.
+  ordinal     Int
+  /// Идентификатор в формате сервиса: "1042" у Bitrix24, "24219509-0020-1" у Ozon.
+  externalId  String
+  volume      DataVolume @default(min)
+  data        Json
+
+  @@id([serviceCode, entityType, ordinal])
+  @@index([serviceCode, entityType, externalId])
+  @@map("dataset_entities")
+}
+
+/// Изменения пользователя поверх общего датасета. Чтение — overlay ?? base.
+/// «Сбросить сейчас» — это DELETE по песочнице.
+model SandboxOverlay {
+  id          String   @id @default(cuid())
+  sandboxId   String
+  serviceCode String
+  entityType  String
+  externalId  String
+  /// true — запись удалена пользователем: базовая версия не должна возвращаться.
+  deleted     Boolean  @default(false)
+  data        Json?
+  updatedAt   DateTime @updatedAt
+
+  sandbox Sandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+
+  @@unique([sandboxId, serviceCode, entityType, externalId])
+  @@index([sandboxId, serviceCode, entityType])
+  @@map("sandbox_overlays")
+}
