@@ -64,7 +64,15 @@ beforeAll(async () => {
   })
   userId = user.id
   const sandbox = await prisma.sandbox.create({
-    data: { userId: user.id, name: 'b24app-test', project: 'e2e' },
+    data: {
+      userId: user.id, name: 'b24app-test', project: 'e2e',
+      // Ноль обязателен: по умолчанию песочница отдаёт 5 % случайных ошибок,
+      // и они применяются в том числе к методам портала. Здесь проверяется
+      // совпадение с боевым протоколом, а не устойчивость к сбоям, поэтому
+      // случайность из кейсов надо убрать — иначе тест мигает раз в двадцать
+      // прогонов и делает это на чужой машине.
+      errorRate: 0, latencyMs: 0,
+    },
   })
   sandboxId = sandbox.id
 
