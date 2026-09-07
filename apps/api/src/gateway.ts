@@ -9,6 +9,10 @@ import { enqueueRequestLog } from './lib/log-buffer.ts'
 import { recordKeyUsage } from './lib/key-usage.ts'
 import { requestId as newRequestId } from './lib/ids.ts'
 import { unauthorizedError } from '@apistend/shared'
+import { appTokenExpired, resolveAppToken, type AppContext } from './b24/tokens.ts'
+import { callAppMethod, buildTimeEnvelope, scopeForMethod } from './b24/app-methods.ts'
+import { B24_APP_ERRORS } from '@apistend/shared'
+import { expandBracketKeys, runBatch } from './b24/batch.ts'
 
 /**
  * Мок-шлюз.
@@ -62,6 +66,15 @@ export function registerGateway(app: FastifyInstance): void {
       return handle(req, reply, code, `/${req.params['*']}`)
     })
   }
+
+  // Портал Bitrix24 в корне.
+  //
+  // Приложению портал сообщает DOMAIN — голый хост, без пути, — и приложение
+  // склеивает адрес REST само: <схема>://<DOMAIN>/rest/<метод>. Без этого маршрута
+  // разработчик, ничего не менявший в своём коде, получил бы 404 на первом же вызове.
+  app.all<{ Params: { '*': string } }>('/rest/*', async (req, reply) =>
+    handle(req, reply, 'bitrix24', `/rest/${req.params['*']}`),
+  )
 }
 
 async function handle(
@@ -96,8 +109,12 @@ async function handle(
     parsedBody,
   )
   const resolved = await resolveApiKey(rawKey)
+  // Локальное приложение приходит со своим OAuth-токеном: ключа песочницы у него
+  // взять неоткуда — боевой портал такого понятия не знает, и приложение,
+  // написанное для боя, шлёт ровно то, что получило при установке.
+  const appCtx = resolved !== null || service !== 'bitrix24' ? null : await resolveAppToken(rawKey)
 
-  if (!resolved) {
+  if (!resolved && !appCtx) {
     // Тело обязано совпадать с боевым до последнего поля, поэтому причина уходит
     // в служебный заголовок: иначе отладка превращается в гадание.
     const err = unauthorizedError(service, reqId)
@@ -106,15 +123,20 @@ async function handle(
     return reply.code(err.status).send(err.body)
   }
 
-  const { apiKey, sandbox } = resolved
-  // Счётчики ключа обновляются пачкой раз в 10 секунд, а не запросом к базе на вызов.
-  recordKeyUsage(apiKey.id)
+  const sandbox = resolved ? resolved.sandbox : appCtx!.sandbox
+  // Лимит считается на субъект запроса: у ключа это сам ключ, у приложения — приложение.
+  const rateSubject = resolved ? resolved.apiKey.id : `app:${appCtx!.app.id}`
 
-  if (!apiKey.services.includes(service)) {
-    const err = buildScenarioError(service, 'invalid_token', reqId)
-    reply.headers(err.headers).header('x-request-id', reqId)
-    reply.header('x-apistend-error', `key-scope: ключ «${apiKey.name}» открыт для ${apiKey.services.join(', ')}`)
-    return reply.code(err.status).send(err.body)
+  if (resolved) {
+    // Счётчики ключа обновляются пачкой раз в 10 секунд, а не запросом к базе на вызов.
+    recordKeyUsage(resolved.apiKey.id)
+
+    if (!resolved.apiKey.services.includes(service)) {
+      const err = buildScenarioError(service, 'invalid_token', reqId)
+      reply.headers(err.headers).header('x-request-id', reqId)
+      reply.header('x-apistend-error', `key-scope: ключ «${resolved.apiKey.name}» открыт для ${resolved.apiKey.services.join(', ')}`)
+      return reply.code(err.status).send(err.body)
+    }
   }
 
   // Путь Bitrix24 несёт две вещи, которых нет в каталоге:
@@ -126,13 +148,48 @@ async function handle(
       ? rawPath.replace(/^\/rest\/\d+\/[^/]+\//, '/rest/').replace(/\.(json|xml)$/, '')
       : rawPath
 
-  const rate = checkRateLimit(apiKey.id, service, Date.now())
+  const rate = checkRateLimit(rateSubject, service, Date.now())
   reply.header('x-ratelimit-limit', String(rate.limit))
   reply.header('x-ratelimit-remaining', String(rate.remaining))
 
   let scenario = parseScenario(req.headers['x-mock-scenario'] as string | undefined)
   if (!rate.allowed) scenario = 'rate_limit'
   else if (scenario === 'success' && rollRandomError(sandbox.errorRate)) scenario = 'server_error'
+
+  // Контекст приложения: состояние портала, а не сгенерированные данные.
+  // app.info обязан отвечать про ЭТО приложение, placement.get — про виджеты,
+  // которые оно зарегистрировало минуту назад. Движок так не умеет и не должен.
+  if (appCtx && scenario === 'success') {
+    const answer = await respondAsApp(appCtx, path, query, parsedBody, Date.now())
+    if (answer) {
+      const payload = JSON.stringify(answer.body)
+      reply
+        .header('x-request-id', reqId)
+        .header('x-apistend-source', 'app-context')
+        .header('x-apistend-app', appCtx.app.clientId)
+      enqueueRequestLog({
+        sandboxId: sandbox.id,
+        apiKeyId: null,
+        publicId: reqId,
+        serviceCode: service,
+        httpMethod: req.method,
+        endpoint: path,
+        statusCode: answer.status,
+        durationMs: Math.round(Number(process.hrtime.bigint() - startedAt) / 1_000_000),
+        sizeBytes: Buffer.byteLength(payload),
+        upstreamUrl: `https://${appCtx.app.clientId}.bitrix24.ru${path}`,
+        clientIp: req.ip,
+        scenario,
+        responseSource: 'app-context',
+        requestHeaders: sanitizeHeaders(req.headers as Record<string, unknown>),
+        requestBody: parsedBody ? JSON.stringify(parsedBody).slice(0, 8_000) : null,
+        responseHeaders: {},
+        // Ответ зависит от состояния портала и движком не восстанавливается — храним.
+        responseBody: payload.slice(0, 8_000),
+      })
+      return reply.code(answer.status).type('application/json; charset=utf-8').send(payload)
+    }
+  }
 
   const result = engine.handle({
     service,
@@ -169,7 +226,7 @@ async function handle(
 
   enqueueRequestLog({
     sandboxId: sandbox.id,
-    apiKeyId: apiKey.id,
+    apiKeyId: resolved?.apiKey.id ?? null,
     publicId: reqId,
     serviceCode: service,
     httpMethod: req.method,
@@ -232,4 +289,96 @@ function sanitizeHeaders(headers: Record<string, unknown>): Prisma.InputJsonValu
       : (v as Prisma.InputJsonValue)
   }
   return out
+}
+
+/**
+ * Ответ в контексте локального приложения.
+ *
+ * Возвращает null, если метод обычный: тогда его отдаёт движок моков, и приложение
+ * получает те же данные, что и любой другой клиент песочницы. Отличается только
+ * авторизация и то, что состояние портала (установка, виджеты, подписки) живёт
+ * в базе, а не выводится из спецификации.
+ */
+async function respondAsApp(
+  ctx: AppContext,
+  path: string,
+  query: Record<string, unknown>,
+  body: unknown,
+  startedMs: number,
+): Promise<{ status: number; body: Record<string, unknown> } | null> {
+  const method = path.replace(/^\/rest\//, '').replace(/^\//, '')
+  if (method.length === 0) return null
+
+  // Истёкший токен — это 401 expired_token на ЛЮБОЙ метод, а не только на «живые».
+  // Документация прямо предписывает приложению дождаться этой ошибки и только
+  // после неё идти обновлять пару; мок с вечным токеном научил бы обратному.
+  if (appTokenExpired(ctx.token)) {
+    return { status: 401, body: { ...B24_APP_ERRORS.expiredToken.body } }
+  }
+
+  const flat: Record<string, unknown> = { ...query }
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    Object.assign(flat, body as Record<string, unknown>)
+  }
+  delete flat.auth
+  const params = expandBracketKeys(flat)
+
+  if (method.toLowerCase() === 'batch') {
+    const packed = await runBatch(params, async (name, commandParams) => {
+      const inner = await respondAsAppMethod(ctx, name, commandParams)
+      if (inner) return inner
+      return runThroughEngine(ctx, name, commandParams)
+    })
+    return withTime(packed, startedMs)
+  }
+
+  const answer = await respondAsAppMethod(ctx, method, params)
+  return answer ? withTime(answer, startedMs) : null
+}
+
+/** Проверки контекста и «живые» методы. null — метод обычный. */
+async function respondAsAppMethod(
+  ctx: AppContext,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<{ status: number; body: Record<string, unknown> } | null> {
+  const required = scopeForMethod(method)
+  if (required !== null && !ctx.app.scope.includes(required)) {
+    return { status: 403, body: { ...B24_APP_ERRORS.insufficientScope.body } }
+  }
+  return callAppMethod(ctx, method, params)
+}
+
+/** Одна команда пакета, которую отрабатывает движок моков. */
+function runThroughEngine(
+  ctx: AppContext,
+  method: string,
+  params: Record<string, unknown>,
+): { status: number; body: Record<string, unknown> } {
+  const result = engine.handle({
+    service: 'bitrix24',
+    httpMethod: 'POST',
+    path: `/rest/${method}`,
+    query: {},
+    headers: {},
+    body: params,
+    requestId: newRequestId(),
+    scenario: 'success',
+    now: new Date(),
+    salt: ctx.sandbox.dataVolume,
+  })
+  try {
+    return { status: result.status, body: JSON.parse(result.serialized) as Record<string, unknown> }
+  } catch {
+    return { status: 500, body: { error: 'ERROR_UNEXPECTED_ANSWER', error_description: 'Unexpected answer' } }
+  }
+}
+
+/** Боевой портал прикладывает конверт time к каждому ответу, включая пакетный. */
+function withTime(
+  answer: { status: number; body: Record<string, unknown> },
+  startedMs: number,
+): { status: number; body: Record<string, unknown> } {
+  if (answer.body.time !== undefined || typeof answer.body.error === 'string') return answer
+  return { status: answer.status, body: { ...answer.body, time: buildTimeEnvelope(startedMs) } }
 }

@@ -97,7 +97,10 @@ export function buildScenarioError(
   if (service === 'bitrix24') {
     switch (scenario) {
       case 'invalid_token':
-        return bitrix24Error('INVALID_CREDENTIALS', 401)
+        // Именно NO_AUTH_FOUND: так боевой портал отвечает и на неверный
+        // access-токен, и на неверный код входящего вебхука. INVALID_CREDENTIALS —
+        // это другое и с другим кодом: 403, когда у сотрудника не хватает прав.
+        return bitrix24Error('NO_AUTH_FOUND', 401)
       case 'not_found':
         return bitrix24Error('METHOD_NOT_FOUND', 404)
       case 'rate_limit':

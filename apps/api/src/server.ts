@@ -12,6 +12,7 @@ import { registerLogRoutes } from './routes/logs.ts'
 import { registerWebhookRoutes } from './routes/webhooks.ts'
 import { registerMockRoutes } from './routes/mocks.ts'
 import { registerOverviewRoutes } from './routes/overview.ts'
+import { registerB24AppRoutes } from './routes/b24-apps.ts'
 import { registerTunnel } from './tunnel/server.ts'
 import { startWebhookScheduler } from './webhooks/dispatcher.ts'
 import { reapInterruptedBursts } from './webhooks/burst.ts'
@@ -72,6 +73,7 @@ export async function buildServer() {
   registerWebhookRoutes(app)
   registerMockRoutes(app)
   registerOverviewRoutes(app)
+  registerB24AppRoutes(app)
 
   // Шлюз регистрируется последним: его маршруты самые широкие (/wb/*, /v1/:service/*)
   // и не должны перехватывать /api/*.

@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, LibraryBig, Boxes, Terminal, ScrollText, Webhook, GitBranch,
-  Database, KeyRound, Users, Settings, PlugZap, ChevronsUpDown, EllipsisVertical,
+  Database, AppWindow, KeyRound, Users, Settings, PlugZap, ChevronsUpDown, EllipsisVertical,
 } from 'lucide-react'
 import { NavItem, NavSection, formatInt } from '@apistend/ui'
 import type { Me } from '@/lib/types'
@@ -34,6 +34,7 @@ const SECTIONS = [
       { href: '/webhooks', label: 'Вебхуки', icon: Webhook },
       { href: '/scenarios', label: 'Сценарии', icon: GitBranch },
       { href: '/mocks', label: 'Свои моки', icon: Database },
+      { href: '/apps', label: 'Локальные приложения', icon: AppWindow },
     ],
   },
   {

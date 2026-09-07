@@ -84,6 +84,7 @@ model Sandbox {
   customMocks CustomMock[]
   alerts      Alert[]
   overlay     SandboxOverlay[]
+  b24Apps     B24App[]
 
   @@unique([userId, name])
   @@map("sandboxes")
@@ -265,11 +266,21 @@ model Webhook {
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
+  /// Подписка локального приложения (event.bind), а не пользователя.
+  /// Одна таблица на оба случая намеренно: конверт доставки, журнал и повторы
+  /// у них общие, а раздвоение дало бы два несовпадающих «Журнала доставок».
+  appId       String?
+
   sandbox    Sandbox           @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  /// SetNull, а не Cascade: удаление приложения не должно стирать из журнала
+  /// доставок запись о том, что ONAPPUNINSTALL ушёл. Подписки самого приложения
+  /// снимаются явно — так же, как это делает боевой портал.
+  app        B24App?           @relation(fields: [appId], references: [id], onDelete: SetNull)
   deliveries WebhookDelivery[]
   bursts     EventBurst[]
 
   @@index([sandboxId, serviceCode])
+  @@index([appId])
   @@map("webhooks")
 }
 
@@ -485,6 +496,160 @@ model Alert {
 
   @@index([sandboxId])
   @@map("alerts")
+}
+
+// ─────────────────── Локальные приложения Bitrix24 ───────────────────
+
+/// Вид локального приложения. В боевой форме портала селектора «тип» нет: вид
+/// определяется тем, какие поля заполнены. Явное значение нужно интерфейсу
+/// и проверкам — иначе «приложение без интерфейса» пришлось бы каждый раз
+/// выводить из пустоты handlerUrl.
+enum B24AppKind {
+  server_ui
+  api_only
+}
+
+enum B24AppState {
+  /// Создано, но ни разу не открывалось. app.info → INSTALLED: false.
+  awaiting_install
+  /// Вызван BX24.installFinish() либо доставлен ONAPPINSTALL для api_only.
+  installed
+  /// Удалено пользователем. Токены отозваны, обработчики сняты.
+  uninstalled
+}
+
+/// Локальное приложение Bitrix24, зарегистрированное в песочнице.
+///
+/// Боевой портал выдаёт client_id и client_secret один раз при сохранении формы
+/// и больше их не меняет; повторное добавление приложения с теми же адресами
+/// создаёт НОВУЮ пару. Здесь так же: перевыпуска нет, есть удаление и создание.
+model B24App {
+  id          String      @id @default(cuid())
+  sandboxId   String
+  title       String
+  /// Символьный код: попадает в app.info.CODE и в ссылку REST_APP_URI.
+  code        String
+  /// local.68bd4f2a91c3e7.45120983 — формат боевого портала, включая длины частей.
+  clientId    String      @unique
+  /// 50 символов. Участвует только в запросах к серверу авторизации.
+  clientSecret String
+  kind        B24AppKind  @default(server_ui)
+  state       B24AppState @default(awaiting_install)
+  scope       String[]
+  /// «Путь вашего обработчика». Для api_only пуст.
+  handlerUrl  String?
+  /// «Путь для первоначальной установки». Для server_ui — мастер установки во фрейме,
+  /// для api_only — серверный обработчик ONAPPINSTALL.
+  installUrl  String?
+  /// Название пункта в главном меню портала. У api_only пункта нет.
+  menuTitle   String?
+  /// Постоянный токен приложения на этом портале. Приходит и во фрейм (APPLICATION_TOKEN),
+  /// и обработчикам событий (auth[application_token]) — по нему приложение проверяет,
+  /// что запрос действительно от портала.
+  applicationToken String
+  version     Int         @default(1)
+  installedAt DateTime?
+  /// Причина последней неудачной установки: пустой фрейм, отказ обработчика, таймаут.
+  lastInstallNote String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  sandbox    Sandbox              @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  tokens     B24AppToken[]
+  authCodes  B24AuthCode[]
+  placements B24AppPlacement[]
+  webhooks   Webhook[]
+  sessions   B24AppSession[]
+
+  @@unique([sandboxId, code])
+  @@index([sandboxId, state])
+  @@map("b24_apps")
+}
+
+/// Пара токенов OAuth 2.0, выданная приложению для конкретного сотрудника портала.
+///
+/// Хранится в открытом виде сознательно: это демо-портал, и вся ценность экрана
+/// «Токены» в том, что выданный access_token можно скопировать и вставить в curl.
+/// Ключи самого APIStend (stend_sk_) по-прежнему лежат только хешами.
+model B24AppToken {
+  id           String   @id @default(cuid())
+  appId        String
+  accessToken  String   @unique
+  refreshToken String   @unique
+  /// Сотрудник портала, от чьего имени выписан токен.
+  portalUserId Int      @default(1)
+  scope        String[]
+  expiresAt    DateTime
+  /// Срок refresh_token. Боевое значение — 180 суток.
+  refreshExpiresAt DateTime
+  /// Заполняется при обновлении: старая пара перестаёт действовать, но остаётся видна.
+  revokedAt    DateTime?
+  createdAt    DateTime @default(now())
+
+  app B24App @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@index([appId, revokedAt])
+  @@map("b24_app_tokens")
+}
+
+/// Одноразовый авторизационный код. Живёт 30 секунд, как в бою.
+model B24AuthCode {
+  id        String   @id @default(cuid())
+  appId     String
+  code      String   @unique
+  portalUserId Int   @default(1)
+  state     String?
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  app B24App @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@map("b24_auth_codes")
+}
+
+/// Зарегистрированный виджет: placement.bind.
+model B24AppPlacement {
+  id          String   @id @default(cuid())
+  appId       String
+  placement   String
+  handler     String
+  title       String?
+  description String?
+  groupName   String?
+  options     Json
+  createdAt   DateTime @default(now())
+
+  app B24App @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@unique([appId, placement, handler])
+  @@index([appId])
+  @@map("b24_app_placements")
+}
+
+
+/// Одно открытие приложения во фрейме.
+///
+/// APP_SID боевой портал создаёт заново при каждой отрисовке и использует, чтобы
+/// «связать js-библиотеку с окружением приложения». У нас он делает ровно то же:
+/// страница портала адресует кадры моста конкретному фрейму, а сервер по нему
+/// понимает, чей installFinish пришёл.
+model B24AppSession {
+  id        String   @id @default(cuid())
+  appId     String
+  appSid    String   @unique
+  tokenId   String?
+  placement String   @default("DEFAULT")
+  placementOptions Json
+  /// Показан мастер установки, а не обработчик.
+  isInstall Boolean  @default(false)
+  finishedAt DateTime?
+  createdAt DateTime @default(now())
+
+  app B24App @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@index([appId, createdAt])
+  @@map("b24_app_sessions")
 }
 
 // ─────────────────────────── Датасет ───────────────────────────
