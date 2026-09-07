@@ -137,18 +137,20 @@ Ozon и Wildberries закрыты анти-ботом от обычных HTTP-
 ```bash
 # 1. поднять версию в packages/cli/package.json и в VERSION в packages/cli/src/cli.ts
 # 2. тег обязан совпадать с версией — иначе workflow остановится
-git tag apistend-v1.5.0 && git push origin apistend-v1.5.0
+git tag apistend-v1.5.1 && git push origin apistend-v1.5.1
 ```
 
+**Токена в секретах нет и не нужно.** Пакет настроен на доверенную публикацию:
+npm обменивает OIDC-токен GitHub Actions на право записи именно в `apistend`
+и только из `.github/workflows/publish-cli.yml` этого репозитория. Красть
+из секретов нечего, срок действия ничему не истекает, provenance выдаётся сам —
+на странице в npm видно, из какого коммита и прогона собран пакет.
+
 Перед публикацией workflow собирает пакет, показывает содержимое tarball
-и проверяет, что установленный из него `apistend` запускается. Пакет уходит
-с [provenance](https://docs.npmjs.com/generating-provenance-statements): на странице
-в npm видно, из какого коммита и какого прогона он собран.
+и проверяет, что установленный из него `apistend` запускается.
 
 Разовый прогон без публикации — вкладка Actions → «Публикация apistend в npm» →
 Run workflow с включённым «Собрать и проверить, но не публиковать».
-
-Требуется секрет репозитория `NPM_TOKEN` с типом **Automation**.
 
 ## Диагностика
 

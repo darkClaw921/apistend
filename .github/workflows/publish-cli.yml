@@ -19,8 +19,9 @@ jobs:
 
     permissions:
       contents: read
-      # Нужно для provenance: npm подписывает пакет через OIDC GitHub,
-      # и на странице пакета появляется ссылка на конкретный прогон сборки.
+      # Публикация идёт по доверию, а не по токену: npm обменивает OIDC-токен
+      # GitHub на право записи в пакет apistend. Долгоживущего секрета нет —
+      # красть из репозитория нечего. Provenance при этом выдаётся сам.
       id-token: write
 
     steps:
@@ -33,6 +34,11 @@ jobs:
           node-version: 24
           cache: pnpm
           registry-url: https://registry.npmjs.org
+
+      # Node 24 приносит npm 11, а доверенная публикация описана схемой npm 12:
+      # одиннадцатая шлёт запрос без прав и получает 400.
+      - name: npm 12
+        run: npm install -g npm@12
 
       # Ставим только сам пакет и его зависимости: apps/api тянет за собой
       # prisma generate, которому нужна база, а публикации CLI она ни к чему.
@@ -76,18 +82,7 @@ jobs:
           ./node_modules/.bin/apistend trigger --help | grep -q -- '--rate'
         working-directory: packages/cli
 
-      # Проверяем токен ДО публикации: иначе провал вылезает уже после того,
-      # как provenance подписан и записан в прозрачный журнал Sigstore —
-      # запись там остаётся навсегда, а пакета нет.
-      - name: Токен годен для этого пакета
-        if: startsWith(github.ref, 'refs/tags/') || inputs.dry_run == false
-        run: node scripts/check-npm-token.mjs apistend
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-
       - name: Публикация
         if: startsWith(github.ref, 'refs/tags/') || inputs.dry_run == false
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         working-directory: packages/cli
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
