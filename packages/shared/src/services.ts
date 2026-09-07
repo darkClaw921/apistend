@@ -35,6 +35,15 @@ export interface RateLimitProfile {
   readonly limit: number
   /** Длина окна в миллисекундах. */
   readonly windowMs: number
+  /**
+   * Ёмкость бакета: сколько запросов подряд сервис пропускает сверх ровной скорости.
+   *
+   * У Bitrix24 это документированные 50 при средних двух запросах в секунду.
+   * Без бакета мок оказывается в двадцать пять раз строже боевого портала:
+   * приложение, которое при старте делает app.info, profile и placement.bind,
+   * получало бы 503 на третьем вызове там, где бой отвечает спокойно.
+   */
+  readonly burst: number
   /** HTTP-код при превышении. У Bitrix24 это 503, а не 429 — частая ошибка. */
   readonly statusCode: number
   /** Отдаётся ли Retry-After. */
@@ -119,6 +128,7 @@ export const SERVICE_PROFILES: Readonly<Record<ServiceCode, ServiceProfile>> = {
       // Ответ при превышении — 503 QUERY_LIMIT_EXCEEDED, НЕ 429.
       limit: 2,
       windowMs: 1_000,
+      burst: 50,
       statusCode: 503,
       retryAfterSeconds: null,
       description: 'Около 2 запросов в секунду, бакет 50. При превышении — 503 QUERY_LIMIT_EXCEEDED',
@@ -159,6 +169,7 @@ export const SERVICE_PROFILES: Readonly<Record<ServiceCode, ServiceProfile>> = {
     rateLimit: {
       limit: 50,
       windowMs: 1_000,
+      burst: 50,
       statusCode: 429,
       retryAfterSeconds: 1,
       description: 'Около 50 запросов в секунду на аккаунт продавца',
@@ -205,6 +216,7 @@ export const SERVICE_PROFILES: Readonly<Record<ServiceCode, ServiceProfile>> = {
     rateLimit: {
       limit: 300,
       windowMs: 60_000,
+      burst: 300,
       statusCode: 429,
       retryAfterSeconds: 20,
       description: 'До 300 запросов в минуту (Маркетплейс, персональный токен), заголовки X-Ratelimit-*',

@@ -58,6 +58,19 @@ export const EVENTS: readonly EventDefinition[] = [
     code: 'ONTASKADD', title: 'Создана задача', serviceCode: 'bitrix24',
     sample: (n) => ({ FIELDS_AFTER: { ID: String(3800 + n) } }),
   },
+  // События жизненного цикла локального приложения. Приходят не на подписку,
+  // а на адрес из карточки приложения, и несут в auth[] рабочий access_token —
+  // для приложения без интерфейса это вообще единственный способ его получить.
+  {
+    code: 'ONAPPINSTALL', title: 'Приложение установлено', serviceCode: 'bitrix24',
+    sample: () => ({ VERSION: '1', ACTIVE: 'Y', INSTALLED: 'Y', LANGUAGE_ID: 'ru' }),
+  },
+  {
+    code: 'ONAPPUNINSTALL', title: 'Приложение удалено', serviceCode: 'bitrix24',
+    // CLEAN — значение опции «Очистить данные приложения». Токенов в auth[] нет:
+    // права сняты, и обращаться к API от имени приложения уже нельзя.
+    sample: () => ({ LANGUAGE_ID: 'ru', CLEAN: 1 }),
+  },
 
   // ─────────── Ozon ───────────
   {
@@ -199,6 +212,24 @@ export function buildEventPayload(
     readonly sellerId: number
     readonly requestId: string
     readonly isTest: boolean
+    /**
+     * Конверт авторизации локального приложения.
+     *
+     * Событие, адресованное приложению, несёт в auth[] действующий access_token —
+     * в отличие от входящего вебхука, которому хватает домена и токена приложения.
+     * Приложения на этом построены: обработчик берёт токен прямо из события
+     * и сразу вызывает REST, не поднимая своё хранилище.
+     */
+    readonly appAuth?: {
+      readonly accessToken: string
+      readonly refreshToken: string
+      readonly expiresIn: number
+      readonly scope: readonly string[]
+      readonly memberId: string
+      readonly clientEndpoint: string
+      readonly serverEndpoint: string
+      readonly status: string
+    } | null
   },
 ): { body: string; contentType: string } {
   const data = event.sample(options.index, options.now)
@@ -211,6 +242,28 @@ export function buildEventPayload(
     flattenPhp(data, 'data', params)
     params.set('ts', String(Math.floor(options.now.getTime() / 1000)))
     params.set('auth[domain]', options.portalDomain)
+
+    const app = options.appAuth
+    if (app) {
+      params.set('auth[client_endpoint]', app.clientEndpoint)
+      params.set('auth[server_endpoint]', app.serverEndpoint)
+      params.set('auth[member_id]', app.memberId)
+      params.set('auth[application_token]', options.applicationToken)
+      params.set('auth[status]', app.status)
+      // При удалении приложения права уже сняты, и токенов в auth[] нет —
+      // приложение обязано понять, что вызывать API от своего имени больше нельзя.
+      if (event.code !== 'ONAPPUNINSTALL') {
+        params.set('auth[access_token]', app.accessToken)
+        params.set('auth[expires_in]', String(app.expiresIn))
+        params.set('auth[scope]', app.scope.join(','))
+      }
+      // refresh_token обработчикам событий обычно НЕ приходит: единственное
+      // исключение — ONAPPINSTALL, и оно же единственный момент, когда приложению
+      // действительно негде взять долгоживущую авторизацию.
+      if (event.code === 'ONAPPINSTALL') params.set('auth[refresh_token]', app.refreshToken)
+      return { body: params.toString(), contentType: 'application/x-www-form-urlencoded' }
+    }
+
     params.set('auth[client_endpoint]', `https://${options.portalDomain}/rest/`)
     params.set('auth[server_endpoint]', 'https://oauth.bitrix24.tech/rest/')
     params.set('auth[member_id]', 'd897063e1ce7c5eb9f04b9751eef5915')

@@ -25,3 +25,6 @@ apps/api/prisma/generated/
 
 # Артефакты npm pack
 *.tgz
+
+# Токены, которые пример локального приложения сохраняет при установке.
+examples/b24-local-app/.tokens.json

@@ -43,7 +43,26 @@ export interface DispatchResult {
 export type DeliverableWebhook = Pick<
   Webhook,
   'id' | 'sandboxId' | 'serviceCode' | 'event' | 'httpMethod' | 'target' | 'targetUrl' | 'targetPath' | 'secret'
->
+> & { appId?: string | null }
+
+/**
+ * Конверт авторизации приложения для события.
+ *
+ * Готовится вызывающим и передаётся готовым: buildDelivery обязана оставаться
+ * синхронной и не ходить в базу — при серии в сотни событий в секунду запрос
+ * за токеном на каждое событие и был бы узким местом.
+ */
+export interface AppAuthEnvelope {
+  readonly accessToken: string
+  readonly refreshToken: string
+  readonly expiresIn: number
+  readonly scope: readonly string[]
+  readonly memberId: string
+  readonly clientEndpoint: string
+  readonly serverEndpoint: string
+  readonly status: string
+  readonly applicationToken: string
+}
 
 /**
  * Собирает строку доставки, ничего не записывая.
@@ -54,7 +73,7 @@ export type DeliverableWebhook = Pick<
  */
 export function buildDelivery(
   webhook: DeliverableWebhook,
-  options: { index: number; now: Date; isTest?: boolean; burstId?: string },
+  options: { index: number; now: Date; isTest?: boolean; burstId?: string; appAuth?: AppAuthEnvelope | null },
 ) {
   const event = findEvent(webhook.event)
   const service = webhook.serviceCode as ServiceCode
@@ -65,11 +84,12 @@ export function buildDelivery(
     ? buildEventPayload(event, {
         index: options.index,
         now: options.now,
-        portalDomain: PORTAL_DOMAIN,
-        applicationToken: webhook.secret.slice(-32),
+        portalDomain: options.appAuth ? new URL(options.appAuth.clientEndpoint).host : PORTAL_DOMAIN,
+        applicationToken: options.appAuth?.applicationToken ?? webhook.secret.slice(-32),
         sellerId: SELLER_ID,
         requestId: randomUUID(),
         isTest: options.isTest === true,
+        appAuth: options.appAuth ?? null,
       })
     : { body: JSON.stringify({ event: webhook.event, test: options.isTest === true }), contentType: 'application/json' }
 
@@ -144,10 +164,14 @@ export async function dispatchWebhook(options: DispatchOptions): Promise<Dispatc
   if (!webhook) return null
 
   const now = new Date()
+  // Событие, адресованное приложению, несёт рабочий access_token — иначе обработчику
+  // нечем ответить на него вызовом REST, а именно за этим он его и ждёт.
+  const appAuth = webhook.appId ? await (await import('../b24/app-auth.ts')).loadAppAuth(webhook.appId) : null
   const row = buildDelivery(webhook, {
     index: options.index ?? Math.floor(now.getTime() / 1000) % 97,
     now,
     isTest: options.isTest,
+    appAuth,
   })
 
   const delivery = await prisma.webhookDelivery.create({ data: row })
