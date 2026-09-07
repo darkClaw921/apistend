@@ -1,5 +1,9 @@
 # APIStend
 
+[![CI](https://github.com/darkClaw921/apistend/actions/workflows/ci.yml/badge.svg)](https://github.com/darkClaw921/apistend/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/apistend?label=apistend)](https://www.npmjs.com/package/apistend)
+[![Лицензия MIT](https://img.shields.io/badge/лицензия-MIT-blue.svg)](LICENSE)
+
 Сервис демо-копий боевых API **Bitrix24**, **Ozon Seller** и **Wildberries**.
 Разработчик подменяет базовый адрес боевого API на адрес песочницы и получает те же
 схемы ответов, те же коды ошибок и те же события — включая доставку вебхуков
