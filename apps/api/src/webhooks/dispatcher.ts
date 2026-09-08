@@ -323,8 +323,13 @@ export async function recordDeliveryResult(id: string, outcome: DeliveryOutcome)
       }),
       prisma.webhook.updateMany({
         where: { id: delivery.webhookId },
-        data: { lastAttemptAt: new Date(), status: 'active' },
+        data: { lastAttemptAt: new Date() },
       }),
+      // Успех НЕ снимает паузу. Во-первых, поставленный на паузу вебхук должен
+      // остаться на паузе: доставка из очереди, отправленная до паузы, молча
+      // включала его обратно. Во-вторых, так ведёт себя и бой: Ozon дословно
+      // пишет, что приостановленная подписка «возобновляется только вручную».
+      // Снять состояние failing или paused можно переключателем в интерфейсе.
     ])
     return
   }

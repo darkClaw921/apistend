@@ -1,10 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Check, Copy, LaptopMinimal, Play, RefreshCw, RotateCcw, X } from 'lucide-react'
+import { Check, Copy, LaptopMinimal, Pause, Play, RefreshCw, RotateCcw, Trash2, X } from 'lucide-react'
 import {
   ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, DataTable, EmptyState, ErrorState,
-  MethodBadge, Overline, Panel, PanelFooter, PanelHeader, SearchField, SegmentControl,
+  IconButton, MethodBadge, Overline, Panel, PanelFooter, PanelHeader, SearchField, SegmentControl,
   ServiceSquare, SkeletonRows, StatusChip, StatusCodeChip, formatInt, formatMs, formatPercent,
   formatRelative, formatTime, meta,
 } from '@apistend/ui'
@@ -55,6 +55,7 @@ export default function WebhooksPage() {
   const [creating, setCreating] = useState(false)
   const [selected, setSelected] = useState<DeliveryItem | null>(null)
   const [testing, setTesting] = useState<string | null>(null)
+  const [busyWebhook, setBusyWebhook] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [creatingScenario, setCreatingScenario] = useState(false)
   const [busyScenario, setBusyScenario] = useState<string | null>(null)
@@ -92,6 +93,39 @@ export default function WebhooksPage() {
       setError(e instanceof ApiError ? e.message : 'Не удалось отправить тестовое событие')
     } finally {
       setTesting(null)
+    }
+  }
+
+  /**
+   * Пауза и снятие паузы.
+   *
+   * Вебхук в состоянии «Ошибки» иначе не восстановить: приостановка снимается
+   * только вручную — так же, как у боевого Ozon.
+   */
+  async function toggleWebhook(id: string) {
+    setBusyWebhook(id)
+    try {
+      await api.post(`/api/webhooks/${id}/toggle`)
+      setError(null)
+      await load(true)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Не удалось переключить вебхук')
+    } finally {
+      setBusyWebhook(null)
+    }
+  }
+
+  /** Удаление вебхука вместе с его доставками. */
+  async function removeWebhook(id: string) {
+    setBusyWebhook(id)
+    try {
+      await api.del(`/api/webhooks/${id}`)
+      setError(null)
+      await load(true)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Не удалось удалить вебхук')
+    } finally {
+      setBusyWebhook(null)
     }
   }
 
@@ -152,13 +186,13 @@ export default function WebhooksPage() {
           </span>
         ),
       },
-      { key: 'method', header: 'Метод', width: 66, render: (w) => <MethodBadge method={w.httpMethod} /> },
+      { key: 'method', header: 'Метод', width: 86, render: (w) => <MethodBadge method={w.httpMethod} /> },
       {
-        key: 'status', header: 'Статус', width: 106,
+        key: 'status', header: 'Статус', width: 126,
         render: (w) => <StatusChip tone={STATUS_TONE[w.status]}>{STATUS_LABEL[w.status]}</StatusChip>,
       },
       {
-        key: 'last', header: 'Посл. попытка', width: 104,
+        key: 'last', header: 'Посл. попытка', width: 104, className: 'max-xl:hidden',
         render: (w) => (
           <span className="flex flex-col">
             <span className="font-mono text-[12px] text-text-primary tabular">
@@ -171,15 +205,34 @@ export default function WebhooksPage() {
         ),
       },
       {
-        key: 'test', header: '', width: 76, align: 'right',
+        key: 'actions', header: '', width: 186, align: 'right',
         render: (w) => (
-          <ButtonSecondary tone="quiet" disabled={testing === w.id} onClick={() => void test(w.id)}>
-            {testing === w.id ? '…' : 'Тест'}
-          </ButtonSecondary>
+          <span className="inline-flex items-center gap-[6px]">
+            <ButtonSecondary tone="quiet" disabled={testing === w.id} onClick={() => void test(w.id)}>
+              {testing === w.id ? '…' : 'Тест'}
+            </ButtonSecondary>
+            <IconButton
+              aria-label={w.status === 'active' ? 'Поставить на паузу' : 'Включить'}
+              title={w.status === 'active' ? 'Поставить на паузу' : 'Включить'}
+              disabled={busyWebhook === w.id}
+              onClick={() => void toggleWebhook(w.id)}
+            >
+              {w.status === 'active' ? <Pause size={14} aria-hidden /> : <Play size={14} aria-hidden />}
+            </IconButton>
+            <IconButton
+              aria-label="Удалить вебхук"
+              title="Удалить вебхук"
+              disabled={busyWebhook === w.id}
+              onClick={() => void removeWebhook(w.id)}
+              className="hover:text-danger"
+            >
+              <Trash2 size={14} aria-hidden />
+            </IconButton>
+          </span>
         ),
       },
     ],
-    [data, testing],
+    [data, testing, busyWebhook],
   )
 
   const deliveryColumns: Array<Column<DeliveryItem>> = useMemo(
@@ -214,7 +267,7 @@ export default function WebhooksPage() {
         render: (d) => <span className="text-text-secondary">{d.durationMs === null ? '—' : formatMs(d.durationMs)}</span>,
       },
       {
-        key: 'state', header: '', width: 110, align: 'right',
+        key: 'state', header: '', width: 140, align: 'right',
         render: (d) => (
           <StatusChip tone={DELIVERY_ICON[d.state].tone}>{DELIVERY_ICON[d.state].label}</StatusChip>
         ),
@@ -262,7 +315,7 @@ export default function WebhooksPage() {
 
         <LocalDeliveryBar agent={data?.localAgent ?? null} loading={loading && !data} />
 
-        <div className="flex min-h-0 flex-1 gap-[20px]">
+        <div className="flex min-h-0 flex-1 gap-[20px] max-xl:flex-col">
           <div className="flex min-w-0 flex-1 flex-col gap-[20px]">
             <Panel className="min-h-[280px] flex-1">
               <PanelHeader
@@ -338,7 +391,9 @@ export default function WebhooksPage() {
             </Panel>
           </div>
 
-          <div className="flex w-[380px] shrink-0 flex-col gap-[20px]">
+          {/* Ниже 1280 колонка сценариев встаёт под списком вебхуков:
+              фиксированные 380 px не сжимаются и съедали список целиком. */}
+          <div className="flex flex-col gap-[20px] xl:w-[380px] xl:shrink-0">
             <Panel className="flex-1">
               <PanelHeader
                 title="Сценарии симуляции"

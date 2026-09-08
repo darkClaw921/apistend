@@ -230,7 +230,6 @@ export class MockEngine {
     method: CatalogMethod,
     source: 'example' | 'schema' | 'generic',
   ): Record<string, string> {
-    const profile = SERVICE_PROFILES[req.service]
     return {
       'content-type': 'application/json; charset=utf-8',
       'x-request-id': req.requestId,
@@ -239,7 +238,10 @@ export class MockEngine {
       'x-apistend-scenario': req.scenario,
       'x-apistend-upstream': method.upstreamHost,
       'x-apistend-snapshot': method.snapshotDate,
-      'x-ratelimit-limit': String(profile.rateLimit.limit),
+      // X-Ratelimit-* здесь не место: счётчик ведёт шлюз, и он же знает остаток.
+      // Движок подставлял сюда среднюю скорость из профиля (у Bitrix24 это 2),
+      // затирая выставленную шлюзом ёмкость, — и клиент получал Limit: 2
+      // при Remaining: 49. Оба заголовка теперь выставляет один владелец.
     }
   }
 }

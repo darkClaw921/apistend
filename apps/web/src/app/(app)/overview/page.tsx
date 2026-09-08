@@ -121,21 +121,36 @@ export default function OverviewPage() {
       { key: 'time', header: 'Время', width: 88, mono: true, render: (r) => <span className="text-text-secondary">{formatTime(r.timestamp)}</span> },
       {
         key: 'service', header: 'Сервис', width: 124,
+        render: (r) => {
+          const title = isServiceCode(r.serviceCode) ? SERVICE_PROFILES[r.serviceCode].title : r.serviceCode
+          return (
+            <span className="flex items-center gap-[7px]" title={title}>
+              {isServiceCode(r.serviceCode) ? <ServiceDot service={r.serviceCode} size={7} /> : null}
+              <span className="truncate">{title}</span>
+            </span>
+          )
+        },
+      },
+      { key: 'method', header: 'Метод', width: 70, render: (r) => <MethodBadge method={r.httpMethod} /> },
+      {
+        key: 'endpoint', header: 'Эндпоинт', mono: true,
+        render: (r) => <span className="text-text-primary" title={r.endpoint}>{r.endpoint}</span>,
+      },
+      { key: 'code', header: 'Код', width: 74, render: (r) => <StatusCodeChip code={r.statusCode} /> },
+      {
+        key: 'duration', header: 'Задержка', width: 96, mono: true,
+        render: (r) => <span className={r.durationMs >= 1000 ? 'text-danger' : 'text-text-secondary'}>{formatMs(r.durationMs)}</span>,
+      },
+      // Имя ключа — свободный текст: многоточие законно, полное значение
+      // даёт всплывающая подсказка.
+      {
+        key: 'key', header: 'Ключ', width: 104, mono: true,
         render: (r) => (
-          <span className="flex items-center gap-[7px]">
-            {isServiceCode(r.serviceCode) ? <ServiceDot service={r.serviceCode} size={7} /> : null}
-            <span className="truncate">{isServiceCode(r.serviceCode) ? SERVICE_PROFILES[r.serviceCode].title : r.serviceCode}</span>
+          <span className="truncate text-text-tertiary" title={r.apiKeyName ?? undefined}>
+            {r.apiKeyName ?? '—'}
           </span>
         ),
       },
-      { key: 'method', header: 'Метод', width: 70, render: (r) => <MethodBadge method={r.httpMethod} /> },
-      { key: 'endpoint', header: 'Эндпоинт', mono: true, render: (r) => <span className="text-text-primary">{r.endpoint}</span> },
-      { key: 'code', header: 'Код', width: 74, render: (r) => <StatusCodeChip code={r.statusCode} /> },
-      {
-        key: 'duration', header: 'Задержка', width: 88, mono: true,
-        render: (r) => <span className={r.durationMs >= 1000 ? 'text-danger' : 'text-text-secondary'}>{formatMs(r.durationMs)}</span>,
-      },
-      { key: 'key', header: 'Ключ', width: 104, mono: true, render: (r) => <span className="truncate text-text-tertiary">{r.apiKeyName ?? '—'}</span> },
     ],
     [],
   )
@@ -154,8 +169,10 @@ export default function OverviewPage() {
       />
 
       <main className="flex min-h-0 flex-1 flex-col gap-[16px] overflow-y-auto scrollbar-thin p-[24px]">
-        {/* KPI */}
-        <div className="grid shrink-0 grid-cols-4 gap-[16px]">
+        {/* KPI. Четыре плитки в ряд — раскладка макета на 1440; на узком экране
+            от «Запросов за 24 часа» оставалось «За 24», поэтому ниже 1024
+            они встают в две строки по две. */}
+        <div className="grid shrink-0 gap-[16px] max-lg:grid-cols-2 lg:grid-cols-4">
           <KpiTile
             label="Запросов за 24 часа"
             value={data ? formatInt(data.kpi.requests24h) : '—'}
@@ -196,7 +213,9 @@ export default function OverviewPage() {
             }
           />
           <div className="flex min-h-0 flex-1">
-            <div className="flex w-[600px] shrink-0 flex-col border-r border-border">
+            {/* 600 px из макета — но только когда рядом помещается предпросмотр.
+                Ниже 1280 предпросмотр уходит, а список занимает всю ширину. */}
+            <div className="flex min-w-0 flex-col border-r border-border max-xl:flex-1 xl:w-[600px] xl:shrink-0">
               <div className="flex shrink-0 items-center gap-[10px] border-b border-border px-[16px] py-[13px]">
                 <Search size={16} className="shrink-0 text-text-tertiary" aria-hidden />
                 <input
@@ -258,8 +277,10 @@ export default function OverviewPage() {
               </div>
             </div>
 
-            {/* Предпросмотр обмена */}
-            <div className="flex min-w-0 flex-1 flex-col gap-[10px] p-[16px]">
+            {/* Предпросмотр обмена. Ниже 1280 его показать негде: рядом со списком
+                на 600 px он ужимался до пары сантиметров и кодовые блоки в нём
+                читать было нечем. Метод открывается в консоли. */}
+            <div className="flex min-w-0 flex-1 flex-col gap-[10px] p-[16px] max-xl:hidden">
               {!selected ? (
                 <div className="flex flex-1 items-center justify-center">
                   <p className="text-[13px] text-text-tertiary">Выберите метод, чтобы увидеть обмен</p>
@@ -313,7 +334,7 @@ export default function OverviewPage() {
         </Panel>
 
         {/* Нижняя область */}
-        <div className="flex min-h-[380px] flex-1 gap-[16px]">
+        <div className="flex min-h-[380px] flex-1 gap-[16px] max-xl:flex-col">
           <Panel className="min-w-0 flex-1">
             <PanelHeader
               title="Последние запросы"
@@ -349,7 +370,7 @@ export default function OverviewPage() {
             />
           </Panel>
 
-          <div className="flex w-[328px] shrink-0 flex-col gap-[16px]">
+          <div className="flex flex-col gap-[16px] xl:w-[328px] xl:shrink-0">
             <Panel className="flex-1">
               <PanelHeader
                 title="Требуют внимания"

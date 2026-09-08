@@ -45,10 +45,11 @@ export function PanelHeader({
       )}
     >
       {icon}
-      <h2 className="text-[14px] font-semibold text-text-primary whitespace-nowrap">{title}</h2>
+      <h2 className="truncate text-[14px] font-semibold text-text-primary">{title}</h2>
       {count}
-      {subtitle ? <span className="text-[12px] text-text-tertiary">{subtitle}</span> : null}
-      {right ? <div className="ml-auto flex items-center gap-[10px]">{right}</div> : null}
+      {subtitle ? <span className="truncate text-[12px] text-text-tertiary">{subtitle}</span> : null}
+      {/* Правый блок не сжимается: заголовок уступает место действиям, а не наоборот. */}
+      {right ? <div className="ml-auto flex shrink-0 items-center gap-[10px]">{right}</div> : null}
     </header>
   )
 }
@@ -73,8 +74,11 @@ export function PanelFooter({
         className,
       )}
     >
-      {left ? <div className="text-[12px] text-text-tertiary">{left}</div> : null}
-      {right ? <div className="ml-auto flex items-center gap-[16px]">{right}</div> : null}
+      {/* Пояснение слева ужимается, действия справа — нет. Без min-w-0 длинная
+          подпись («Показано 1–40 из 2 095 методов · снимок …») выдавливала
+          пагинацию за край панели и налезала на неё. */}
+      {left ? <div className="min-w-0 flex-1 truncate text-[12px] text-text-tertiary">{left}</div> : null}
+      {right ? <div className="ml-auto flex shrink-0 items-center gap-[16px]">{right}</div> : null}
     </footer>
   )
 }

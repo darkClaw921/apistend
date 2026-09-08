@@ -6,7 +6,16 @@ import { cn } from '../lib/cn.ts'
  *
  * Размечена семантически (table/thead/tbody) — пункт чек-листа доступности.
  * Ширины колонок фиксированные в px, последняя содержательная колонка тянется.
+ *
+ * У таблицы есть минимальная ширина: при table-fixed сумма заданных колонок
+ * съедает всё, и тянущейся колонке доставалось ноль пикселей — путь эндпоинта
+ * на узком экране исчезал целиком. Ниже минимума тело панели прокручивается
+ * по горизонтали (overflow-y: auto делает и overflow-x: auto), а таблица
+ * остаётся читаемой.
  */
+
+/** Сколько пикселей гарантируем тянущейся колонке. */
+const FLEXIBLE_MIN_WIDTH = 200
 
 export interface Column<T> {
   key: string
@@ -50,8 +59,15 @@ export function DataTable<T>({
 }) {
   if (rows.length === 0 && emptyState) return <>{emptyState}</>
 
+  // Колонки, помеченные скрытием на узком экране, в минимум не входят: они для
+  // того и помечены, чтобы уступать место, когда его мало.
+  const minWidth = columns.reduce(
+    (sum, c) => (c.className?.includes(':hidden') ? sum : sum + (c.width ?? FLEXIBLE_MIN_WIDTH)),
+    0,
+  )
+
   return (
-    <table className={cn('w-full table-fixed border-collapse', className)}>
+    <table style={{ minWidth }} className={cn('w-full table-fixed border-collapse', className)}>
       <colgroup>
         {columns.map((c) => (
           <col key={c.key} className={c.className} style={c.width ? { width: c.width } : undefined} />

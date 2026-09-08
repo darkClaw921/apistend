@@ -1,6 +1,9 @@
 import Fastify from 'fastify'
 import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
+import { z } from 'zod'
+import { ru } from 'zod/locales'
+import { SERVICE_LIST } from '@apistend/shared'
 import { env } from './env.ts'
 import { prisma } from './db.ts'
 import { engine, registerGateway } from './gateway.ts'
@@ -22,6 +25,39 @@ import { keyCacheStats } from './lib/api-key.ts'
 import { retentionStats, startRetentionJob, stopRetentionJob } from './lib/retention.ts'
 import { allSessions } from './tunnel/registry.ts'
 
+/**
+ * Сообщения валидации — по-русски.
+ *
+ * Тексты zod по умолчанию английские, и в русском интерфейсе всплывали строки
+ * вроде «Too small: expected string to have >=2 characters». Собственные тексты
+ * у полей, где формулировка важна, остаются: локаль подставляется только там,
+ * где сообщение не задано.
+ */
+z.config(ru())
+
+/**
+ * Ветки мок-шлюза и своих моков.
+ *
+ * Им положен открытый CORS: это песочница, к которой ходят из чужих страниц.
+ * Кабинету — наоборот, строгий origin с cookie. Плагин отвечает на предполётный
+ * запрос сам, в onRequest, поэтому решение принимается здесь, а не в маршруте:
+ * до обработчика шлюза предполёт просто не доходил, и браузер получал ответ
+ * с origin кабинета — то есть отказ.
+ */
+const GATEWAY_PREFIXES = [
+  ...SERVICE_LIST.map((p) => `${p.mountPath}/`),
+  ...SERVICE_LIST.map((p) => p.mountPath),
+  '/v1/',
+  '/rest/',
+  '/custom/',
+  '/oauth/',
+]
+
+function isGatewayPath(url: string): boolean {
+  const path = url.split('?')[0] ?? '/'
+  return GATEWAY_PREFIXES.some((prefix) => path === prefix || path.startsWith(prefix))
+}
+
 export async function buildServer() {
   const app = Fastify({
     logger: env.isProduction
@@ -34,8 +70,32 @@ export async function buildServer() {
   })
 
   await app.register(cookie)
-  // Кабинет ходит с другого порта и обязан присылать cookie сессии.
-  await app.register(cors, { origin: [env.webOrigin], credentials: true })
+  await app.register(cors, {
+    delegator: (req, done) => {
+      if (isGatewayPath(req.url)) {
+        done(null, {
+          // Песочницу зовут откуда угодно, и заголовок x-apistend-cors честно
+          // помечает, что в бою этого разрешения не будет.
+          origin: '*',
+          credentials: false,
+          methods: 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS',
+          allowedHeaders: '*',
+          exposedHeaders: [
+            'x-request-id', 'x-apistend-source', 'x-apistend-readiness',
+            'x-apistend-scenario', 'x-apistend-upstream', 'x-apistend-snapshot',
+            'x-apistend-did-you-mean', 'x-apistend-error', 'x-apistend-cors',
+            'x-ratelimit-limit', 'x-ratelimit-remaining', 'retry-after',
+          ],
+          // Предполёт без заголовков предполёта — обычный OPTIONS, и отвечать
+          // на него четырёхсотым нельзя: этим спрашивают, что умеет адрес.
+          strictPreflight: false,
+        })
+        return
+      }
+      // Кабинет ходит с другого порта и обязан присылать cookie сессии.
+      done(null, { origin: [env.webOrigin], credentials: true })
+    },
+  })
 
   // Тело неизвестного типа не должно ронять запрос: мок обязан принять всё,
   // что пришлёт клиентская библиотека, и разобраться сам.

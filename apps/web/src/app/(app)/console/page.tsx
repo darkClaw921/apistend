@@ -237,9 +237,12 @@ function ConsoleScreen() {
           </ButtonSecondary>
         </div>
 
-        <div className="flex min-h-0 flex-1 gap-[20px]">
+        {/* Левая колонка фиксирована в 440 px по макету и не сжимается: ниже 1280
+            правой оставалось сто пикселей, и ответ читать было негде.
+            Колонки встают друг под другом, страница начинает прокручиваться. */}
+        <div className="flex min-h-0 flex-1 gap-[20px] max-xl:flex-col max-xl:overflow-y-auto max-xl:scrollbar-thin">
           {/* Колонка запроса */}
-          <div className="flex w-[440px] min-w-0 shrink-0 flex-col gap-[20px]">
+          <div className="flex min-w-0 flex-col gap-[20px] max-xl:shrink-0 xl:w-[440px] xl:shrink-0">
             <Panel className="min-h-0 flex-1">
               <Tabs
                 items={[
@@ -362,7 +365,7 @@ function ConsoleScreen() {
           </div>
 
           {/* Колонка ответа */}
-          <div className="flex min-w-0 flex-1 flex-col gap-[20px]">
+          <div className="flex min-w-0 flex-1 flex-col gap-[20px] max-xl:min-h-[520px]">
             <Panel className="min-h-0 flex-1">
               <PanelHeader
                 title={

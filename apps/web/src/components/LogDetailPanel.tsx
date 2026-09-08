@@ -39,7 +39,7 @@ export function LogDetailPanel({ row, onClose }: { row: LogRow | null; onClose: 
 
   if (!row) {
     return (
-      <Panel className="w-[336px] shrink-0">
+      <Panel className="h-full w-full">
         <EmptyState
           title="Запрос не выбран"
           description="Выберите строку журнала, чтобы увидеть тело запроса, ответ и заголовки"
@@ -58,7 +58,7 @@ export function LogDetailPanel({ row, onClose }: { row: LogRow | null; onClose: 
   }
 
   return (
-    <Panel className="w-[336px] shrink-0">
+    <Panel className="h-full w-full">
       <div className="flex shrink-0 items-center gap-[10px] border-b border-border px-[16px] py-[13px]">
         <h2 className="text-[14px] font-semibold text-text-primary">Детали запроса</h2>
         <div className="ml-auto flex items-center gap-[8px]">

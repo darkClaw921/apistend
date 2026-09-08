@@ -73,6 +73,21 @@ const updateApp = createApp.partial().extend({
   kind: z.enum(B24_APP_KINDS).optional(),
 })
 
+/**
+ * Тело двух маршрутов жизненного цикла приложения.
+ *
+ * Схем у них не было: нестроковый appSid и нечисловой portalUserId уходили
+ * прямо в Prisma и возвращались пятисоткой вместо внятного отказа.
+ */
+const installFinishInput = z.object({
+  appSid: z.string().min(1).max(120).optional(),
+})
+
+const issueTokenInput = z.object({
+  appSid: z.string().min(1).max(120).optional(),
+  portalUserId: z.number().int().min(1).max(1_000_000).optional(),
+})
+
 const openApp = z.object({
   placement: z.string().default('DEFAULT'),
   placementOptions: z.record(z.string(), z.unknown()).default({}),
@@ -326,7 +341,11 @@ export function registerB24AppRoutes(app: FastifyInstance): void {
     const found = await prisma.b24App.findFirst({ where: { id: req.params.id, sandboxId: ctx.sandbox.id } })
     if (!found) return reply.code(404).send({ error: 'NOT_FOUND', message: 'Приложение не найдено' })
 
-    const appSid = (req.body as { appSid?: string } | undefined)?.appSid
+    const parsed = installFinishInput.safeParse(req.body ?? {})
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'VALIDATION', issues: parsed.error.issues.map((i) => i.message) })
+    }
+    const appSid = parsed.data.appSid
     if (appSid) {
       await prisma.b24AppSession.updateMany({
         where: { appId: found.id, appSid, finishedAt: null },
@@ -400,11 +419,14 @@ export function registerB24AppRoutes(app: FastifyInstance): void {
     const found = await prisma.b24App.findFirst({ where: { id: req.params.id, sandboxId: ctx.sandbox.id } })
     if (!found) return reply.code(404).send({ error: 'NOT_FOUND', message: 'Приложение не найдено' })
 
-    const body = (req.body ?? {}) as { appSid?: string; portalUserId?: number }
-    const token = await issueTokenPair(found, body.portalUserId ?? 1)
-    if (body.appSid) {
+    const parsed = issueTokenInput.safeParse(req.body ?? {})
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'VALIDATION', issues: parsed.error.issues.map((i) => i.message) })
+    }
+    const token = await issueTokenPair(found, parsed.data.portalUserId ?? 1)
+    if (parsed.data.appSid) {
       await prisma.b24AppSession.updateMany({
-        where: { appId: found.id, appSid: body.appSid },
+        where: { appId: found.id, appSid: parsed.data.appSid },
         data: { tokenId: token.id },
       })
     }

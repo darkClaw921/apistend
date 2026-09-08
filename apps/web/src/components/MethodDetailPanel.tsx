@@ -18,6 +18,10 @@ import { READINESS_LABEL, READINESS_TONE, SOURCE_LABEL } from '@/lib/readiness'
  * Разделы: описание, параметры, сценарии ответа, задержка.
  * Отдельно показываем происхождение метода: из какой спецификации он взят и какого
  * числа снят снимок. Без этого каталог, наполняемый волнами, вводил бы в заблуждение.
+ *
+ * Ширину задаёт вызывающий: на широком экране это 372 px из макета, на узком —
+ * шторка во всю её ширину. Зашитые здесь 372 px оставляли внутри шторки
+ * восьмидесятипиксельную мёртвую полосу, на которой висела кнопка закрытия.
  */
 export function MethodDetailPanel({
   methodId, totalCatalog,
@@ -54,7 +58,7 @@ export function MethodDetailPanel({
 
   if (!methodId) {
     return (
-      <Panel className="w-[372px] shrink-0">
+      <Panel className="h-full w-full">
         <EmptyState
           title="Метод не выбран"
           description={
@@ -68,7 +72,7 @@ export function MethodDetailPanel({
   }
 
   return (
-    <Panel className="w-[372px] shrink-0">
+    <Panel className="h-full w-full">
       {loading && !detail ? (
         <SkeletonRows rows={8} />
       ) : error ? (

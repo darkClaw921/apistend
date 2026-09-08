@@ -262,7 +262,7 @@ function CatalogScreen() {
         }
       />
 
-      <main className="flex min-h-0 flex-1 flex-col gap-[20px] p-[24px]">
+      <main className="flex min-h-0 flex-1 flex-col gap-[20px] p-[24px] max-lg:gap-[14px] max-lg:p-[16px]">
         {/* Панель фильтров */}
         <div className="flex shrink-0 flex-wrap items-center gap-[10px]">
           <SegmentControl segments={segments} value={service} onChange={(v) => { setService(v); setPage(0) }} />
@@ -298,12 +298,14 @@ function CatalogScreen() {
             ) : null}
           </label>
 
-          <div className="ml-auto">
+          {/* На узком экране поле занимает всю строку: прижатое вправо, оно
+              висело третьей строкой фильтров как оторванный элемент. */}
+          <div className="w-full lg:ml-auto lg:w-[280px]">
             <SearchField
               value={query}
               onValueChange={setQuery}
               placeholder="Поиск по пути или названию"
-              width={280}
+              width="full"
               matches={data?.total}
               aria-label="Поиск по каталогу"
             />
@@ -322,7 +324,7 @@ function CatalogScreen() {
               }
               right={
                 <>
-                  <span className="inline-flex items-center gap-[6px] text-[12px] text-text-tertiary">
+                  <span className="inline-flex items-center gap-[6px] whitespace-nowrap text-[12px] text-text-tertiary max-xl:hidden">
                     Группировка: по сервису
                     <SlidersHorizontal size={13} aria-hidden />
                   </span>
@@ -409,7 +411,14 @@ function CatalogScreen() {
             />
           </Panel>
 
-          <DetailPane open={detailOpen} onClose={() => setDetailOpen(false)} className="min-w-0 flex-1">
+          {/* 372 px — ширина панели деталей из макета (02-api-catalog.md, п. 3).
+              Было flex-1, то есть половина рабочей области: на 1440 список
+              получал 570 px вместо 752 и описания методов резались зря. */}
+          <DetailPane
+            open={detailOpen}
+            onClose={() => setDetailOpen(false)}
+            className="xl:w-[372px] xl:shrink-0"
+          >
             <MethodDetailPanel methodId={selectedId} totalCatalog={totalCatalog} />
           </DetailPane>
         </div>

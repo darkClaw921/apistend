@@ -128,7 +128,10 @@ export default function LogsPage() {
   const columns: Array<Column<LogRow>> = useMemo(
     () => [
       {
-        key: 'time', header: 'Время', width: 100, mono: true,
+        // Ширины числовых колонок — по фактическому содержимому: раньше время
+        // обрывалось на «19:27:13…», а задержка на «30 004…». Обрезать значение,
+        // ради которого колонку и открывают, нельзя; резать можно длинный текст.
+        key: 'time', header: 'Время', width: 118, mono: true,
         render: (r) => (
           <span className={r.id === selected?.id ? 'text-accent' : 'text-text-secondary'}>
             {formatTimeMs(r.timestamp)}
@@ -137,23 +140,24 @@ export default function LogsPage() {
       },
       {
         key: 'service', header: 'Сервис', width: 108,
-        render: (r) => (
-          <span className="flex items-center gap-[7px]">
-            {isServiceCode(r.serviceCode) ? <ServiceDot service={r.serviceCode} size={7} /> : null}
-            <span className="truncate text-text-primary">
-              {isServiceCode(r.serviceCode) ? SERVICE_PROFILES[r.serviceCode].title : r.serviceCode}
+        render: (r) => {
+          const title = isServiceCode(r.serviceCode) ? SERVICE_PROFILES[r.serviceCode].title : r.serviceCode
+          return (
+            <span className="flex items-center gap-[7px]" title={title}>
+              {isServiceCode(r.serviceCode) ? <ServiceDot service={r.serviceCode} size={7} /> : null}
+              <span className="truncate text-text-primary">{title}</span>
             </span>
-          </span>
-        ),
+          )
+        },
       },
-      { key: 'method', header: 'Метод', width: 68, render: (r) => <MethodBadge method={r.httpMethod} /> },
+      { key: 'method', header: 'Метод', width: 92, render: (r) => <MethodBadge method={r.httpMethod} /> },
       {
         key: 'endpoint', header: 'Путь эндпоинта', mono: true,
         render: (r) => <span className="text-text-primary" title={r.endpoint}>{r.endpoint}</span>,
       },
       { key: 'status', header: 'Код', width: 72, render: (r) => <StatusCodeChip code={r.statusCode} /> },
       {
-        key: 'duration', header: 'Задержка', width: 84, mono: true,
+        key: 'duration', header: 'Задержка', width: 96, mono: true,
         render: (r) => (
           <span className={r.durationMs >= 1000 ? 'text-danger' : 'text-text-secondary'}>
             {formatMs(r.durationMs)}
@@ -161,12 +165,20 @@ export default function LogsPage() {
         ),
       },
       {
-        key: 'size', header: 'Размер', width: 74, mono: true,
+        key: 'size', header: 'Размер', width: 82, mono: true, className: 'max-2xl:hidden',
         render: (r) => <span className="text-text-secondary">{formatBytes(r.sizeBytes)}</span>,
       },
       {
-        key: 'key', header: 'Ключ доступа', width: 104, mono: true,
-        render: (r) => <span className="truncate text-text-tertiary">{r.apiKeyName ?? '—'}</span>,
+        // Имя ключа — свободный текст, его многоточие законно; всплывающая
+        // подсказка даёт полное значение. Вместе с «Размером» колонка уходит
+        // раньше остальных: восемь колонок в 792 px оставляли пути эндпоинта
+        // 120 px, а он на этом экране главный.
+        key: 'key', header: 'Ключ доступа', width: 104, mono: true, className: 'max-2xl:hidden',
+        render: (r) => (
+          <span className="truncate text-text-tertiary" title={r.apiKeyName ?? undefined}>
+            {r.apiKeyName ?? '—'}
+          </span>
+        ),
       },
     ],
     [selected],
@@ -202,15 +214,19 @@ export default function LogsPage() {
       />
 
       <main className="flex min-h-0 flex-1 flex-col gap-[20px] p-[24px]">
-        {/* Сводка */}
-        <div className="flex h-[132px] shrink-0 gap-[16px]">
-          <div className="grid flex-1 grid-cols-4 gap-[16px]">
+        {/* Сводка.
+            График фиксирован в 452 px и не сжимается — на узком экране он забирал
+            всю строку, а четырём метрикам оставалось по тридцать пикселей, и от
+            «Всего запросов» оставалось «Во за». Ниже 1280 метрики переходят
+            в две строки по две, график встаёт под ними во всю ширину. */}
+        <div className="flex shrink-0 gap-[16px] max-xl:flex-col xl:h-[132px]">
+          <div className="grid flex-1 gap-[16px] max-lg:grid-cols-2 lg:grid-cols-4">
             <Metric label="Всего запросов" value={data ? formatInt(data.summary.total) : '—'} />
             <Metric label="Доля ошибок" value={data ? formatPercent(data.summary.errorRate) : '—'} />
             <Metric label="Средняя задержка" value={data ? formatMs(data.summary.avgLatencyMs) : '—'} />
             <Metric label="95-й перцентиль" value={data ? formatMs(data.summary.p95LatencyMs) : '—'} />
           </div>
-          <Panel className="w-[452px] shrink-0 p-[14px]">
+          <Panel className="p-[14px] max-xl:h-[160px] xl:w-[452px] xl:shrink-0">
             <p className="mb-[6px] shrink-0 text-[13px] font-medium text-text-primary">Активность по часам</p>
             <div className="min-h-0 flex-1">
               <HourlyChart buckets={data?.hourly ?? []} />
@@ -318,7 +334,14 @@ export default function LogsPage() {
 
           {/* Деталка появляется только по выбору строки, поэтому здесь хватает
               самого факта выбора — отдельное состояние шторке не нужно. */}
-          <DetailPane open={!!selected} onClose={() => setSelected(null)} className="w-[420px] shrink-0 max-xl:w-[min(460px,100vw)]">
+          {/* 336 px — ширина панели деталей из макета (04-request-logs.md, п. 4).
+              Ширину держит шторка, а не сама панель: внутри шторки на узком
+              экране фиксированные 336 px оставляли мёртвую полосу. */}
+          <DetailPane
+            open={!!selected}
+            onClose={() => setSelected(null)}
+            className="xl:w-[336px] xl:shrink-0"
+          >
             <LogDetailPanel row={selected} onClose={() => setSelected(null)} />
           </DetailPane>
         </div>

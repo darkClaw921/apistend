@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import { BookOpen, Menu } from 'lucide-react'
+import { BookOpen, Menu, Search } from 'lucide-react'
 import { Dialog, IconButton, KbdChip, SearchField } from '@apistend/ui'
 import { useOptionalShell } from './AppShell'
 import { GlobalSearch } from './GlobalSearch'
@@ -17,6 +17,10 @@ import { NotificationsBell } from './NotificationsBell'
  * строке шапки список результатов некуда, а по ⌘K её ждут в любом месте.
  * Пропсы search/onSearchChange сохранены — экраны передают в них своё
  * состояние, и ломать их сигнатуру ради этого незачем.
+ *
+ * До 1024 px поле уступает место заголовку и сворачивается в лупу. Оно занимает
+ * фиксированные 280 px и не сжимается, из-за чего на узком экране на заголовок
+ * оставалось 55 px и «Каталог API» превращался в «Кат…».
  */
 export function Topbar({
   breadcrumb, title, action, search, onSearchChange, showTools = true,
@@ -73,7 +77,7 @@ export function Topbar({
       <div className="ml-auto flex shrink-0 items-center gap-[10px]">
         {showTools ? (
           <>
-            <div className="relative">
+            <div className="relative max-lg:hidden">
               <SearchField
                 value={search}
                 onValueChange={onSearchChange}
@@ -87,6 +91,9 @@ export function Topbar({
                 <KbdChip>⌘K</KbdChip>
               </span>
             </div>
+            <IconButton aria-label="Поиск" className="lg:hidden" onClick={() => setSearchOpen(true)}>
+              <Search size={16} aria-hidden />
+            </IconButton>
             <IconButton aria-label="Документация" onClick={() => router.push('/catalog')}>
               <BookOpen size={16} aria-hidden />
             </IconButton>

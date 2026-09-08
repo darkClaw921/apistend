@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto'
  * и ведут себя ровно так, как нарисовано в правой колонке редактора.
  *
  * Поддерживаются: {{uuid}}, {{now}}, {{now +3d}}, {{randomInt a b}},
- * {{faker.company}}, {{faker.city}}, {{request.body.*}}, {{query.*}}.
+ * {{faker.company}}, {{faker.city}}, {{request.body.*}}, {{query.*}}, {{params.*}}.
  */
 
 const COMPANIES = [
@@ -38,7 +38,10 @@ export function renderTemplate(template: string, ctx: TemplateContext): string {
   return template.replace(PLACEHOLDER, (match, rawExpr: string) => {
     const expr = rawExpr.trim()
 
-    if (expr === 'uuid') return randomUUID()
+    // При заданном источнике случайности идентификатор тоже обязан быть от него:
+    // иначе предпросмотр, который весь смысл имеет в повторяемости, менялся
+    // на каждое нажатие клавиши из-за одного {{uuid}} в теле.
+    if (expr === 'uuid') return ctx.random ? uuidFrom(ctx.random) : randomUUID()
 
     // {{now}} и {{now +3d}} / {{now -12h}}
     const nowMatch = /^now(?:\s*([+-])\s*(\d+)([dhms]))?$/.exec(expr)
@@ -85,6 +88,21 @@ export function renderTemplate(template: string, ctx: TemplateContext): string {
     // пользователь должен увидеть опечатку в предпросмотре.
     return match
   })
+}
+
+/**
+ * UUID версии 4 из заданного источника случайности.
+ *
+ * Формат тот же, что у randomUUID: клиент, разбирающий ответ по регулярке,
+ * различия не увидит. Разряды версии и варианта проставлены как в RFC 4122.
+ */
+function uuidFrom(rand: () => number): string {
+  const bytes = new Uint8Array(16)
+  for (let i = 0; i < 16; i++) bytes[i] = Math.floor(rand() * 256)
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
 /** Путь вида items.0.sku по вложенной структуре. */
@@ -134,4 +152,5 @@ export const PLACEHOLDER_CATALOG = [
   { code: '{{faker.company}}', description: 'название компании' },
   { code: '{{faker.city}}', description: 'город' },
   { code: '{{request.body.*}}', description: 'поле из тела запроса' },
+  { code: '{{params.id}}', description: 'параметр из пути /custom/orders/{id}' },
 ] as const

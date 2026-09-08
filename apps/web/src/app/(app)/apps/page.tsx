@@ -154,7 +154,7 @@ export default function B24AppsPage() {
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-1 gap-[20px]">
+        <div className="flex min-h-0 flex-1 gap-[20px] max-xl:flex-col">
           <Panel className="min-h-[320px] min-w-0 flex-1">
             <PanelHeader
               title="Приложения портала"
@@ -192,7 +192,7 @@ export default function B24AppsPage() {
             </div>
           </Panel>
 
-          <div className="flex w-[380px] shrink-0 flex-col gap-[20px]">
+          <div className="flex flex-col gap-[20px] xl:w-[380px] xl:shrink-0">
             <PortalPanel portal={data?.portal ?? null} />
 
             <Panel className="shrink-0">

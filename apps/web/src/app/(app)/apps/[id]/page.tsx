@@ -362,7 +362,7 @@ export default function B24AppPage({ params }: { params: Promise<{ id: string }>
               </section>
             )}
 
-            <div className="flex min-h-0 shrink-0 gap-[20px]">
+            <div className="flex min-h-0 shrink-0 gap-[20px] max-xl:flex-col">
               <div className="flex min-w-0 flex-1 flex-col gap-[20px]">
                 <Panel className="shrink-0">
                   <PanelHeader title="Ключи авторизации" />
@@ -487,7 +487,7 @@ export default function B24AppPage({ params }: { params: Promise<{ id: string }>
                 </Panel>
               </div>
 
-              <div className="w-[380px] shrink-0">
+              <div className="xl:w-[380px] xl:shrink-0">
                 <Panel>
                   <PanelHeader title="Параметры" />
                   <dl className="flex flex-col gap-[12px] p-[16px]">

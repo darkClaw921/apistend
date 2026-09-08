@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Scenario, ServiceCode } from '@apistend/shared'
-import { SCENARIOS, SERVICE_LIST, SERVICE_PROFILES, isServiceCode, buildScenarioError } from '@apistend/shared'
+import { SCENARIOS, SERVICE_LIST, SERVICE_PROFILES, isServiceCode, buildScenarioError, timeoutError } from '@apistend/shared'
 import { MockEngine } from '@apistend/mock-engine'
 import { extractRawKey, resolveApiKey } from './lib/api-key.ts'
 import { checkRateLimit } from './lib/rate-limit.ts'
@@ -28,6 +28,9 @@ import { expandBracketKeys, runBatch } from './b24/batch.ts'
  * CORS шлюз отдаёт всегда и помечает это заголовком. Боевые Ozon и WB запросы из браузера
  * не разрешают, и полное повторение этого поведения сломало бы собственную консоль APIStend;
  * консоль ходит через серверный прокси, а прямой доступ из браузера оставлен как удобство.
+ * Сами заголовки и ответ на предполётный запрос выдаёт CORS-плагин в server.ts:
+ * он отвечает в onRequest, до маршрутизации, и обработчик шлюза для OPTIONS
+ * попросту не вызывается.
  */
 
 export const engine = MockEngine.load(['bitrix24', 'ozon', 'wildberries'])
@@ -44,7 +47,15 @@ function sleep(ms: number): Promise<void> {
   return ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve()
 }
 
-/** Детерминированный бросок кубика для «доли случайных ошибок» песочницы. */
+/**
+ * Бросок кубика для «доли случайных ошибок» песочницы.
+ *
+ * Здесь случайность настоящая, и это осознанно: настройка называется «доля
+ * случайных ошибок», её смысл — чтобы клиент на одном и том же вызове иногда
+ * получал сбой. Детерминированный бросок дал бы либо всегда ошибку, либо
+ * никогда, и проверять обработку сбоев стало бы нечем. Детерминизм в продукте
+ * относится к ТЕЛУ успешного ответа — оно закреплено тестом и кешируется.
+ */
 function rollRandomError(errorRatePercent: number): boolean {
   return errorRatePercent > 0 && Math.random() * 100 < errorRatePercent
 }
@@ -62,10 +73,14 @@ export function registerGateway(app: FastifyInstance): void {
   // Подстановка вместо боевого адреса: /wb/*, /oz/*, /b24/*
   for (const profile of SERVICE_LIST) {
     const mount = profile.mountPath
-    app.all<{ Params: { '*': string } }>(`${mount}/*`, async (req, reply) => {
-      const code = SERVICE_BY_MOUNT.get(mount.slice(1))!
-      return handle(req, reply, code, `/${req.params['*']}`)
-    })
+    const code = SERVICE_BY_MOUNT.get(mount.slice(1))!
+    app.all<{ Params: { '*': string } }>(`${mount}/*`, async (req, reply) =>
+      handle(req, reply, code, `/${req.params['*']}`),
+    )
+    // Сам корень монтирования — /wb без слэша. Без этого маршрута ответ приходил
+    // не от сервиса, а от Fastify: конверт {statusCode, error, message}, по которому
+    // клиентская библиотека сервиса не умеет ничего. Отдаём родной 404 сервиса.
+    app.all(mount, async (req, reply) => handle(req, reply, code, '/'))
   }
 
   // Портал Bitrix24 в корне.
@@ -88,17 +103,9 @@ async function handle(
   const reqId = newRequestId()
   const profile = SERVICE_PROFILES[service]
 
-  // Браузерная консоль ходит через серверный прокси, но прямые запросы из браузера
-  // тоже не должны упираться в CORS: это песочница, а не боевой контур.
-  reply.header('access-control-allow-origin', '*')
-  reply.header('access-control-expose-headers', 'x-request-id, x-apistend-source, x-apistend-readiness, x-apistend-scenario, x-apistend-upstream, x-ratelimit-limit, x-ratelimit-remaining, retry-after')
+  // Открытый доступ из браузера — отличие песочницы от боя, и оно помечается.
+  // Access-Control-* ставит CORS-плагин (см. isGatewayPath в server.ts).
   reply.header('x-apistend-cors', 'added-by-sandbox')
-
-  if (req.method === 'OPTIONS') {
-    reply.header('access-control-allow-methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
-    reply.header('access-control-allow-headers', '*')
-    return reply.code(204).send()
-  }
 
   const query = (req.query ?? {}) as Record<string, unknown>
   // Тело парсится до авторизации: Bitrix24 разрешает класть ключ внутрь JSON-тела.
@@ -214,8 +221,32 @@ async function handle(
   // Сценарий «Таймаут 30 с» из макета: соединение держим и не отвечаем в срок.
   if (scenario === 'timeout') {
     await sleep(30_000)
-    reply.header('x-request-id', reqId)
-    return reply.code(504).send(buildScenarioError(service, 'server_error', reqId).body)
+    const err = timeoutError(service, reqId)
+    const timeoutPayload = JSON.stringify(err.body)
+    reply.headers(err.headers).header('x-request-id', reqId).header('x-apistend-scenario', 'timeout')
+    // Таймаут — тоже вызов, и в журнале он нужен больше остальных: именно его
+    // ищут, когда разбираются, почему интеграция висела полминуты. Раньше эта
+    // ветка выходила до записи, и вызова в журнале не было вовсе.
+    enqueueRequestLog({
+      sandboxId: sandbox.id,
+      apiKeyId: resolved?.apiKey.id ?? null,
+      publicId: reqId,
+      serviceCode: service,
+      httpMethod: req.method,
+      endpoint: path,
+      statusCode: err.status,
+      durationMs: Math.round(Number(process.hrtime.bigint() - startedAt) / 1_000_000),
+      sizeBytes: Buffer.byteLength(timeoutPayload),
+      upstreamUrl: result.method ? `${result.method.upstreamHost}${path}` : `${profile.replacesUrl}${path}`,
+      clientIp: req.ip,
+      scenario,
+      responseSource: 'error',
+      requestHeaders: sanitizeHeaders(req.headers as Record<string, unknown>),
+      requestBody: parsedBody ? maskSecretsInText(JSON.stringify(parsedBody)).slice(0, 8_000) : null,
+      responseHeaders: {},
+      responseBody: timeoutPayload,
+    })
+    return reply.code(err.status).type('application/json; charset=utf-8').send(timeoutPayload)
   }
 
   // Задержка: явный X-Mock-Delay > задержка метода > настройка песочницы.
