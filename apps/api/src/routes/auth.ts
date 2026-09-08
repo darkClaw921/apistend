@@ -12,12 +12,25 @@ const credentials = z.object({
 })
 
 const registration = credentials.extend({
-  name: z.string().min(2, 'Укажите имя').max(80),
+  /**
+   * Имя необязательно: на экране регистрации его не спрашивают — по макету
+   * там email, пароль и проект. Когда его нет, берём часть адреса до собаки:
+   * это лучше пустого места в подписи пользователя, чем «Без имени».
+   */
+  name: z.string().min(2, 'Укажите имя').max(80).optional(),
+  /** Имя проекта. Стоит в хлебных крошках кабинета и в баннере CLI. */
+  project: z.string().min(2, 'Название проекта не короче 2 символов').max(80).optional(),
 })
 
 function initialsOf(name: string): string {
   const parts = name.trim().split(/\s+/).slice(0, 2)
   return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || 'AP'
+}
+
+/** «igor.gerasimov@acme.ru» → «Igor.gerasimov». Запасное имя, когда его не спросили. */
+function nameFromEmail(email: string): string {
+  const local = email.split('@')[0] ?? 'user'
+  return local.charAt(0).toUpperCase() + local.slice(1)
 }
 
 export function registerAuthRoutes(app: FastifyInstance): void {
@@ -26,8 +39,10 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     if (!parsed.success) {
       return reply.code(400).send({ error: 'VALIDATION', issues: parsed.error.issues.map((i) => i.message) })
     }
-    const { email, password, name } = parsed.data
+    const { email, password } = parsed.data
     const normalizedEmail = email.toLowerCase()
+    const name = parsed.data.name ?? nameFromEmail(normalizedEmail)
+    const project = parsed.data.project ?? 'Первый проект'
 
     const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } })
     if (existing) {
@@ -45,7 +60,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
 
     // Новому аккаунту сразу выдаём песочницу и ключ: без них продуктом нельзя пользоваться.
     const sandbox = await prisma.sandbox.create({
-      data: { userId: user.id, name: 'sandbox-01', project: 'Первый проект' },
+      data: { userId: user.id, name: 'sandbox-01', project },
     })
     const key = generateKey('sandbox')
     await prisma.apiKey.create({
@@ -64,7 +79,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     await issueSession(reply, { userId: user.id, email: user.email }, req)
     return reply.code(201).send({
       user: { id: user.id, email: user.email, name: user.name, initials: user.initials },
-      sandbox: { id: sandbox.id, name: sandbox.name },
+      sandbox: { id: sandbox.id, name: sandbox.name, project: sandbox.project },
       // Полный ключ показывается ровно один раз — здесь.
       apiKey: key.full,
     })
