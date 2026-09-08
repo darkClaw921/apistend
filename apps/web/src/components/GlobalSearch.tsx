@@ -20,6 +20,9 @@ import type { SearchResponse, SearchResult } from '@/lib/types'
 
 const LIMIT = 8
 
+/** Каталог слушает это событие, чтобы открыть метод, выбранный в палитре. */
+export const OPEN_METHOD_EVENT = 'apistend:open-method'
+
 export function GlobalSearch({ onClose }: { onClose: () => void }) {
   const router = useRouter()
   const [query, setQuery] = useState('')
@@ -73,6 +76,10 @@ export function GlobalSearch({ onClose }: { onClose: () => void }) {
       // Каталог открывает карточку метода по идентификатору в адресе —
       // ссылкой на найденный метод можно поделиться.
       router.push(`/catalog?method=${encodeURIComponent(r.id)}`)
+      // И отдельным событием — для случая, когда каталог уже открыт: переход
+      // на тот же маршрут страницу не перерисовывает, адрес менялся, а карточка
+      // справа оставалась прежней.
+      window.dispatchEvent(new CustomEvent(OPEN_METHOD_EVENT, { detail: r.id }))
     },
     [onClose, router],
   )

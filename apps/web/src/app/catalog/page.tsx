@@ -14,6 +14,7 @@ import { useOptionalShell } from '@/components/AppShell'
 import type { CatalogListItem, CatalogResponse, ServiceSummary } from '@/lib/types'
 import { Topbar } from '@/components/Topbar'
 import { MethodDetailPanel } from '@/components/MethodDetailPanel'
+import { OPEN_METHOD_EVENT } from '@/components/GlobalSearch'
 import { READINESS_LABEL, READINESS_TONE } from '@/lib/readiness'
 import { buildPostmanCollection, downloadJson } from '@/lib/postman'
 
@@ -107,8 +108,6 @@ function CatalogScreen() {
       const res = await api.get<CatalogResponse>(`/api/catalog?${params}`)
       setData(res)
       setSelectedId((current) => {
-        // Сравнение с адресом, а не одноразовый флаг: в режиме разработки React
-        // монтирует компонент дважды, и флаг сгорел бы на первом проходе.
         if (current && (current === linkedId || res.methods.some((m) => m.id === current))) return current
         return res.methods[0]?.id ?? null
       })
@@ -120,6 +119,27 @@ function CatalogScreen() {
   }, [service, httpMethod, readiness, debounced, page, linkedId])
 
   useEffect(() => { void load() }, [load])
+
+  // Метод в адресе главнее выбранной строки.
+  useEffect(() => {
+    if (!linkedId) return
+    setSelectedId(linkedId)
+    setDetailOpen(true)
+  }, [linkedId])
+
+  // Палитра поиска ведёт сюда и с уже открытого каталога. Переход на тот же
+  // маршрут страницу не перерисовывает, поэтому она вдобавок сообщает о выборе
+  // событием — иначе адрес менялся, а карточка справа оставалась прежней.
+  useEffect(() => {
+    function onOpenMethod(e: Event) {
+      const id = (e as CustomEvent<string>).detail
+      if (!id) return
+      setSelectedId(id)
+      setDetailOpen(true)
+    }
+    window.addEventListener(OPEN_METHOD_EVENT, onOpenMethod)
+    return () => window.removeEventListener(OPEN_METHOD_EVENT, onOpenMethod)
+  }, [])
 
   /**
    * Экспорт коллекции Postman.
