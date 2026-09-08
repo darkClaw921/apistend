@@ -1,0 +1,104 @@
+name: Deploy
+
+# Деплой едет только после зелёного CI, а не параллельно с ним: иначе прод
+# успевает обновиться раньше, чем упадут тесты.
+#
+# Три условия ниже — не перестраховка. Раннер стоит на самом проде, а
+# репозиторий публичный, поэтому запускать его вправе только пуш в main
+# этого репозитория. CI гоняется и на pull_request, в том числе из форков;
+# без проверки event == 'push' форк получил бы выполнение кода на сервере.
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'darkClaw921/apistend' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'))
+
+    runs-on: [self-hosted, linux, x64, apistend-prod]
+    timeout-minutes: 60
+
+    steps:
+      - name: Код
+        uses: actions/checkout@v6
+        with:
+          # Именно тот коммит, который проверил CI, а не текущая голова main.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # Без этого checkout делает git clean -ffdx и сносит node_modules:
+          # на одном ядре это добавляет к каждому деплою десяток минут.
+          clean: false
+          fetch-depth: 1
+
+      - name: Зависимости
+        # DATABASE_URL нужна уже здесь: postinstall у apps/api вызывает
+        # prisma generate, а тот читает конфиг и падает без переменной.
+        # --prod=false обязателен при NODE_ENV=production: prisma CLI
+        # и dotenv лежат в devDependencies, а dotenv нужен в рантайме.
+        run: |
+          set -a; . /etc/apistend/app.env; set +a
+          pnpm install --frozen-lockfile --prod=false
+
+      - name: Клиент Prisma
+        run: |
+          set -a; . /etc/apistend/app.env; set +a
+          pnpm --filter @apistend/api exec prisma generate
+
+      - name: Миграции
+        run: |
+          set -a; . /etc/apistend/app.env; set +a
+          pnpm --filter @apistend/api exec prisma migrate deploy
+
+      - name: Останов кабинета на время сборки
+        # next build перезаписывает .next под работающим процессом, а на 1 vCPU
+        # им ещё и тесно вдвоём. Мок-шлюз при этом продолжает отвечать.
+        run: sudo /usr/local/bin/apistend-web-stop
+
+      - name: Сборка кабинета
+        # Корневой `pnpm build` использовать нельзя: задача сборки apps/api
+        # падает на TS5096 и утягивает за собой параллельную сборку web.
+        run: |
+          set -a; . /etc/apistend/app.env; set +a
+          cd apps/web
+          NODE_OPTIONS=--max-old-space-size=1400 pnpm exec next build
+
+      - name: Запуск
+        if: always()
+        run: sudo /usr/local/bin/apistend-restart
+
+      - name: Проверка
+        run: |
+          for i in $(seq 1 30); do
+            api=$(curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health || true)
+            web=$(curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/ || true)
+            if [ "$api" = "200" ] && [ "$web" = "200" ]; then
+              echo "API и кабинет отвечают"
+              curl -fsS http://127.0.0.1:8080/health | head -c 400; echo
+              exit 0
+            fi
+            sleep 4
+          done
+          echo "Не поднялось: API=$api WEB=$web"
+          journalctl -u apistend-api -u apistend-web -n 60 --no-pager 2>/dev/null || true
+          exit 1
+
+      - name: Уборка
+        if: always()
+        run: |
+          rm -rf apps/web/.next/dev
+          pnpm store prune >/dev/null 2>&1 || true
+          df -h / | tail -1
