@@ -3,16 +3,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Braces, Check, Copy, Play, Plus, ArrowUpDown, ArrowRight } from 'lucide-react'
 import {
-  ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, DetailPane, EmptyState, ErrorState, MethodBadge,
+  ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, DetailPane, Dialog, EmptyState, ErrorState, MethodBadge,
   Overline, Panel, PanelFooter, PanelHeader, PlaceholderChip, SearchField, SegmentControl,
-  SkeletonRows, Slider, StatusChip, Tabs, Toggle, formatCalls, formatMs, formatRelative,
+  SkeletonRows, Slider, StatusChip, StatusCodeChip, Tabs, Toggle, formatCalls, formatMs, formatRelative,
   formatRules, meta,
 } from '@apistend/ui'
 import type { ChipTone } from '@apistend/ui'
 import { api, ApiError, API_URL } from '@/lib/api'
 import { CreateMockDialog } from '@/components/CreateMockDialog'
 import { ImportOpenApiDialog } from '@/components/ImportOpenApiDialog'
-import type { CustomMockItem, MocksResponse } from '@/lib/types'
+import type { CustomMockItem, MockTestResult, MocksResponse } from '@/lib/types'
 import { Topbar } from '@/components/Topbar'
 
 /**
@@ -44,6 +44,8 @@ export default function MocksPage() {
   const [importing, setImporting] = useState(false)
   // На узком экране редактор — шторка: открывается по выбору мока из списка.
   const [editorOpen, setEditorOpen] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<MockTestResult | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tab, setTab] = useState('response')
 
@@ -110,6 +112,19 @@ export default function MocksPage() {
     }
     return list
   }, [data, filter, search])
+
+  /** Тест-вызов: сервер отдаёт то, что получил бы клиент по публичному пути. */
+  async function runTest() {
+    if (!draft) return
+    setTesting(true)
+    try {
+      setTestResult(await api.post<MockTestResult>(`/api/mocks/${draft.id}/test`))
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Тест-вызов не удался')
+    } finally {
+      setTesting(false)
+    }
+  }
 
   async function persist() {
     if (!draft) return
@@ -284,7 +299,13 @@ export default function MocksPage() {
                     className="min-w-0 flex-1 bg-transparent font-mono text-[14px] font-medium text-text-primary outline-none"
                   />
                   <StatusChip tone={STATUS_TONE[draft.status]}>{STATUS_LABEL[draft.status]}</StatusChip>
-                  <ButtonSecondary icon={<Play size={13} aria-hidden />}>Тест-вызов</ButtonSecondary>
+                  <ButtonSecondary
+                    icon={<Play size={13} aria-hidden />}
+                    onClick={() => void runTest()}
+                    disabled={testing || !draft}
+                  >
+                    {testing ? 'Вызываю…' : 'Тест-вызов'}
+                  </ButtonSecondary>
                   <ButtonPrimary onClick={() => void persist()} disabled={!dirty || saving}>
                     {saving ? 'Сохраняем…' : 'Сохранить'}
                   </ButtonPrimary>
@@ -444,6 +465,30 @@ export default function MocksPage() {
           onClose={() => setCreating(false)}
           onCreated={(id) => { setCreating(false); setSelectedId(id); void load() }}
         />
+      ) : null}
+
+      {testResult ? (
+        <Dialog title="Тест-вызов" onClose={() => setTestResult(null)} width={560}>
+          <div className="flex flex-col gap-[12px] p-[16px]">
+            <div className="flex items-center gap-[10px]">
+              <StatusCodeChip code={testResult.status} />
+              <span className="font-mono text-[12px] text-text-tertiary">{testResult.contentType}</span>
+              <span className="ml-auto text-[12px] text-text-tertiary">задержка {testResult.delayMs} мс</span>
+            </div>
+            {!testResult.servedPublicly ? (
+              <p className="rounded-[6px] bg-warning-soft px-[12px] py-[9px] text-[12px] text-warning">
+                Мок в статусе «{testResult.mockStatus === 'draft' ? 'черновик' : 'выключен'}» — по публичному
+                адресу он пока не отвечает. Так выглядел бы ответ после публикации.
+              </p>
+            ) : null}
+            {!testResult.validJson ? (
+              <p className="rounded-[6px] bg-danger-soft px-[12px] py-[9px] text-[12px] text-danger">
+                Тело не разбирается как JSON, хотя тип ответа его обещает.
+              </p>
+            ) : null}
+            <CodeBlock code={testResult.body} language="json" />
+          </div>
+        </Dialog>
       ) : null}
 
       {importing ? (

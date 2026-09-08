@@ -28,8 +28,9 @@ export function Topbar({
   search: string
   onSearchChange: (v: string) => void
   /**
-   * Глобальный поиск и кнопки кабинета. Выключаются в каталоге для гостя:
-   * уведомлений у него нет, а искать по логам ему нечего.
+   * Инструменты шапки. Поиск и документация остаются и гостю — каталог открыт
+   * без входа, и искать по нему он вправе; уведомления показываются только
+   * вошедшему, потому что берутся из его песочницы.
    */
   showTools?: boolean
 }) {
@@ -89,7 +90,7 @@ export function Topbar({
             <IconButton aria-label="Документация" onClick={() => router.push('/catalog')}>
               <BookOpen size={16} aria-hidden />
             </IconButton>
-            <NotificationsBell />
+            {shell ? <NotificationsBell /> : null}
           </>
         ) : null}
         {action}

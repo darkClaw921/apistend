@@ -25,3 +25,14 @@ export async function requireSandbox(
   }
   return { userId: session.userId, sandbox }
 }
+
+/**
+ * Число из query-параметра. Number('abc') даёт NaN, а Math.min/Math.max с NaN
+ * возвращают NaN — и срез по такому «лимиту» молча отдавал пустой список,
+ * хотя совпадения были. Непонятное значение теперь равнозначно отсутствию.
+ */
+export function clampNumber(raw: unknown, fallback: number, min: number, max: number): number {
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(Math.max(Math.trunc(n), min), max)
+}

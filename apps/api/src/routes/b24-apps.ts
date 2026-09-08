@@ -30,13 +30,25 @@ import {
  *                  из чужого фрейма, и никакой cookie туда не приедет).
  */
 
+/** Адрес, который откроет браузер: только http и https. */
+function httpUrl(label: string) {
+  return z.string()
+    .url(`${label} должен быть адресом`)
+    .refine(
+      (v) => { try { const p = new URL(v).protocol; return p === 'http:' || p === 'https:' } catch { return false } },
+      `${label} принимает только http и https`,
+    )
+}
+
 const createApp = z.object({
   title: z.string().min(1, 'Укажите название приложения').max(120),
   code: z.string().regex(/^[a-z0-9._-]{2,60}$/i, 'Код — латиница, цифры, точка, дефис').optional(),
   kind: z.enum(B24_APP_KINDS).default('server_ui'),
   scope: z.array(z.string()).min(1, 'Выберите хотя бы одно право'),
-  handlerUrl: z.string().url('Путь обработчика должен быть адресом').nullish(),
-  installUrl: z.string().url('Путь установки должен быть адресом').nullish(),
+  // .url() пропускает javascript: и file: — а этот адрес подставляется во фрейм
+  // портала и открывается браузером. Ограничиваем схемы явно.
+  handlerUrl: httpUrl('Путь обработчика').nullish(),
+  installUrl: httpUrl('Путь установки').nullish(),
   menuTitle: z.string().max(120).nullish(),
   // Боевой портал срока не настраивает — он всегда час. Настройка нужна, чтобы
   // дождаться expired_token и увидеть, как приложение восстанавливает доступ.

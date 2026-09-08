@@ -318,3 +318,15 @@ export interface PreviewResponse {
   sizeBytes: number
   responseSource: string
 }
+
+/** POST /api/mocks/:id/test — тест-вызов из кабинета. */
+export interface MockTestResult {
+  status: number
+  contentType: string
+  delayMs: number
+  body: string
+  validJson: boolean
+  /** false — мок черновик или выключен: по публичному адресу он не отвечает. */
+  servedPublicly: boolean
+  mockStatus: string
+}

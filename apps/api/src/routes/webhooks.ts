@@ -31,7 +31,9 @@ const createWebhook = z.object({
   target: z.enum(['public', 'local']),
   targetUrl: z.string().max(2_000).optional(),
   targetPath: z.string().max(500).optional(),
-  httpMethod: z.string().default('POST'),
+  // Список, а не свободная строка: пустое значение и мусор доходили до журнала
+  // доставок и до самого запроса.
+  httpMethod: z.enum(['POST', 'PUT', 'PATCH']).default('POST'),
 })
 
 const burstInput = z.object({
@@ -182,8 +184,18 @@ export function registerWebhookRoutes(app: FastifyInstance): void {
     }
     const input = parsed.data
 
-    if (!findEvent(input.event)) {
+    const event = findEvent(input.event)
+    if (!event) {
       return reply.code(400).send({ error: 'UNKNOWN_EVENT', message: `Событие «${input.event}» не поддерживается` })
+    }
+    // Событие принадлежит сервису: ONCRMDEALADD не бывает у Ozon. Без этой
+    // проверки создавался вебхук, который никогда не сработает, — событие
+    // ищется по коду среди всех сервисов сразу.
+    if (event.serviceCode !== input.serviceCode) {
+      return reply.code(400).send({
+        error: 'EVENT_SERVICE_MISMATCH',
+        message: `Событие «${input.event}» принадлежит сервису ${event.serviceCode}, а не ${input.serviceCode}`,
+      })
     }
 
     if (input.target === 'public') {

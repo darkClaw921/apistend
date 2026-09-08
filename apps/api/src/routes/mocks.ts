@@ -247,6 +247,54 @@ export function registerMockRoutes(app: FastifyInstance): void {
    * Детерминированный: один и тот же мок выглядит одинаково между открытиями,
    * иначе предпросмотр «плывёт» при каждом нажатии клавиши.
    */
+  /**
+   * Тест-вызов мока из кабинета.
+   *
+   * Публичный путь /custom/* требует ключ песочницы, а он показывается ровно
+   * один раз при создании — кабинет его не хранит. Поэтому вызов делается
+   * по сессии и отдаёт ровно то, что получил бы клиент: код, тип, тело
+   * с подставленными плейсхолдерами и заявленную задержку. Саму задержку
+   * не выдерживаем: проверяют содержимое ответа, а не секундомер.
+   */
+  app.post<{ Params: { id: string } }>('/api/mocks/:id/test', async (req, reply) => {
+    const ctx = await requireSandbox(req, reply)
+    if (!ctx) return
+
+    const mock = await prisma.customMock.findFirst({
+      where: { id: req.params.id, sandboxId: ctx.sandbox.id },
+    })
+    if (!mock) return reply.code(404).send({ error: 'NOT_FOUND', message: 'Мок не найден' })
+
+    const { sampleBody } = (req.body ?? {}) as { sampleBody?: unknown }
+    const body = mock.templatingEnabled
+      ? renderTemplate(mock.responseBody, {
+          body: sampleBody ?? {},
+          query: {},
+          params: {},
+          now: new Date(),
+        })
+      : mock.responseBody
+
+    let validJson = true
+    try {
+      if (mock.contentType.includes('json')) JSON.parse(body)
+    } catch {
+      validJson = false
+    }
+
+    return reply.send({
+      status: mock.responseStatusCode,
+      contentType: mock.contentType,
+      delayMs: mock.delayMs,
+      body,
+      validJson,
+      // Черновик и выключенный по публичному пути не отвечают — говорим об этом
+      // прямо, иначе тест-вызов вводил бы в заблуждение.
+      servedPublicly: mock.status === 'active',
+      mockStatus: mock.status,
+    })
+  })
+
   app.post('/api/mocks/preview', async (req, reply) => {
     const ctx = await requireSandbox(req, reply)
     if (!ctx) return

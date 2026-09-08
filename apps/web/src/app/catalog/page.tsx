@@ -233,7 +233,6 @@ function CatalogScreen() {
         title="Каталог API"
         search={globalSearch}
         onSearchChange={setGlobalSearch}
-        showTools={shell !== null}
         action={
           shell ? (
             <ButtonPrimary onClick={() => router.push('/keys')}>Новая песочница</ButtonPrimary>
