@@ -3,6 +3,17 @@ import type { Readiness, ServiceCode } from '@apistend/shared'
 export interface Me {
   user: { id: string; email: string; name: string; initials: string; planLabel: string }
   usage: { requestsThisMonth: number; hasLimits: boolean }
+  /** Счётчики сайдбара. Все — из базы: в вёрстке чисел нет. */
+  counts: {
+    requestsToday: number
+    keys: number
+    mocks: number
+    webhooks: number
+    alerts: number
+    catalogMethods: number
+  }
+  /** Шаги «Первые шаги». Каждый проверен по данным, а не по локальному флажку. */
+  onboarding: Array<{ id: string; label: string; href: string; done: boolean }>
   sandboxes: Array<{
     id: string; name: string; project: string; status: string
     dataVolume: 'min' | 'medium' | 'full'; latencyMs: number; errorRate: number; lastResetAt: string

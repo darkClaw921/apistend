@@ -4,16 +4,20 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { Route } from 'next'
 import { Bell, CircleAlert, CircleX, Info } from 'lucide-react'
-import { DropdownPanel, EmptyState, IconButton } from '@apistend/ui'
+import { DropdownPanel, EmptyState, cn } from '@apistend/ui'
 import { api, ApiError } from '@/lib/api'
 import type { AlertItem, AlertsResponse } from '@/lib/types'
 
 /**
- * Колокольчик в шапке. Показывает уведомления песочницы — те же, что на «Обзоре»,
+ * Колокольчик. Показывает уведомления песочницы — те же, что на «Обзоре»,
  * но доступные с любого экрана.
  *
  * Раньше кнопка была нарисована и ничего не делала, хотя уведомления лежали
  * в базе и приходили в составе обзора.
+ *
+ * В новом макете колокольчик переехал из шапки в сайдбар. Оставить его в обоих
+ * местах было нельзя: две одинаковые кнопки с одной и той же красной точкой
+ * на каждом экране — это не два входа в функцию, а сомнение, какая из них твоя.
  */
 
 const ICON = {
@@ -28,9 +32,26 @@ const TONE: Record<string, string> = {
   info: 'text-accent',
 }
 
-export function NotificationsBell() {
+export function NotificationsBell({ dot = false, className, open: openProp, onOpenChange }: {
+  /** Точка «уведомления есть». Считается на сервере, см. /api/auth/me. */
+  dot?: boolean
+  /** Ширина кнопки задаётся снаружи: в развёрнутом сайдбаре она 32, в свёрнутом — во всю полосу. */
+  className?: string
+  /**
+   * Управление извне. Нужно сайдбару: там рядом стоит панель аккаунта, и без
+   * общего владельца обе раскрывались одновременно и накладывались друг на друга.
+   * Без этих пропсов компонент по-прежнему сам себе хозяин.
+   */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}) {
   const router = useRouter()
-  const [open, setOpen] = useState(false)
+  const [uncontrolled, setUncontrolled] = useState(false)
+  const open = openProp ?? uncontrolled
+  const setOpen = (next: boolean) => {
+    if (onOpenChange) onOpenChange(next)
+    else setUncontrolled(next)
+  }
   const [alerts, setAlerts] = useState<AlertItem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -49,13 +70,22 @@ export function NotificationsBell() {
   }, [open, alerts])
 
   return (
-    <div className="relative">
-      <IconButton aria-label="Уведомления" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-        <Bell size={16} aria-hidden />
-      </IconButton>
+    <div className={cn('relative shrink-0', className ?? 'w-[32px]')}>
+      <button
+        type="button"
+        aria-label="Уведомления"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className="relative flex h-[32px] w-full items-center justify-center rounded-[6px] border border-night-line bg-night-2 text-nav-text transition-colors hover:border-nav-border hover:text-nav-text-active"
+      >
+        <Bell size={15} aria-hidden />
+        {dot ? (
+          <span className="absolute top-[6px] right-[6px] h-[6px] w-[6px] rounded-full bg-night-alert" aria-hidden />
+        ) : null}
+      </button>
 
       {open ? (
-        <DropdownPanel onClose={() => setOpen(false)} label="Уведомления" className="w-[340px]">
+        <DropdownPanel onClose={() => setOpen(false)} align="left" label="Уведомления" className="w-[300px] sm:w-[340px]">
           <p className="border-b border-border px-[14px] py-[10px] text-[12px] font-semibold text-text-primary">
             Уведомления
           </p>

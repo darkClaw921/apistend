@@ -1,4 +1,15 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "noEmit": false, "outDir": "dist", "rootDir": "." }
+  // rewriteRelativeImportExtensions: исходники импортируют друг друга с «.ts»
+  // (так их читает node --experimental-strip-types, на котором сервис и работает).
+  // Без этого флага tsc отказывается эмитить: allowImportingTsExtensions требует
+  // либо noEmit, либо перезаписи расширений. Задача build у api при этом ничем
+  // не используется — деплой собирает только apps/web, — но падающая проверка
+  // в общем `pnpm -w build` хуже, чем её отсутствие.
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": ".",
+    "rewriteRelativeImportExtensions": true
+  }
 }
