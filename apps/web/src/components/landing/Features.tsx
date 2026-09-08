@@ -1,5 +1,7 @@
 import { Braces, Database, KeyRound, ScrollText, TriangleAlert } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { SERVICE_LIST, buildScenarioError, timeoutError } from '@apistend/shared'
+import type { Scenario, ServiceCode } from '@apistend/shared'
 
 /**
  * Секция «Возможности». Макет: «Section Features» в APIStend.pen.
@@ -18,14 +20,71 @@ const COMPARE_LINES = [
   { key: '"in_process_at"', value: '"2026-09-08T…"' },
 ] as const
 
+/** Сбой — это значение заголовка X-Mock-Scenario, а не выдуманная строка вёрстки. */
+type ErrorScenario = Exclude<Scenario, 'success'>
+
+/**
+ * Что на самом деле вернёт шлюз по этому сценарию для этого сервиса.
+ *
+ * Таймаут считается отдельной функцией не для красоты: у боевых сервисов таймаут —
+ * это ОТСУТСТВИЕ ответа, кода ошибки для него не заведено, и шлюз держит соединение
+ * 30 секунд, а потом отдаёт 504 (apps/api/src/gateway.ts).
+ */
+function statusFor(service: ServiceCode, scenario: ErrorScenario): number {
+  return scenario === 'timeout'
+    ? timeoutError(service, 'landing').status
+    : buildScenarioError(service, scenario, 'landing').status
+}
+
+/** «Bitrix24» или «Ozon Seller API и Wildberries» — перечисление по-русски. */
+function listRu(titles: readonly string[]): string {
+  const last = titles.at(-1)
+  if (last === undefined) return ''
+  return titles.length === 1 ? last : `${titles.slice(0, -1).join(', ')} и ${last}`
+}
+
+/**
+ * Строка таблицы сбоев.
+ *
+ * Коды здесь НЕ написаны руками. Раньше в строке лимита стояло универсальное «429»,
+ * и для 1685 методов Bitrix24 из 2421 в каталоге это был неверный код: портал при
+ * превышении отвечает 503 QUERY_LIMIT_EXCEEDED, а не 429 — в packages/shared это
+ * отдельно откомментировано как частая ошибка (services.ts, поле statusCode;
+ * errors.ts, ветка rate_limit). Поэтому код каждой строки считается из того же
+ * профиля, которым отвечает шлюз: разойтись с боевым поведением он уже не может.
+ * Где сервисы отвечают одинаково — один код; где по-разному — оба и оговорка,
+ * у какого сервиса какой.
+ */
+function errorRow(scenario: ErrorScenario, label: string, rowBg: string, tint: string) {
+  const byStatus = new Map<number, string[]>()
+  for (const service of SERVICE_LIST) {
+    const status = statusFor(service.code, scenario)
+    byStatus.set(status, [...(byStatus.get(status) ?? []), service.title])
+  }
+
+  const codes = [...byStatus.keys()]
+  return {
+    scenario,
+    label,
+    rowBg,
+    tint,
+    code: codes.join(' / '),
+    // На 401, 500 и 504 три сервиса сходятся — там оговорка была бы шумом.
+    note:
+      codes.length === 1
+        ? null
+        : [...byStatus].map(([status, titles]) => `${status} у ${listRu(titles)}`).join(', '),
+  }
+}
+
 /** Ошибки, которые умеет отдавать мок по требованию. Цвет — по тяжести сбоя. */
 const ERROR_ROWS = [
-  { code: '401', label: 'Неверный токен', rowBg: 'bg-night-danger-bg', tint: 'text-night-danger' },
-  { code: '429', label: 'Превышен лимит', rowBg: 'bg-night-warn-bg', tint: 'text-night-warn' },
-  { code: '500', label: 'Ошибка сервиса', rowBg: 'bg-night-danger-bg', tint: 'text-night-danger' },
+  errorRow('invalid_token', 'Неверный токен', 'bg-night-danger-bg', 'text-night-danger'),
+  errorRow('rate_limit', 'Превышен лимит', 'bg-night-warn-bg', 'text-night-warn'),
+  errorRow('server_error', 'Ошибка сервиса', 'bg-night-danger-bg', 'text-night-danger'),
   // Таймаут — не ошибка сервиса, поэтому строка нейтральная, без цвета тяжести.
-  { code: 'timeout', label: 'Ответ дольше 30 с', rowBg: 'bg-code-surface', tint: 'text-nav-text' },
-] as const
+  errorRow('timeout', 'Ответ дольше 30 с', 'bg-code-surface', 'text-nav-text'),
+]
 
 const SMALL_FEATURES = [
   {
@@ -95,21 +154,28 @@ export function Features() {
               Ошибки по требованию
             </h3>
             <p className="text-[14px] leading-[22px] text-nav-text">
-              Один переключатель — и метод отдаёт нужный сбой. Проверьте ретраи и обработку лимитов
-              до релиза.
+              Один переключатель — и метод отдаёт нужный сбой в конверте своего сервиса. Проверьте
+              ретраи и обработку лимитов до релиза.
             </p>
             <ul className="flex flex-col gap-[8px]">
               {ERROR_ROWS.map((row) => (
                 <li
-                  key={row.code}
-                  className={`flex items-center gap-[10px] rounded-[6px] px-[12px] py-[8px] ${row.rowBg}`}
+                  key={row.scenario}
+                  className={`flex items-start gap-[10px] rounded-[6px] px-[12px] py-[8px] ${row.rowBg}`}
                 >
+                  {/* Колонка расширена с 56 до 76 px: в неё теперь помещается «503 / 429».
+                      leading как у подписи — иначе при items-start коды съезжают вверх. */}
                   <span
-                    className={`w-[56px] shrink-0 font-mono text-[12px] font-bold ${row.tint}`}
+                    className={`w-[76px] shrink-0 font-mono text-[12px] leading-[18px] font-bold ${row.tint}`}
                   >
                     {row.code}
                   </span>
-                  <span className="text-[13px] text-night-text">{row.label}</span>
+                  <span className="flex min-w-0 flex-col gap-[2px]">
+                    <span className="text-[13px] leading-[18px] text-night-text">{row.label}</span>
+                    {row.note ? (
+                      <span className="text-[11px] leading-[15px] text-code-muted">{row.note}</span>
+                    ) : null}
+                  </span>
                 </li>
               ))}
             </ul>

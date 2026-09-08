@@ -87,18 +87,34 @@ function MockRows() {
   )
 }
 
-/** Колонка «Отлаживай»: три строки журнала запросов. */
+/**
+ * Колонка «Отлаживай»: три строки журнала запросов.
+ *
+ * Отступление от макета: там запись журнала — одна строка «время · путь · результат».
+ * Здесь запись разбита на две. Причина арифметическая: с md колонок триптиха три,
+ * и внутри карточки остаётся 136 px на 768 и 189 px на 1024, тогда как время (50)
+ * и результат (до 113) вдвоём просят 172. В одной строке время и результат стоят
+ * shrink-0, значит вся нехватка достаётся тянущемуся пути — на 768 он получал
+ * ровно 0 px и исчезал, а строка вылезала за карточку и заезжала в соседнюю
+ * колонку. Путь — главное в записи, поэтому он занял отдельную строку во всю
+ * ширину карточки и схлопнуться уже не может ни на какой ширине; время
+ * и результат ушли строкой ниже, как подпись.
+ */
 function LogRows() {
   return (
     /* В макете у этой карточки свой фон #0D1218 и граница посветлее — отдельных токенов
        под них нет. Берём ближайшую пару тёмного слоя: фон страницы и nav-border. */
     <div className="flex min-h-[168px] w-full flex-col justify-center gap-[8px] rounded-[10px] border border-nav-border bg-night p-[16px]">
       {LOG_ROWS.map((row) => (
-        <p key={row.line} className="flex items-center gap-[10px] font-mono text-[10.5px]">
-          {/* Ниже 640 время уходит: время, путь и результат в одну строку там не помещаются. */}
-          <span className="tabular hidden shrink-0 text-code-muted sm:inline">{row.time}</span>
-          <span className="min-w-0 flex-1 truncate text-night-dim">{row.line}</span>
-          <span className={cn('shrink-0', row.tone)}>{row.result}</span>
+        <p key={row.line} className="flex flex-col gap-[2px] font-mono text-[10.5px]">
+          <span className="truncate text-night-dim">{row.line}</span>
+          <span className="flex items-center gap-[8px]">
+            {/* Время прячем только в диапазоне md: там карточка самая узкая (136 px),
+                и рядом с временем пришлось бы обрезать имя сценария — а сценарий и есть
+                то, ради чего строка показана. С lg карточке снова хватает: 189 px. */}
+            <span className="tabular shrink-0 text-code-muted md:hidden lg:inline">{row.time}</span>
+            <span className={cn('min-w-0 truncate', row.tone)}>{row.result}</span>
+          </span>
         </p>
       ))}
     </div>
@@ -135,6 +151,16 @@ function WebhookChain() {
 }
 
 /**
+ * Якорь секции лендинга. Пишем его от корня («/#features») — той же формой,
+ * что в шапке: там корень нужен всерьёз, потому что LandingNav висит ещё и на
+ * /catalog. Для браузера на самом лендинге это тот же документ, поэтому такой
+ * адрес остаётся обычной прокруткой к фрагменту.
+ */
+function isLandingAnchor(href: string) {
+  return href.startsWith('#') || href.startsWith('/#')
+}
+
+/**
  * Ссылка колонки. Якорь на соседнюю секцию этой же страницы — обычный <a>:
  * он работает и до гидратации, так же сделано в шапке лендинга.
  */
@@ -146,7 +172,7 @@ function ColumnLink({ href, label }: { href: string; label: string }) {
     </>
   )
 
-  if (href.startsWith('#')) {
+  if (isLandingAnchor(href)) {
     return (
       <a href={href} className={LINK_CLASS}>
         {body}
@@ -197,7 +223,11 @@ export function Triptych({ totalMethods }: TriptychProps) {
         и Wildberries, 429 у Ozon и Wildberries, 500 у Ozon и Wildberries).
       */
       desc: 'Журнал каждого запроса: тело, заголовки и сценарий — 401, 429, 500 или таймаут. Любой запрос повторяется в консоли.',
-      link: { label: 'Смотреть логи', href: '/logs' },
+      /* Была ссылка «Смотреть логи» → /logs. Маршрут закрыт сессией, и гостя
+         с публичного лендинга выбрасывало на форму входа без объяснений. Ведём
+         в «Возможности» — там карточка «Логи каждого запроса» рассказывает про
+         журнал открыто; подпись обещает ровно это, а не сам экран логов. */
+      link: { label: 'Что попадает в журнал', href: '/#features' },
     },
     {
       word: 'Подключай.',
@@ -205,7 +235,11 @@ export function Triptych({ totalMethods }: TriptychProps) {
       /* Из фразы макета убрано «за пару минут»: сколько занимает сборка своего мока,
          мы не замеряли, а обещание срока — такая же выдумка, как и метрика. */
       desc: 'Вебхуки приходят на localhost через CLI, а недостающие ручки добавляются своими моками.',
-      link: { label: 'Как это работает', href: '#webhooks' },
+      /* Подпись была «Как это работает», а вела на #webhooks — секция с таким
+         названием имеет id="how". Переименовали подпись, а не переставили адрес:
+         #webhooks и есть продолжение этой колонки (доставка событий на localhost),
+         а «Как это работает» — три шага первого запроса, про вебхуки там ничего. */
+      link: { label: 'Вебхуки на localhost', href: '/#webhooks' },
     },
   ]
 
@@ -225,13 +259,19 @@ export function Triptych({ totalMethods }: TriptychProps) {
             <div
               key={column.word}
               className={cn(
-                'flex flex-col items-center gap-[18px] py-[28px] md:px-[24px] md:py-0 lg:px-[32px]',
+                /* Поля на md ужаты с 24 до 16: на 768 колонка всего 203 px, и 48 px
+                   полей съедали четверть — заголовку и карточке журнала не хватало
+                   именно их. С lg возвращаемся к 32 из макета. */
+                'flex flex-col items-center gap-[18px] py-[28px] md:px-[16px] md:py-0 lg:px-[32px]',
                 i === 0 && 'pt-0',
                 i === columns.length - 1 && 'pb-0',
                 i > 0 && 'border-t border-night-line md:border-t-0 md:border-l',
               )}
             >
-              <h3 className="w-full text-center text-[24px] font-bold tracking-[-0.8px] text-white md:text-[30px]">
+              {/* Крупный кегль макета включаем с lg, а не с md: «Подключай.» в 30 px
+                  просит 178 px, а колонка на 768 даёт 171 — слово одно, переносить
+                  нечего, и текст ложился на вертикальный разделитель. */}
+              <h3 className="w-full text-center text-[24px] font-bold tracking-[-0.8px] text-white lg:text-[30px]">
                 {column.word}
               </h3>
 

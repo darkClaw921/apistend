@@ -7,6 +7,16 @@ import { DropdownPanel } from '@apistend/ui'
 import type { Route } from 'next'
 
 /**
+ * Тот же разбор адреса, что и в LandingNav: якорь секции лендинга приходит сюда
+ * как «/#features» — от корня, потому что эта же шапка висит и на /catalog, где
+ * таких секций нет. Свою копию держим здесь, а не импортируем из LandingNav:
+ * LandingNav импортирует этот файл, обратный импорт замкнул бы модули в круг.
+ */
+function isLandingAnchor(href: string) {
+  return href.startsWith('#') || href.startsWith('/#')
+}
+
+/**
  * Навигация лендинга на узком экране.
  *
  * Правило адаптива в макете доводит секции до одной колонки, но про меню молчит:
@@ -57,7 +67,7 @@ export function LandingNavMobile({
           <ul className="flex flex-col py-[6px]">
             {links.map((item) => (
               <li key={item.label}>
-                {item.href.startsWith('#') ? (
+                {isLandingAnchor(item.href) ? (
                   <a
                     href={item.href}
                     onClick={() => setOpen(false)}

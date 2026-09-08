@@ -15,6 +15,14 @@ import { FooterStatus } from './FooterStatus'
  * собраны заново из настоящих адресов: якорей этой страницы, каталога методов
  * и файлов репозитория. Осталось три колонки — сетка разложена под три, а не
  * добита заглушками до пяти.
+ *
+ * Якоря секций записаны от корня («/#features»), одной формой с шапкой. Шапке
+ * корень нужен всерьёз: LandingNav рисуется гостю ещё и на /catalog (CatalogShell),
+ * где ни одной из этих секций нет и голый «#features» никуда не вёл. Сам футер
+ * сегодня стоит только на лендинге ((marketing)/page.tsx), но запись держим ту же,
+ * чтобы пункт, перенесённый отсюда в шапку, не начал молча вести в никуда.
+ * На лендинге такой адрес для браузера — тот же документ: просто прокрутка
+ * к секции, без перезагрузки.
  */
 
 const GITHUB = 'https://github.com/darkClaw921/apistend'
@@ -22,23 +30,28 @@ const NPM = 'https://www.npmjs.com/package/apistend'
 
 type FooterLinkItem = { label: string; href: string; external?: boolean }
 
-/* Проверено на дереве репозитория: каталоги docs/ и examples/ есть, LICENSE есть. */
+/* Проверено на дереве репозитория: docs/bitrix24-local-apps.md, examples/
+   и LICENSE на месте — каждая ссылка ниже открывает существующий файл. */
 const FOOTER_COLUMNS: ReadonlyArray<{ title: string; links: ReadonlyArray<FooterLinkItem> }> = [
   {
     title: 'Продукт',
     links: [
-      { label: 'Сервисы', href: '#services' },
-      { label: 'Возможности', href: '#features' },
-      { label: 'Вебхуки', href: '#webhooks' },
+      { label: 'Сервисы', href: '/#services' },
+      { label: 'Возможности', href: '/#features' },
+      { label: 'Вебхуки', href: '/#webhooks' },
       { label: 'Каталог методов', href: '/catalog' },
-      { label: 'Цены', href: '#pricing' },
+      { label: 'Цены', href: '/#pricing' },
     ],
   },
   {
     title: 'Разработчикам',
     links: [
-      { label: 'Быстрый старт', href: '#how' },
-      { label: 'Документация', href: `${GITHUB}/tree/main/docs`, external: true },
+      { label: 'Быстрый старт', href: '/#how' },
+      /* Был пункт «Документация» → /tree/main/docs. Справочника там нет: в docs/
+         лежат ровно два файла — заметка о нашем деплое и разбор локальных
+         приложений Bitrix24. Первый про внутреннюю кухню, второй — настоящая
+         документация продукта, на неё и ведём, назвав пункт её же заголовком. */
+      { label: 'Локальные приложения Bitrix24', href: `${GITHUB}/blob/main/docs/bitrix24-local-apps.md`, external: true },
       { label: 'Примеры интеграций', href: `${GITHUB}/tree/main/examples`, external: true },
       /* Пункт макета «CLI и агент» ведёт в npm: отдельной страницы про CLI нет,
          а пакет apistend — это и есть CLI с командой listen. */
@@ -73,10 +86,12 @@ export function LandingFooter() {
   return (
     <footer className="border-t border-night-3 bg-night px-[20px] pt-[56px] pb-[32px] md:px-[80px]">
       <div className="mx-auto flex max-w-[1280px] flex-col gap-[40px]">
-        {/* До md бренд стоит над колонками: 280 px бренда и три колонки в строку
-            не помещаются уже на планшете. */}
-        <div className="flex flex-col gap-[32px] md:flex-row md:gap-[40px]">
-          <div className="flex flex-col items-start gap-[14px] md:w-[280px] md:shrink-0">
+        {/* До lg бренд стоит над колонками, а не слева от них. На 768 строка футера
+            даёт 608 px: 280 px бренда и отбивка 40 оставляли трём колонкам по 83 px,
+            а одному заголовку «Разработчикам» нужен 101 — колонки налезали друг
+            на друга. Во всю ширину те же три колонки получают по 189 px. */}
+        <div className="flex flex-col gap-[32px] lg:flex-row lg:gap-[40px]">
+          <div className="flex flex-col items-start gap-[14px] lg:w-[280px] lg:shrink-0">
             <Link href="/" className="flex items-center gap-[10px]">
               <span className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] bg-accent">
                 <PlugZap size={16} className="text-white" aria-hidden />
@@ -156,8 +171,11 @@ function FooterLink({ label, href, external }: FooterLinkItem) {
       </a>
     )
   }
-  // Якорь этой же страницы — обычной ссылкой: работает и до гидратации.
-  if (href.startsWith('#')) return <a href={href} className={LINK_CLASS}>{label}</a>
+  // Якорь лендинга — обычной ссылкой: работает и до гидратации, а Link на
+  // «/#features» затеял бы клиентский переход вместо прокрутки к фрагменту.
+  if (href.startsWith('#') || href.startsWith('/#')) {
+    return <a href={href} className={LINK_CLASS}>{label}</a>
+  }
   // typedRoutes проверяет только литералы, а href здесь приходит из массива —
   // приведение типа тут предписано документацией Next.
   return <Link href={href as Route} className={LINK_CLASS}>{label}</Link>

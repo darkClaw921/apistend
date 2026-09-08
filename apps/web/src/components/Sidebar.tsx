@@ -89,7 +89,13 @@ export function Sidebar({
 }) {
   const pathname = usePathname()
   const router = useRouter()
-  const [accountOpen, setAccountOpen] = useState(false)
+  /**
+   * Какая панель раскрыта. Одна переменная на обе: аккаунт и уведомления стоят
+   * в сайдбаре в двадцати пикселях друг от друга, и с раздельными состояниями
+   * они открывались вдвоём и накладывались.
+   */
+  const [menu, setMenu] = useState<'account' | 'alerts' | null>(null)
+  const accountOpen = menu === 'account'
   const [leaving, setLeaving] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [folded, setFolded] = useState<Record<string, boolean>>({})
@@ -140,7 +146,7 @@ export function Sidebar({
     } catch {
       /* сервер недоступен — уводим на вход всё равно: остаться здесь хуже */
     }
-    setAccountOpen(false)
+    setMenu(null)
     router.replace('/login')
     router.refresh()
   }
@@ -196,14 +202,21 @@ export function Sidebar({
           open ? 'max-lg:translate-x-0' : 'max-lg:-translate-x-full',
         )}
       >
-        <div className={cn('flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-thin px-[10px] pt-[10px]', rail && 'px-[8px]')}>
+        {/* Скроллится только список разделов, а не вся колонка.
+            overflow-y-auto по спецификации превращает и overflow-x в auto, поэтому
+            любая абсолютная панель внутри скроллера обрезается по ширине сайдбара:
+            меню уведомлений (340 px) показывало из себя 42 px, а кнопка «Выйти»
+            в свёрнутом состоянии уезжала за край полосы целиком. Аккаунт, поиск,
+            колокольчик и «Первые шаги» вынесены из-под скролла — их панели теперь
+            свободно раскрываются вправо поверх содержимого. */}
+        <div className={cn('flex min-h-0 flex-1 flex-col px-[10px] pt-[10px]', rail && 'px-[8px]')}>
           {/* Аккаунт. В первой версии переключатель песочницы стоял вверху,
               а выход прятался в многоточии внизу. Макет свёл их в один
               элемент — и это заодно чинит то, что выход было не найти. */}
-          <div className="relative">
+          <div className="relative shrink-0">
             <button
               type="button"
-              onClick={() => setAccountOpen((v) => !v)}
+              onClick={() => setMenu(accountOpen ? null : 'account')}
               aria-expanded={accountOpen}
               aria-label="Аккаунт и песочница"
               className={cn(
@@ -226,7 +239,7 @@ export function Sidebar({
             </button>
 
             {accountOpen ? (
-              <DropdownPanel onClose={() => setAccountOpen(false)} align="left" label="Аккаунт" className="w-[228px]">
+              <DropdownPanel onClose={() => setMenu(null)} align="left" label="Аккаунт" className="w-[228px]">
                 <p className="border-b border-border px-[14px] py-[10px] text-[12px] break-all text-text-secondary">
                   {me.user.email}
                 </p>
@@ -246,7 +259,7 @@ export function Sidebar({
                 <p className="border-b border-border px-[14px] py-[10px] text-[11px] leading-[1.45] text-text-tertiary">
                   Вторая песочница пока не заводится. Объём данных, задержку и долю ошибок
                   настраивают на экране{' '}
-                  <Link href="/keys" onClick={() => setAccountOpen(false)} className="font-semibold text-accent">
+                  <Link href="/keys" onClick={() => setMenu(null)} className="font-semibold text-accent">
                     «Ключи и токены»
                   </Link>
                   .
@@ -266,7 +279,7 @@ export function Sidebar({
 
           {/* Поиск и уведомления. Обе кнопки зовут то же, что шапка: панель
               на весь кабинет одна, иначе ⌘K открывал бы два диалога сразу. */}
-          <div className={cn('mt-[8px] flex items-center gap-[8px]', rail && 'flex-col')}>
+          <div className={cn('mt-[8px] flex shrink-0 items-center gap-[8px]', rail && 'flex-col')}>
             <button
               type="button"
               onClick={() => { closeOnNavigate(); onSearch() }}
@@ -285,7 +298,12 @@ export function Sidebar({
               )}
             </button>
             {/* Точка означает «уведомления есть»: прочитанность мы не храним. */}
-            <NotificationsBell dot={me.counts.alerts > 0} className={rail ? 'w-full' : 'w-[32px]'} />
+            <NotificationsBell
+              dot={me.counts.alerts > 0}
+              className={rail ? 'w-full' : 'w-[32px]'}
+              open={menu === 'alerts'}
+              onOpenChange={(next) => setMenu(next ? 'alerts' : null)}
+            />
           </div>
 
           {/* «Первые шаги». Каждый шаг проверен по данным на сервере, поэтому
@@ -294,7 +312,7 @@ export function Sidebar({
             <Link
               href={nextStep.href as Route}
               onClick={closeOnNavigate}
-              className="mt-[12px] flex flex-col gap-[8px] rounded-[6px] px-[10px] py-[9px] transition-colors hover:bg-nav-bg-2"
+              className="mt-[12px] flex shrink-0 flex-col gap-[8px] rounded-[6px] px-[10px] py-[9px] transition-colors hover:bg-nav-bg-2"
             >
               <span className="flex items-center gap-[8px]">
                 <Rocket size={15} className="shrink-0 text-nav-text" aria-hidden />
@@ -314,9 +332,9 @@ export function Sidebar({
             </Link>
           ) : null}
 
-          <div className={cn('my-[10px] h-px bg-night-3', )} />
+          <div className="my-[10px] h-px shrink-0 bg-night-3" />
 
-          <nav className="pb-[8px]">
+          <nav className="min-h-0 flex-1 overflow-y-auto scrollbar-thin pb-[8px]">
             <ul className="flex flex-col gap-[2px]">{MAIN.map(renderItem)}</ul>
 
             {GROUPS.map((group) => {

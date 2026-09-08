@@ -78,19 +78,27 @@ export function Hero({
           )}
         </h1>
 
+        {/* «Без лимитов» из макета убрано: лимиты как раз воспроизводятся —
+            apps/api/src/lib/rate-limit.ts, шлюз при исчерпании ведра отдаёт 429 (503 у
+            Bitrix24), и соседние секции этим прямо хвалятся. Свободно у нас другое:
+            регистрация просит только почту и пароль (apps/api/src/routes/auth.ts),
+            карта не нужна нигде. */}
         <p className="mt-[20px] max-w-[760px] text-[15px] leading-[24px] text-nav-text md:text-[17px] md:leading-[27px]">
           APIStend — песочница с точными копиями Bitrix24, Ozon Seller API и Wildberries. Те же
-          схемы ответов, коды ошибок и вебхуки, только без боевого аккаунта и без лимитов.
+          схемы ответов, коды ошибок и вебхуки, только без боевого аккаунта и без карты.
         </p>
 
         <HeroSearch />
 
+        {/* Из фразы макета убраны «за 30 секунд»: сколько занимает регистрация,
+            мы не замеряли, а срок в интерфейсе — такое же выдуманное число, как метрика.
+            Смысл кнопки («не искать чужое, а завести своё») держится и без него. */}
         <Link
           href="/register"
           className="mt-[14px] inline-flex items-center gap-[8px] rounded-[8px] border border-nav-border bg-code-surface px-[16px] py-[9px] text-[13px] font-medium text-night-text transition-colors hover:border-night-dim"
         >
           <Terminal size={14} className="shrink-0" aria-hidden />
-          Или создайте песочницу за 30 секунд
+          Или создайте свою песочницу
         </Link>
 
         {cards.length > 0 && (
@@ -101,7 +109,10 @@ export function Hero({
               return (
                 <article
                   key={m.id}
-                  className="flex h-full flex-col gap-[10px] rounded-[10px] border border-night-line bg-night-2 p-[16px] text-left"
+                  /* min-w-0: карточка — элемент сетки, а у него min-width: auto, поэтому
+                     нерушимый путь в моноширинном шрифте задавал ей минимальную ширину
+                     и на 320 px страница получала горизонтальный скролл. */
+                  className="flex h-full min-w-0 flex-col gap-[10px] rounded-[10px] border border-night-line bg-night-2 p-[16px] text-left"
                 >
                   <div className="flex items-center gap-[10px]">
                     <ServiceSquare service={m.serviceCode} size={26} />

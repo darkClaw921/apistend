@@ -15,16 +15,33 @@ import { LandingNavMobile } from './LandingNavMobile'
  * документации нет, а каталог со схемами, примерами и кодами ошибок и есть то,
  * за чем сюда приходят. Состав и порядок пунктов совпадают с макетом, новых
  * в нём не появилось.
+ *
+ * Якоря записаны от корня («/#features»), а не голым фрагментом. Причина: эта
+ * шапка рисуется не только на лендинге — CatalogShell показывает её гостю на
+ * /catalog, где секций «Возможности», «Сервисы», «Вебхуки» и «Цены» нет вовсе,
+ * и голый «#features» там оставлял бы гостя на месте, только меняя адрес.
+ * Адрес с корнем на самом лендинге браузер видит как тот же документ и просто
+ * прокручивает к секции (без перезагрузки), а из каталога уводит на лендинг
+ * и прокручивает там.
  */
 const NAV_LINKS = [
-  { label: 'Возможности', href: '#features' },
-  { label: 'Сервисы', href: '#services' },
-  { label: 'Вебхуки', href: '#webhooks' },
+  { label: 'Возможности', href: '/#features' },
+  { label: 'Сервисы', href: '/#services' },
+  { label: 'Вебхуки', href: '/#webhooks' },
   { label: 'Документация', href: '/catalog' },
-  { label: 'Цены', href: '#pricing' },
+  { label: 'Цены', href: '/#pricing' },
 ] as const
 
 const LINK_CLASS = 'text-[14px] font-medium text-nav-text transition-colors hover:text-white'
+
+/**
+ * Ссылка на секцию этой же страницы: и голый фрагмент, и адрес с корнем.
+ * Такие ведём обычным <a>: Link на «/#features» с лендинга затеял бы
+ * клиентский переход по маршруту вместо простой прокрутки к фрагменту.
+ */
+function isLandingAnchor(href: string) {
+  return href.startsWith('#') || href.startsWith('/#')
+}
 
 export function LandingNav() {
   return (
@@ -50,7 +67,7 @@ export function LandingNav() {
           <ul className="hidden items-center gap-[28px] lg:flex">
             {NAV_LINKS.map((item) => (
               <li key={item.label}>
-                {item.href.startsWith('#') ? (
+                {isLandingAnchor(item.href) ? (
                   <a href={item.href} className={LINK_CLASS}>{item.label}</a>
                 ) : (
                   <Link href={item.href} className={LINK_CLASS}>{item.label}</Link>

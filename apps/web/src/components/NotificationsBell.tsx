@@ -32,14 +32,26 @@ const TONE: Record<string, string> = {
   info: 'text-accent',
 }
 
-export function NotificationsBell({ dot = false, className }: {
+export function NotificationsBell({ dot = false, className, open: openProp, onOpenChange }: {
   /** Точка «уведомления есть». Считается на сервере, см. /api/auth/me. */
   dot?: boolean
   /** Ширина кнопки задаётся снаружи: в развёрнутом сайдбаре она 32, в свёрнутом — во всю полосу. */
   className?: string
+  /**
+   * Управление извне. Нужно сайдбару: там рядом стоит панель аккаунта, и без
+   * общего владельца обе раскрывались одновременно и накладывались друг на друга.
+   * Без этих пропсов компонент по-прежнему сам себе хозяин.
+   */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }) {
   const router = useRouter()
-  const [open, setOpen] = useState(false)
+  const [uncontrolled, setUncontrolled] = useState(false)
+  const open = openProp ?? uncontrolled
+  const setOpen = (next: boolean) => {
+    if (onOpenChange) onOpenChange(next)
+    else setUncontrolled(next)
+  }
   const [alerts, setAlerts] = useState<AlertItem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -63,7 +75,7 @@ export function NotificationsBell({ dot = false, className }: {
         type="button"
         aria-label="Уведомления"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(!open)}
         className="relative flex h-[32px] w-full items-center justify-center rounded-[6px] border border-night-line bg-night-2 text-nav-text transition-colors hover:border-nav-border hover:text-nav-text-active"
       >
         <Bell size={15} aria-hidden />

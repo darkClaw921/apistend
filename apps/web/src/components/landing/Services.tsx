@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import type { Route } from 'next'
-import { ArrowRight, Timer } from 'lucide-react'
+import { ArrowRight, MessageSquarePlus } from 'lucide-react'
 import { cn, formatDate, formatInt, formatMethods } from '@apistend/ui'
 import type { ServiceSummary } from '@/lib/types'
 
@@ -18,6 +18,9 @@ interface Sample {
   readonly method: SampleMethod
   readonly path: string
 }
+
+/** Трекер проекта: страницы контактов у проекта нет, обсуждения идут в issues. */
+const GITHUB_ISSUES = 'https://github.com/darkClaw921/apistend/issues'
 
 /**
  * Три показательных пути на сервис. Раньше жили в page.tsx как SERVICE_SAMPLES —
@@ -71,10 +74,6 @@ function methodsWord(n: number): string {
 }
 
 export function Services({ services }: { services: ServiceSummary[] }) {
-  // API может быть недоступен. Три пустые карточки хуже, чем отсутствие блока,
-  // а полоса «Скоро» без самих сервисов не значит ничего.
-  if (services.length === 0) return null
-
   return (
     <section id="services" className="bg-night px-[20px] py-[64px] md:px-[80px] md:py-[88px]">
       <div className="mx-auto flex max-w-[1280px] flex-col gap-[40px]">
@@ -91,130 +90,181 @@ export function Services({ services }: { services: ServiceSummary[] }) {
           </p>
         </header>
 
-        {/*
-          На 768 три колонки дают ~190 px под карточку — путь вроде
-          /api/v3/stocks/{warehouseId} там уже не читается. Поэтому три колонки
-          только с lg, на планшете две.
-        */}
-        <div className="grid gap-[16px] md:grid-cols-2 lg:grid-cols-3">
-          {services.map((service) => {
-            const status = STATUS_TONE[service.status]
-            const samples = SERVICE_SAMPLES[service.code]
+        {services.length === 0 ? (
+          /*
+            API недоступен — карточек нет, но секция остаётся на странице.
+            Раньше здесь стоял `return null`, и вместе с секцией со страницы
+            пропадал якорь id="services", на который ссылаются и шапка (LandingNav),
+            и футер: ровно в аварийном режиме обе ссылки вели в никуда.
+            Подставить карточки неоткуда — состав каталога, числа методов и даты
+            снимков приходят из API, придумать их в вёрстке нельзя. Поэтому вместо
+            карточек прямая строка. Так же устроен запасной вид в StackTabs.
+          */
+          <p className="rounded-[14px] border border-night-line bg-night-2 px-[20px] py-[28px] text-center text-[14px] leading-[1.5] text-nav-text">
+            Список сервисов сейчас недоступен: каталог не ответил. Попробуйте обновить страницу.
+          </p>
+        ) : (
+          <>
+            {/*
+              На 768 три колонки дают ~190 px под карточку — путь вроде
+              /api/v3/stocks/{warehouseId} там уже не читается. Поэтому три колонки
+              только с lg, на планшете две.
+            */}
+            <div className="grid gap-[16px] md:grid-cols-2 lg:grid-cols-3">
+              {services.map((service) => {
+                const status = STATUS_TONE[service.status]
+                const samples = SERVICE_SAMPLES[service.code]
 
-            return (
-              <article
-                key={service.code}
-                className="flex flex-col gap-[16px] rounded-[14px] border border-night-line bg-night-2 p-[24px]"
-              >
-                <div className="flex items-center gap-[12px]">
-                  {/*
-                    ServiceSquare рисует одну букву (B/O/W), а в макете на квадрате
-                    двух-трёхзначная метка B24 / OZ / WB. Берём её из данных (shortCode),
-                    цвет марки — той же переменной токена, что и в примитиве.
-                  */}
-                  <span
-                    aria-hidden
-                    style={{ backgroundColor: `var(--color-${service.brandToken})` }}
-                    className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[10px] text-[13px] font-bold text-white"
+                return (
+                  <article
+                    key={service.code}
+                    /* min-w-0: карточка — элемент сетки, а у него min-width: auto,
+                       и моноширинный путь без переносов задавал ей минимальную ширину;
+                       на 320 px из-за этого появлялся горизонтальный скролл страницы. */
+                    className="flex min-w-0 flex-col gap-[16px] rounded-[14px] border border-night-line bg-night-2 p-[24px]"
                   >
-                    {service.shortCode}
-                  </span>
-
-                  <div className="flex min-w-0 flex-1 flex-col gap-[2px]">
-                    <h3 className="truncate text-[18px] font-semibold tracking-[-0.3px] text-white">
-                      {service.title}
-                    </h3>
-                    <p className="truncate font-mono text-[11px] text-code-muted">{service.apiVersion}</p>
-                  </div>
-
-                  <span
-                    className={cn(
-                      'inline-flex shrink-0 items-center gap-[6px] rounded-[20px] px-[10px] py-[4px]',
-                      'text-[11px] font-medium whitespace-nowrap',
-                      status.chip,
-                    )}
-                  >
-                    <span className={cn('h-[5px] w-[5px] shrink-0 rounded-full', status.dot)} aria-hidden />
-                    {status.label}
-                  </span>
-                </div>
-
-                <ul className="flex flex-col gap-[6px] border-t border-night-3 pt-[16px]">
-                  {samples.map((sample) => (
-                    <li
-                      key={sample.path}
-                      className="flex items-center gap-[8px] rounded-[6px] bg-night px-[9px] py-[7px]"
-                    >
+                    {/*
+                      Отступление от макета: до xl чип статуса уходит на свою строку
+                      под заголовок. Причина измерена, а не придумана: на 1024 карточка
+                      в трёх колонках оставляет 229 px содержимого, из них 40 px забирает
+                      квадрат и ~85 px — чип, и заголовку доставалось 83 px. «Ozon Seller
+                      API» превращался в «Ozon S…», «Wildberries» — в «Wildbe…». Пути ниже
+                      обрезаются осознанно (полный список — в каталоге по ссылке), а имя
+                      сервиса — то единственное, ради чего карточку вообще читают.
+                      basis-full переносит чип на отдельную строку; с xl ширины хватает,
+                      и он возвращается в ряд, как в макете.
+                    */}
+                    <div className="flex flex-wrap items-center gap-x-[12px] gap-y-[10px]">
+                      {/*
+                        ServiceSquare рисует одну букву (B/O/W), а в макете на квадрате
+                        двух-трёхзначная метка B24 / OZ / WB. Берём её из данных (shortCode),
+                        цвет марки — той же переменной токена, что и в примитиве.
+                      */}
                       <span
-                        className={cn(
-                          'inline-flex shrink-0 items-center justify-center rounded-[4px] px-[7px] py-[3px]',
-                          'font-mono text-[11px] font-bold tracking-[0.4px]',
-                          METHOD_TONE[sample.method],
-                        )}
+                        aria-hidden
+                        style={{ backgroundColor: `var(--color-${service.brandToken})` }}
+                        className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[10px] text-[13px] font-bold text-white"
                       >
-                        {sample.method}
+                        {service.shortCode}
                       </span>
-                      {/* Путь длиннее ячейки обрезаем: полный список — в каталоге по ссылке ниже. */}
-                      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-nav-text">
-                        {sample.path}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
 
-                {/*
-                  В макете здесь три числа: методы, «96 мс задержка» и «61 240 запросов».
-                  Задержку по сервису и число запросов мы не измеряем — вместо выдуманных
-                  чисел показываем то, что знаем: сколько методов в каталоге и на какую дату
-                  снят снимок документации.
-                */}
-                <div className="flex gap-[8px] border-t border-night-3 pt-[16px]">
-                  <p className="flex min-w-0 flex-1 flex-col gap-[2px]">
-                    <span className="font-mono text-[14px] font-semibold text-white">
-                      {formatInt(service.methodsCount)}
-                    </span>
-                    <span className="text-[11px] text-code-muted">{methodsWord(service.methodsCount)}</span>
-                  </p>
-                  <p className="flex min-w-0 flex-1 flex-col gap-[2px]">
-                    {/* Снимка может не быть — тогда прочерк, а не подставленная дата. */}
-                    <span className="font-mono text-[14px] font-semibold text-white">
-                      {service.snapshotDate ? formatDate(service.snapshotDate) : '—'}
-                    </span>
-                    <span className="text-[11px] text-code-muted">снимок документации</span>
-                  </p>
-                </div>
+                      <div className="flex min-w-0 flex-1 flex-col gap-[2px]">
+                        {/* truncate только с xl: там чип снова в ряду и ширина ограничена. */}
+                        <h3 className="text-[18px] font-semibold tracking-[-0.3px] text-white xl:truncate">
+                          {service.title}
+                        </h3>
+                        <p className="truncate font-mono text-[11px] text-code-muted">{service.apiVersion}</p>
+                      </div>
 
-                {/*
-                  Описание лимита длинное («Около 2 запросов в секунду, бакет 50…») и в ячейку
-                  третьего числа не влезает. Сокращать его нельзя: короткая версия с другим
-                  числом была бы выдумкой, — поэтому отдельная строка целиком.
-                */}
-                <p className="text-[11px] leading-[1.5] text-code-muted">
-                  <span className="text-night-dim">Лимиты: </span>
-                  {service.rateLimit}
-                </p>
+                      {/* Обёртка нужна, чтобы basis-full растянул строку, а не сам чип. */}
+                      <div className="basis-full xl:basis-auto">
+                        <span
+                          className={cn(
+                            'inline-flex items-center gap-[6px] rounded-[20px] px-[10px] py-[4px]',
+                            'text-[11px] font-medium whitespace-nowrap',
+                            status.chip,
+                          )}
+                        >
+                          <span className={cn('h-[5px] w-[5px] shrink-0 rounded-full', status.dot)} aria-hidden />
+                          {status.label}
+                        </span>
+                      </div>
+                    </div>
 
-                <Link
-                  href={`/catalog?service=${service.code}` as Route}
-                  className="mt-auto inline-flex w-fit items-center gap-[6px] text-[13px] font-semibold text-night-accent transition-colors hover:text-night-accent-2"
+                    <ul className="flex flex-col gap-[6px] border-t border-night-3 pt-[16px]">
+                      {samples.map((sample) => (
+                        <li
+                          key={sample.path}
+                          className="flex items-center gap-[8px] rounded-[6px] bg-night px-[9px] py-[7px]"
+                        >
+                          <span
+                            className={cn(
+                              'inline-flex shrink-0 items-center justify-center rounded-[4px] px-[7px] py-[3px]',
+                              'font-mono text-[11px] font-bold tracking-[0.4px]',
+                              METHOD_TONE[sample.method],
+                            )}
+                          >
+                            {sample.method}
+                          </span>
+                          {/* Путь длиннее ячейки обрезаем: полный список — в каталоге по ссылке ниже. */}
+                          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-nav-text">
+                            {sample.path}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+
+                    {/*
+                      В макете здесь три числа: методы, «96 мс задержка» и «61 240 запросов».
+                      Задержку по сервису и число запросов мы не измеряем — вместо выдуманных
+                      чисел показываем то, что знаем: сколько методов в каталоге и на какую дату
+                      снят снимок документации.
+                    */}
+                    <div className="flex gap-[8px] border-t border-night-3 pt-[16px]">
+                      <p className="flex min-w-0 flex-1 flex-col gap-[2px]">
+                        <span className="font-mono text-[14px] font-semibold text-white">
+                          {formatInt(service.methodsCount)}
+                        </span>
+                        <span className="text-[11px] text-code-muted">{methodsWord(service.methodsCount)}</span>
+                      </p>
+                      <p className="flex min-w-0 flex-1 flex-col gap-[2px]">
+                        {/* Снимка может не быть — тогда прочерк, а не подставленная дата. */}
+                        <span className="font-mono text-[14px] font-semibold text-white">
+                          {service.snapshotDate ? formatDate(service.snapshotDate) : '—'}
+                        </span>
+                        <span className="text-[11px] text-code-muted">снимок документации</span>
+                      </p>
+                    </div>
+
+                    {/*
+                      Описание лимита длинное («Около 2 запросов в секунду, бакет 50…») и в ячейку
+                      третьего числа не влезает. Сокращать его нельзя: короткая версия с другим
+                      числом была бы выдумкой, — поэтому отдельная строка целиком.
+                    */}
+                    <p className="text-[11px] leading-[1.5] text-code-muted">
+                      <span className="text-night-dim">Лимиты: </span>
+                      {service.rateLimit}
+                    </p>
+
+                    <Link
+                      href={`/catalog?service=${service.code}` as Route}
+                      className="mt-auto inline-flex w-fit items-center gap-[6px] text-[13px] font-semibold text-night-accent transition-colors hover:text-night-accent-2"
+                    >
+                      Смотреть методы
+                      <ArrowRight size={14} aria-hidden />
+                    </Link>
+                  </article>
+                )
+              })}
+            </div>
+
+            {/*
+              В макете полоса заканчивалась перечислением «Скоро: Яндекс Маркет, СБИС,
+              МойСклад, Авито и 1С-Битрикс Магазин» и ссылкой «Дорожная карта →».
+              Ссылку убрали раньше — дорожной карты у проекта нет. Но и само перечисление
+              оставалось обещанием этой несуществующей карты: пять названий, никакого срока
+              и ничего в репозитории, чем это подтвердить. Сервисов в коде ровно три
+              (SERVICE_CODES в packages/shared/src/services.ts), четвёртый нигде не заведён.
+              Поэтому вместо обещания — то, что правда есть: состав каталога и живой адрес,
+              куда написать про недостающий сервис. Ссылка та же, что в FinalCta и футере.
+            */}
+            <p className="flex items-start gap-[12px] rounded-[10px] border border-night-line bg-night-2 px-[20px] py-[16px] text-[14px] leading-[1.5] text-nav-text">
+              <MessageSquarePlus size={16} className="mt-[3px] shrink-0 text-code-muted" aria-hidden />
+              <span>
+                Других сервисов в песочнице пока нет — только те, что выше. Не хватает своего?{' '}
+                <a
+                  href={GITHUB_ISSUES}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-semibold text-night-accent transition-colors hover:text-night-accent-2"
                 >
-                  Смотреть методы
-                  <ArrowRight size={14} aria-hidden />
-                </Link>
-              </article>
-            )
-          })}
-        </div>
-
-        {/*
-          В макете полоса заканчивается призывом «Голосуйте за следующий сервис
-          в дорожной карте» и ссылкой «Дорожная карта →». Дорожной карты и голосования
-          нет — ссылку в никуда и призыв убрали, осталось перечисление.
-        */}
-        <p className="flex items-start gap-[12px] rounded-[10px] border border-night-line bg-night-2 px-[20px] py-[16px] text-[14px] leading-[1.5] text-nav-text">
-          <Timer size={16} className="mt-[2px] shrink-0 text-code-muted" aria-hidden />
-          Скоро: Яндекс Маркет, СБИС, МойСклад, Авито и 1С-Битрикс Магазин.
-        </p>
+                  Напишите в трекер
+                </a>
+                : обсуждения проекта идут там.
+              </span>
+            </p>
+          </>
+        )}
       </div>
     </section>
   )

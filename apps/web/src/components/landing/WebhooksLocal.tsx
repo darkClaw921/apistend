@@ -3,7 +3,7 @@
 import { Fragment, useState } from 'react'
 import { ArrowDown, Check, Cloud, Copy, LaptopMinimal, Terminal } from 'lucide-react'
 import { SERVICE_PROFILES, findEvent } from '@apistend/shared'
-import { META_SEP, NBSP, formatEvents } from '@apistend/ui'
+import { META_SEP, NBSP, cn, formatEvents } from '@apistend/ui'
 
 /**
  * Секция «Вебхуки на localhost». Макет: «Section Webhooks Local» в APIStend.pen.
@@ -15,10 +15,19 @@ import { META_SEP, NBSP, formatEvents } from '@apistend/ui'
 /** Настоящая команда CLI: у пакета есть listen, а флаг --forward — её штатный аргумент. */
 const COMMAND = 'npx apistend listen --forward localhost:3000/webhooks'
 
+/**
+ * Третий пункт в макете — «агент поднимается контейнером рядом с тестами».
+ * Контейнера нет: в репозитории ни одного Dockerfile, docker-compose.yml поднимает
+ * только postgres, .github/workflows агента не запускает. Агент — это npm-пакет
+ * apistend (packages/cli, bin apistend), и в CI он запускается ровно так же, как
+ * на ноутбуке: npx, а ключ читается из APISTEND_API_KEY (packages/cli/src/config.ts),
+ * то есть из секретов репозитория. Про это и пишем — и так же сказано в секции
+ * «Интеграции», чтобы лендинг не спорил сам с собой.
+ */
 const BULLETS = [
   'Одна команда в терминале — и события идут на ваш порт',
   'Повтор любого события в один клик, история доставок сохраняется',
-  'Работает в CI: агент поднимается контейнером рядом с тестами',
+  'Работает в CI: тот же npx, ключ — из секретов репозитория',
 ] as const
 
 /**
@@ -58,7 +67,14 @@ interface DeliveryLine {
   readonly time: string
   /** Настоящий код события из packages/shared/src/events.ts. */
   readonly eventCode: string
+  /** Только код ответа приложения: короткая часть, она всегда остаётся в первой строке. */
   readonly status: string
+  /**
+   * Приписка о повторе доставки — отдельным полем, а не хвостом статуса:
+   * на узком экране она уезжает во вторую строку, и склеенной строкой это не сделать.
+   * null — повторять нечего (успешная доставка) или сервис не повторяет вовсе.
+   */
+  readonly retry: string | null
   readonly tone: 'ok' | 'warn'
 }
 
@@ -80,15 +96,17 @@ const WB_FIRST_RETRY_MS = SERVICE_PROFILES.wildberries.webhook.retryDelaysMs[0]
  * стоит на Wildberries, у которого повторы есть, а строки 2 и 3 поменяны местами.
  */
 const LOG: readonly DeliveryLine[] = [
-  { time: '10:42:18', eventCode: 'TYPE_NEW_POSTING', status: '200 OK', tone: 'ok' },
-  { time: '10:39:05', eventCode: 'ONCRMDEALUPDATE', status: '200 OK', tone: 'ok' },
+  { time: '10:42:18', eventCode: 'TYPE_NEW_POSTING', status: '200 OK', retry: null, tone: 'ok' },
+  { time: '10:39:05', eventCode: 'ONCRMDEALUPDATE', status: '200 OK', retry: null, tone: 'ok' },
   {
     time: '10:31:44',
     eventCode: 'stocks_changed',
-    status:
+    status: '500',
+    // Профиля без лестницы повторов приписки не получает: число выдумывать нечем.
+    retry:
       WB_FIRST_RETRY_MS === undefined
-        ? '500'
-        : `500${META_SEP}повтор через ${Math.round(WB_FIRST_RETRY_MS / 1000)}${NBSP}с`,
+        ? null
+        : `повтор через ${Math.round(WB_FIRST_RETRY_MS / 1000)}${NBSP}с`,
     tone: 'warn',
   },
 ]
@@ -204,23 +222,37 @@ export function WebhooksLocal({ eventTypes }: { eventTypes: number }) {
             </p>
             {LOG.map((line) => {
               const shortCode = serviceShortCode(line.eventCode)
+              const tone = line.tone === 'ok' ? 'text-night-ok' : 'text-night-warn'
               return (
                 <p
                   key={line.eventCode}
-                  className="flex items-center gap-[10px] font-mono text-[11px]"
+                  className="flex flex-wrap items-center gap-x-[10px] gap-y-[2px] font-mono text-[11px]"
                 >
                   <span className="tabular shrink-0 text-code-muted">{line.time}</span>
                   {/* Метки сервиса в макете нет. Коды событий у трёх сервисов
                       непохожи, и без метки строка читается как каша. */}
                   {shortCode ? <span className="shrink-0 text-code-muted">{shortCode}</span> : null}
                   <span className="min-w-0 flex-1 truncate text-code-text">{line.eventCode}</span>
-                  <span
-                    className={
-                      line.tone === 'ok' ? 'shrink-0 text-night-ok' : 'shrink-0 text-night-warn'
-                    }
-                  >
-                    {line.status}
-                  </span>
+                  <span className={cn('shrink-0', tone)}>{line.status}</span>
+                  {/* Приписка о повторе ниже sm уходит отдельной строкой (w-full), и только
+                      с 640 px встаёт обратно в строку. Замер в iframe 375 px: строка
+                      журнала — 301 px, слитный статус «500 · повтор через 10 с» забирал
+                      113 px, и коду события доставалось 53 px из нужных 92 — на экране
+                      висело «stocks_…». Код события — единственное, чем строка отличается
+                      от соседней, поэтому ширина достаётся ему, а приписке — вторая
+                      строка: терять её совсем нельзя, повторы здесь и показываем. */}
+                  {line.retry ? (
+                    <>
+                      {/* Разделитель нужен, только когда приписка стоит в одной строке
+                          со статусом; во второй строке точка в начале читается мусором. */}
+                      <span className="hidden shrink-0 text-code-muted sm:inline" aria-hidden>
+                        {META_SEP.trim()}
+                      </span>
+                      <span className={cn('w-full shrink-0 text-right sm:w-auto', tone)}>
+                        {line.retry}
+                      </span>
+                    </>
+                  ) : null}
                 </p>
               )
             })}
