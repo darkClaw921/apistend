@@ -2,8 +2,10 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import type { Route } from 'next'
 import { CircleDashed, ArrowRight } from 'lucide-react'
 import { Panel, EmptyState } from '@apistend/ui'
+import { useProjectCrumb } from './AppShell'
 import { Topbar } from './Topbar'
 
 /**
@@ -13,18 +15,25 @@ import { Topbar } from './Topbar'
  * или, того хуже, нарисованных данных, за которыми ничего не стоит.
  */
 export function ComingSoon({
-  breadcrumb, title, wave, description, ready,
+  title, wave, description, ready,
 }: {
-  breadcrumb: string
   title: string
   wave: string
   description: string
-  ready: string[]
+  /**
+   * Куда пойти вместо этого экрана. Адрес задаётся явно: раньше он выводился
+   * из подписи (`item === 'Каталог API' ? … : '/keys'`), и любая новая подпись
+   * молча вела в «Ключи и токены».
+   */
+  ready: ReadonlyArray<{ label: string; href: Route }>
 }) {
   const [search, setSearch] = useState('')
+  // Крошка собирается из проекта пользователя, а не задаётся строкой:
+  // раньше в каждой заглушке стоял демонстрационный «Интеграция 1С».
+  const crumb = useProjectCrumb(title)
   return (
     <>
-      <Topbar breadcrumb={breadcrumb} title={title} search={search} onSearchChange={setSearch} />
+      <Topbar breadcrumb={crumb} title={title} search={search} onSearchChange={setSearch} />
       <main className="flex min-h-0 flex-1 items-center justify-center p-[24px]">
         <Panel className="w-full max-w-[560px]">
           <EmptyState
@@ -38,12 +47,12 @@ export function ComingSoon({
             </p>
             <ul className="flex flex-wrap gap-[8px]">
               {ready.map((item) => (
-                <li key={item}>
+                <li key={item.href}>
                   <Link
-                    href={item === 'Каталог API' ? '/catalog' : item === 'Консоль запросов' ? '/console' : '/keys'}
+                    href={item.href}
                     className="inline-flex items-center gap-[6px] rounded-[6px] border border-border-strong bg-surface px-[12px] py-[7px] text-[12px] font-semibold text-text-secondary transition-colors hover:bg-surface-2"
                   >
-                    {item}
+                    {item.label}
                     <ArrowRight size={12} aria-hidden />
                   </Link>
                 </li>

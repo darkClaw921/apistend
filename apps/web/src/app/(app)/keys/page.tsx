@@ -12,7 +12,7 @@ import type { Column } from '@apistend/ui'
 import { api, ApiError } from '@/lib/api'
 import type { ApiKeyItem, KeysResponse, Me } from '@/lib/types'
 import { Topbar } from '@/components/Topbar'
-import { useShell } from '@/components/AppShell'
+import { useShell, useProjectCrumb } from '@/components/AppShell'
 import { CreateKeyDialog } from '@/components/CreateKeyDialog'
 import { HowToConnectDialog } from '@/components/HowToConnectDialog'
 
@@ -34,6 +34,8 @@ const STATUS_TONE = { active: 'success', expiring: 'warning', revoked: 'danger' 
 
 export default function KeysPage() {
   const shell = useShell()
+  const crumb = useProjectCrumb('Ключи и токены')
+
   const [data, setData] = useState<KeysResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -186,7 +188,7 @@ export default function KeysPage() {
   return (
     <>
       <Topbar
-        breadcrumb="Проект «Интеграция 1С» / Ключи и токены"
+        breadcrumb={crumb}
         title="Ключи и токены"
         search={globalSearch}
         onSearchChange={setGlobalSearch}

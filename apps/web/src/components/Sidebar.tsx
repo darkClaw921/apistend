@@ -1,12 +1,15 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, LibraryBig, Boxes, Terminal, ScrollText, Webhook, GitBranch,
   Database, AppWindow, KeyRound, Users, Settings, PlugZap, ChevronsUpDown, EllipsisVertical,
+  Check, LogOut,
 } from 'lucide-react'
-import { NavItem, NavSection, cn, formatInt } from '@apistend/ui'
+import { DropdownPanel, NavItem, NavSection, cn, formatInt } from '@apistend/ui'
+import { api } from '@/lib/api'
 import type { Me } from '@/lib/types'
 
 /**
@@ -61,11 +64,31 @@ export function Sidebar({
   onClose?: () => void
 }) {
   const pathname = usePathname()
+  const router = useRouter()
   const sandbox = me.sandboxes[0]
+  const [sandboxOpen, setSandboxOpen] = useState(false)
+  const [userOpen, setUserOpen] = useState(false)
+  const [leaving, setLeaving] = useState(false)
 
   // Переход по разделу на узком экране закрывает шторку: иначе она остаётся
   // поверх только что открытого экрана.
   const closeOnNavigate = () => onClose?.()
+
+  /**
+   * Выход. Сессия отзывается на сервере — cookie удалить мало: токен без
+   * записи в базе жил бы ещё две недели.
+   */
+  async function signOut() {
+    setLeaving(true)
+    try {
+      await api.post('/api/auth/logout')
+    } catch {
+      /* сервер недоступен — уводим на вход всё равно: остаться здесь хуже */
+    }
+    setUserOpen(false)
+    router.replace('/login')
+    router.refresh()
+  }
 
   return (
     <>
@@ -95,19 +118,50 @@ export function Sidebar({
           </span>
         </Link>
 
-        <button
-          type="button"
-          className="flex items-center gap-[8px] rounded-[6px] border border-nav-border bg-nav-bg-2 px-[10px] py-[9px] text-left transition-colors hover:border-[#33404F]"
-        >
-          <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-success" aria-hidden />
-          <span className="flex min-w-0 flex-col">
-            <span className="text-[10px] text-nav-text">Песочница</span>
-            <span className="truncate font-mono text-[12px] text-nav-text-active">
-              {sandbox?.name ?? '—'}
+        {/* Переключатель был нарисован и ничего не делал: кнопка без обработчика.
+            Песочница у аккаунта пока одна — так и говорим, вместо молчания
+            в ответ на нажатие. */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setSandboxOpen((v) => !v)}
+            aria-expanded={sandboxOpen}
+            className="flex w-full items-center gap-[8px] rounded-[6px] border border-nav-border bg-nav-bg-2 px-[10px] py-[9px] text-left transition-colors hover:border-[#33404F]"
+          >
+            <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-success" aria-hidden />
+            <span className="flex min-w-0 flex-col">
+              <span className="text-[10px] text-nav-text">Песочница</span>
+              <span className="truncate font-mono text-[12px] text-nav-text-active">
+                {sandbox?.name ?? '—'}
+              </span>
             </span>
-          </span>
-          <ChevronsUpDown size={14} className="ml-auto shrink-0 text-nav-text" aria-hidden />
-        </button>
+            <ChevronsUpDown size={14} className="ml-auto shrink-0 text-nav-text" aria-hidden />
+          </button>
+
+          {sandboxOpen ? (
+            <DropdownPanel onClose={() => setSandboxOpen(false)} align="left" label="Песочницы" className="w-[224px]">
+              <ul className="flex flex-col py-[6px]">
+                {me.sandboxes.map((s) => (
+                  <li key={s.id} className="flex items-center gap-[8px] px-[14px] py-[8px]">
+                    <Check size={13} className="shrink-0 text-accent" aria-hidden />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate font-mono text-[12px] text-text-primary">{s.name}</span>
+                      <span className="truncate text-[11px] text-text-tertiary">{s.project}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="border-t border-border px-[14px] py-[10px] text-[11px] leading-[1.45] text-text-tertiary">
+                Вторая песочница пока не заводится. Объём данных, задержку и долю ошибок этой
+                настраивают на экране{' '}
+                <Link href="/keys" onClick={() => setSandboxOpen(false)} className="font-semibold text-accent">
+                  «Ключи и токены»
+                </Link>
+                .
+              </p>
+            </DropdownPanel>
+          ) : null}
+        </div>
 
         <nav>
           {SECTIONS.map((section) => (
@@ -155,15 +209,48 @@ export function Sidebar({
           <p className="mt-[6px] text-[11px] text-nav-section">Без лимитов на запросы</p>
         </div>
 
-        <div className="flex items-center gap-[10px]">
-          <span className="flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-full bg-[#2E3A48] text-[11px] font-semibold text-nav-text-active">
-            {me.user.initials}
-          </span>
-          <span className="flex min-w-0 flex-col">
-            <span className="truncate text-[12px] font-medium text-nav-text-active">{me.user.name}</span>
-            <span className="truncate text-[10px] text-nav-text">{me.user.planLabel}</span>
-          </span>
-          <EllipsisVertical size={14} className="ml-auto shrink-0 text-nav-text" aria-hidden />
+        {/* Здесь было только многоточие-иконка без обработчика — и выйти
+            из аккаунта было нельзя ниоткуда, хотя маршрут выхода на сервере
+            есть и сессию он отзывает. */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setUserOpen((v) => !v)}
+            aria-expanded={userOpen}
+            aria-label="Меню пользователя"
+            className="flex w-full items-center gap-[10px] rounded-[6px] px-[4px] py-[4px] text-left transition-colors hover:bg-nav-bg-2"
+          >
+            <span className="flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded-full bg-[#2E3A48] text-[11px] font-semibold text-nav-text-active">
+              {me.user.initials}
+            </span>
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate text-[12px] font-medium text-nav-text-active">{me.user.name}</span>
+              <span className="truncate text-[10px] text-nav-text">{me.user.planLabel}</span>
+            </span>
+            <EllipsisVertical size={14} className="ml-auto shrink-0 text-nav-text" aria-hidden />
+          </button>
+
+          {userOpen ? (
+            <DropdownPanel
+              onClose={() => setUserOpen(false)}
+              align="left"
+              label="Меню пользователя"
+              className="top-auto bottom-[calc(100%+8px)] w-[224px]"
+            >
+              <p className="border-b border-border px-[14px] py-[10px] text-[12px] break-all text-text-secondary">
+                {me.user.email}
+              </p>
+              <button
+                type="button"
+                disabled={leaving}
+                onClick={() => void signOut()}
+                className="flex w-full items-center gap-[8px] px-[14px] py-[10px] text-left text-[13px] text-text-primary hover:bg-bg disabled:text-text-tertiary"
+              >
+                <LogOut size={14} className="shrink-0" aria-hidden />
+                {leaving ? 'Выходим…' : 'Выйти'}
+              </button>
+            </DropdownPanel>
+          ) : null}
         </div>
       </div>
     </aside>

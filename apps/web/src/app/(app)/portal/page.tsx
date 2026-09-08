@@ -417,8 +417,12 @@ function PortalScreen() {
         onSearchChange={setGlobalSearch}
       />
 
-      <main className="flex min-h-0 flex-1 gap-[20px] overflow-hidden p-[24px]">
-        <Panel className="relative min-w-0 flex-1">
+      {/* Журнал моста фиксирован в 330 px и не сжимается: ниже 1280 порталу
+          оставалось около двухсот, из которых 196 занимало его собственное меню,
+          и страница приложения превращалась в полоску в три сантиметра.
+          Журнал уходит под портал. */}
+      <main className="flex min-h-0 flex-1 gap-[20px] overflow-hidden p-[24px] max-xl:flex-col max-xl:overflow-y-auto max-xl:scrollbar-thin">
+        <Panel className="relative min-w-0 flex-1 max-xl:min-h-[560px]">
           {loading && !data ? (
             <SkeletonRows rows={8} />
           ) : error && !data ? (
@@ -525,7 +529,12 @@ function PortalScreen() {
           )}
         </Panel>
 
-        {logOpen ? <BridgeLogPanel log={log} className="w-[330px] shrink-0" /> : null}
+        {logOpen ? (
+          <BridgeLogPanel
+            log={log}
+            className="xl:w-[330px] xl:shrink-0 max-xl:h-[320px] max-xl:shrink-0"
+          />
+        ) : null}
       </main>
     </>
   )

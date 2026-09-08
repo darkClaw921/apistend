@@ -13,6 +13,7 @@ import { api, ApiError, API_URL } from '@/lib/api'
 import { CreateMockDialog } from '@/components/CreateMockDialog'
 import { ImportOpenApiDialog } from '@/components/ImportOpenApiDialog'
 import type { CustomMockItem, MockTestResult, MocksResponse } from '@/lib/types'
+import { useProjectCrumb } from '@/components/AppShell'
 import { Topbar } from '@/components/Topbar'
 
 /**
@@ -34,6 +35,8 @@ const STATUS_DOT: Record<CustomMockItem['status'], string> = {
 }
 
 export default function MocksPage() {
+  const crumb = useProjectCrumb('Свои моки')
+
   const [data, setData] = useState<MocksResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -169,7 +172,7 @@ export default function MocksPage() {
   return (
     <>
       <Topbar
-        breadcrumb="Проект «Интеграция 1С» / Свои моки"
+        breadcrumb={crumb}
         title="Свои моки"
         search={globalSearch}
         onSearchChange={setGlobalSearch}

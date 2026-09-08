@@ -8,9 +8,10 @@ import {
   Overline, Panel, PanelHeader, SkeletonRows, StatusChip, StatusCodeChip, Tabs,
   formatBytes, formatMs, formatTime, meta,
 } from '@apistend/ui'
+import { isServiceCode } from '@apistend/shared'
 import { api, ApiError } from '@/lib/api'
 import { CreateMockDialog } from '@/components/CreateMockDialog'
-import type { ConsoleResult, MethodDetail, ServiceSummary } from '@/lib/types'
+import type { ConsoleResult, LogDetail, MethodDetail, ServiceSummary } from '@/lib/types'
 import { Topbar } from '@/components/Topbar'
 import { useShell } from '@/components/AppShell'
 import { SOURCE_LABEL } from '@/lib/readiness'
@@ -61,6 +62,10 @@ function ConsoleScreen() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const presetMethodId = searchParams.get('method')
+  // «Повторить в консоли» из карточки запроса. Кнопка вела сюда с самого начала,
+  // но console читала только method, и запрос не подставлялся вовсе —
+  // пользователь попадал на пустую консоль с настройками по умолчанию.
+  const replayId = searchParams.get('replay')
 
   const [services, setServices] = useState<ServiceSummary[]>([])
   const [service, setService] = useState<string>('bitrix24')
@@ -111,6 +116,29 @@ function ConsoleScreen() {
       })
       .catch(() => { /* метод мог исчезнуть между волнами каталога */ })
   }, [presetMethodId])
+
+  // Повтор запроса из журнала: сервис, метод, путь, query и тело — как было.
+  useEffect(() => {
+    if (!replayId) return
+    api.get<LogDetail>(`/api/logs/${encodeURIComponent(replayId)}`)
+      .then((row) => {
+        if (isServiceCode(row.serviceCode)) setService(row.serviceCode)
+        setHttpMethod(row.httpMethod)
+        // Запрос к своим мокам обслуживает /custom/*, и там путь абсолютный;
+        // у трёх сервисов в журнале лежит путь без префикса монтирования.
+        setPath(row.endpoint)
+        if (row.scenario) setScenario(row.scenario)
+
+        const body = row.requestBody
+        if (body) {
+          setBodyText(body)
+          setLeftTab('body')
+        }
+        setResult(null)
+        setError(null)
+      })
+      .catch(() => setError('Запрос не найден в журнале — возможно, его удалило хранение 30 дней'))
+  }, [replayId])
 
   const send = useCallback(async () => {
     setPending(true)

@@ -62,9 +62,10 @@ export function CatalogShell({ children }: { children: ReactNode }) {
   }
 
   const sandboxId = me.sandboxes[0]?.id ?? ''
+  const project = me.sandboxes[0]?.project ?? 'Без названия'
 
   return (
-    <ShellContext.Provider value={{ me, sandboxId, refresh: loadMe, openMenu: () => setMenuOpen(true) }}>
+    <ShellContext.Provider value={{ me, sandboxId, project, refresh: loadMe, openMenu: () => setMenuOpen(true) }}>
       <div className="flex h-screen overflow-hidden bg-bg">
         <Sidebar
           me={me}
