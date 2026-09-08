@@ -16,6 +16,8 @@ import { Sidebar } from './Sidebar'
 interface ShellState {
   me: Me
   sandboxId: string
+  /** Название проекта пользователя — то, что стоит в хлебных крошках. */
+  project: string
   refresh: () => Promise<void>
   /**
    * Открыть сайдбар-шторку на узком экране. Живёт в контексте, а не в пропсах
@@ -43,6 +45,19 @@ export function useShell(): ShellState {
  */
 export function useOptionalShell(): ShellState | null {
   return useContext(ShellContext)
+}
+
+/**
+ * Хлебная крошка «Проект «X» / Раздел».
+ *
+ * Имя проекта было зашито строкой в каждом экране — «Проект «Интеграция 1С»»
+ * из демо-данных. Любой зарегистрировавшийся видел на всех одиннадцати экранах
+ * чужой проект. Берём его из сессии; гостю (каталог открыт без входа)
+ * возвращаем только раздел.
+ */
+export function useProjectCrumb(section: string): string {
+  const shell = useOptionalShell()
+  return shell ? `Проект «${shell.project}» / ${section}` : section
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -97,9 +112,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   const sandboxId = me.sandboxes[0]?.id ?? ''
+  const project = me.sandboxes[0]?.project ?? 'Без названия'
 
   return (
-    <ShellContext.Provider value={{ me, sandboxId, refresh: load, openMenu: () => setMenuOpen(true) }}>
+    <ShellContext.Provider value={{ me, sandboxId, project, refresh: load, openMenu: () => setMenuOpen(true) }}>
       <div className="flex h-screen overflow-hidden bg-bg">
         <Sidebar
           me={me}

@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   ChevronLeft, ChevronRight, FileDown, Pause, Play, RefreshCw, RotateCcw, X,
 } from 'lucide-react'
@@ -11,9 +11,10 @@ import {
   ServiceDot, formatBytes, formatInt, formatMs, formatPercent, formatTime, formatTimeMs, meta,
 } from '@apistend/ui'
 import type { Column, RowTone } from '@apistend/ui'
-import { SERVICE_PROFILES, isServiceCode } from '@apistend/shared'
+import { SERVICE_CODES, SERVICE_PROFILES, isServiceCode } from '@apistend/shared'
 import { api, ApiError, API_URL } from '@/lib/api'
 import type { KeysResponse, LogRow, LogsResponse } from '@/lib/types'
+import { useProjectCrumb } from '@/components/AppShell'
 import { Topbar } from '@/components/Topbar'
 import { HourlyChart } from '@/components/HourlyChart'
 import { LogDetailPanel } from '@/components/LogDetailPanel'
@@ -43,20 +44,49 @@ const STATUSES = [
 const REFRESH_MS = 5_000
 const PAGE_SIZE = 15
 
+/**
+ * useSearchParams требует границы Suspense — тот же приём, что в консоли
+ * и на каталоге.
+ */
 export default function LogsPage() {
+  return (
+    <Suspense fallback={<div className="flex-1 bg-bg" />}>
+      <LogsScreen />
+    </Suspense>
+  )
+}
+
+/** Значение из адреса, если оно из известного набора. Иначе — как было. */
+function fromQuery(
+  params: URLSearchParams, key: string, allowed: readonly string[], fallback: string,
+): string {
+  const v = params.get(key)
+  return v !== null && allowed.includes(v) ? v : fallback
+}
+
+function LogsScreen() {
   const router = useRouter()
+  // Уведомление «Ozon: ошибки 500 на …» ведёт сюда с ?status=500. Раньше экран
+  // адрес не читал, и пользователь попадал на неотфильтрованный журнал —
+  // ровно тех четырнадцати ошибок, ради которых он пришёл, было не найти.
+  const searchParams = useSearchParams()
+
+  const crumb = useProjectCrumb('Логи запросов')
 
   const [data, setData] = useState<LogsResponse | null>(null)
   const [keys, setKeys] = useState<KeysResponse['keys']>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [service, setService] = useState('all')
-  const [status, setStatus] = useState('all')
+  const [service, setService] = useState(() =>
+    fromQuery(searchParams, 'service', [...SERVICE_CODES, 'all'], 'all'))
+  const [status, setStatus] = useState(() =>
+    fromQuery(searchParams, 'status', STATUSES.map((s) => s.value), 'all'))
   const [apiKeyId, setApiKeyId] = useState('all')
-  const [period, setPeriod] = useState('24h')
-  const [query, setQuery] = useState('')
-  const [debounced, setDebounced] = useState('')
+  const [period, setPeriod] = useState(() =>
+    fromQuery(searchParams, 'period', PERIODS.map((p) => p.value), '24h'))
+  const [query, setQuery] = useState(() => searchParams.get('q') ?? '')
+  const [debounced, setDebounced] = useState(() => searchParams.get('q') ?? '')
   const [page, setPage] = useState(0)
 
   const [paused, setPaused] = useState(false)
@@ -199,7 +229,7 @@ export default function LogsPage() {
   return (
     <>
       <Topbar
-        breadcrumb="Проект «Интеграция 1С» / Логи запросов"
+        breadcrumb={crumb}
         title="Логи запросов"
         search={globalSearch}
         onSearchChange={setGlobalSearch}

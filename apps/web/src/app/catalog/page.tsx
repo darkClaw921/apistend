@@ -9,6 +9,7 @@ import {
   ServiceDot, SkeletonRows, StatusChip, formatInt, formatMethods, meta,
 } from '@apistend/ui'
 import type { Column } from '@apistend/ui'
+import { SERVICE_CODES } from '@apistend/shared'
 import { api, ApiError } from '@/lib/api'
 import { useOptionalShell } from '@/components/AppShell'
 import type { CatalogListItem, CatalogResponse, ServiceSummary } from '@/lib/types'
@@ -58,11 +59,22 @@ function CatalogScreen() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [service, setService] = useState('all')
-  const [httpMethod, setHttpMethod] = useState<string>('any')
+  // Уведомление «Wildberries: обновление моков до v2» ведёт сюда с ?service=…,
+  // а лендинг — с ?q=…. Раньше читался только method, и фильтр из ссылки
+  // молча пропадал: пользователь попадал на «Все сервисы».
+  const [service, setService] = useState(() => {
+    const v = searchParams.get('service')
+    return v !== null && (SERVICE_CODES as readonly string[]).includes(v) ? v : 'all'
+  })
+  const [httpMethod, setHttpMethod] = useState<string>(() => {
+    const v = searchParams.get('httpMethod')
+    return v !== null && (HTTP_METHODS as readonly string[]).includes(v) ? v : 'any'
+  })
   const [readiness, setReadiness] = useState<string>('ready,updating')
-  const [query, setQuery] = useState('')
-  const [debounced, setDebounced] = useState('')
+  const [query, setQuery] = useState(() => searchParams.get('q') ?? '')
+  // Начальное значение то же, что у query: иначе первый запрос уходит без поиска
+  // и список моргает — сначала весь каталог, через 200 мс выдача по запросу.
+  const [debounced, setDebounced] = useState(() => searchParams.get('q') ?? '')
   const [page, setPage] = useState(0)
   // Метод в адресе: по такой ссылке карточка открывается сразу — это обещано
   // в шапке файла и нужно поиску из шапки, который сюда и ведёт.
@@ -249,7 +261,7 @@ function CatalogScreen() {
       <Topbar
         // Гость проекта не имеет, и звать его «Новой песочницей» рано:
         // сначала регистрация.
-        breadcrumb={shell ? 'Проект «Интеграция 1С» / Каталог API' : 'Демо-API Bitrix24, Ozon и Wildberries'}
+        breadcrumb={shell ? `Проект «${shell.project}» / Каталог API` : 'Демо-API Bitrix24, Ozon и Wildberries'}
         title="Каталог API"
         search={globalSearch}
         onSearchChange={setGlobalSearch}

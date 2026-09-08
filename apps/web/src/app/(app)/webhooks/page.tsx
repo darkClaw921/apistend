@@ -12,6 +12,7 @@ import type { ChipTone, Column } from '@apistend/ui'
 import { SERVICE_PROFILES, isServiceCode } from '@apistend/shared'
 import { api, ApiError } from '@/lib/api'
 import type { DeliveryItem, WebhookItem, WebhooksResponse } from '@/lib/types'
+import { useProjectCrumb } from '@/components/AppShell'
 import { Topbar } from '@/components/Topbar'
 import { LocalDeliveryBar } from '@/components/LocalDeliveryBar'
 import { CreateWebhookDialog } from '@/components/CreateWebhookDialog'
@@ -45,6 +46,8 @@ const DELIVERY_ICON: Record<DeliveryItem['state'], { label: string; tone: ChipTo
 }
 
 export default function WebhooksPage() {
+  const crumb = useProjectCrumb('Вебхуки')
+
   const [data, setData] = useState<WebhooksResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -279,7 +282,7 @@ export default function WebhooksPage() {
   return (
     <>
       <Topbar
-        breadcrumb="Проект «Интеграция 1С» / Вебхуки"
+        breadcrumb={crumb}
         title="Вебхуки и сценарии"
         search={globalSearch}
         onSearchChange={setGlobalSearch}

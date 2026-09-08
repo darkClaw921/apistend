@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import type { Route } from 'next'
 import {
   Activity, ArrowRight, Boxes, CircleX, KeyRound, Play, RefreshCw, Search, Timer, TriangleAlert,
 } from 'lucide-react'
@@ -15,6 +16,7 @@ import type { ChipTone, Column, RowTone } from '@apistend/ui'
 import { SERVICE_PROFILES, isServiceCode } from '@apistend/shared'
 import { api, ApiError } from '@/lib/api'
 import type { OverviewResponse, PreviewResponse, SearchResponse, SearchResult, RecentRequest } from '@/lib/types'
+import { useProjectCrumb } from '@/components/AppShell'
 import { Topbar } from '@/components/Topbar'
 import { READINESS_LABEL, READINESS_TONE } from '@/lib/readiness'
 
@@ -39,6 +41,8 @@ const ALERT_STYLE: Record<string, { bg: string; fg: string }> = {
 
 export default function OverviewPage() {
   const router = useRouter()
+  const crumb = useProjectCrumb('Обзор')
+
   const [data, setData] = useState<OverviewResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -161,7 +165,7 @@ export default function OverviewPage() {
   return (
     <>
       <Topbar
-        breadcrumb="Проект «Интеграция 1С» / Обзор"
+        breadcrumb={crumb}
         title="Обзор"
         search={globalSearch}
         onSearchChange={setGlobalSearch}
@@ -384,15 +388,34 @@ export default function OverviewPage() {
                     {data?.alerts.map((a) => {
                       const style = ALERT_STYLE[a.severity] ?? ALERT_STYLE.info!
                       const Icon = a.icon === 'circle-x' ? CircleX : a.icon === 'refresh-cw' ? RefreshCw : Boxes
-                      return (
-                        <li key={a.id} className="flex items-start gap-[10px] border-b border-border px-[16px] py-[12px] last:border-b-0">
+                      const body = (
+                        <>
                           <span className={`flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[6px] ${style.bg}`}>
                             <Icon size={14} className={style.fg} aria-hidden />
                           </span>
-                          <span className="flex min-w-0 flex-col">
+                          <span className="flex min-w-0 flex-col text-left">
                             <span className="text-[12px] font-medium text-text-primary">{a.title}</span>
                             <span className="text-[11px] text-text-tertiary">{a.meta}</span>
                           </span>
+                        </>
+                      )
+                      return (
+                        <li key={a.id} className="border-b border-border last:border-b-0">
+                          {/* Уведомление несёт адрес разбирательства (?status=500,
+                              ?service=wildberries) — и в колокольчике шапки по нему
+                              переходят. Здесь оно было простым текстом: одно и то же
+                              уведомление в одном месте ссылка, в другом — нет. */}
+                          {a.link ? (
+                            <button
+                              type="button"
+                              onClick={() => router.push(a.link as Route)}
+                              className="flex w-full items-start gap-[10px] px-[16px] py-[12px] hover:bg-surface-2"
+                            >
+                              {body}
+                            </button>
+                          ) : (
+                            <div className="flex items-start gap-[10px] px-[16px] py-[12px]">{body}</div>
+                          )}
                         </li>
                       )
                     })}
