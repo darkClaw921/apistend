@@ -14,6 +14,7 @@ import type { ApiKeyItem, KeysResponse, Me } from '@/lib/types'
 import { Topbar } from '@/components/Topbar'
 import { useShell } from '@/components/AppShell'
 import { CreateKeyDialog } from '@/components/CreateKeyDialog'
+import { HowToConnectDialog } from '@/components/HowToConnectDialog'
 
 /**
  * Экран «Ключи и токены». design-handoff/screens/06-keys-tokens.md.
@@ -40,6 +41,7 @@ export default function KeysPage() {
   const [search, setSearch] = useState('')
   const [globalSearch, setGlobalSearch] = useState('')
   const [creating, setCreating] = useState(false)
+  const [howTo, setHowTo] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
 
   const sandbox = shell.me.sandboxes[0]
@@ -202,7 +204,7 @@ export default function KeysPage() {
           />
           <div className="ml-auto flex items-center gap-[10px]">
             <SearchField value={search} onValueChange={setSearch} placeholder="Поиск по названию или префиксу" width={280} />
-            <ButtonSecondary>Как подключить</ButtonSecondary>
+            <ButtonSecondary onClick={() => setHowTo(true)}>Как подключить</ButtonSecondary>
           </div>
         </div>
 
@@ -344,6 +346,15 @@ export default function KeysPage() {
         <CreateKeyDialog
           onClose={() => setCreating(false)}
           onCreated={() => { setCreating(false); void load() }}
+        />
+      ) : null}
+
+      {howTo && data ? (
+        <HowToConnectDialog
+          baseUrls={data.baseUrls}
+          // Маска, а не полный ключ: полностью он показывается только при создании.
+          sampleKey={data.keys.find((k) => k.kind === 'sandbox')?.mask ?? 'stend_sbx_…'}
+          onClose={() => setHowTo(false)}
         />
       ) : null}
     </>
