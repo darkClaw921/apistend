@@ -21,7 +21,7 @@ export function ImportOpenApiDialog({
 }) {
   const [fileName, setFileName] = useState<string | null>(null)
   const [document, setDocument] = useState('')
-  const [pathPrefix, setPathPrefix] = useState('/imported')
+  const [pathPrefix, setPathPrefix] = useState('/custom/imported')
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [result, setResult] = useState<{ created: number; skipped: number; examples: string[] } | null>(null)
@@ -89,7 +89,7 @@ export function ImportOpenApiDialog({
           label="Префикс пути"
           value={pathPrefix}
           onChange={setPathPrefix}
-          hint="Добавляется к путям из файла, чтобы импортированное не смешалось с созданным вручную"
+          hint="Добавляется к путям из файла. Начинается с /custom — по этому адресу песочница обслуживает свои моки"
         />
 
         {error ? <FormError>{error}</FormError> : null}

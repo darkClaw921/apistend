@@ -134,7 +134,11 @@ async function handle(
     if (!resolved.apiKey.services.includes(service)) {
       const err = buildScenarioError(service, 'invalid_token', reqId)
       reply.headers(err.headers).header('x-request-id', reqId)
-      reply.header('x-apistend-error', `key-scope: ключ «${resolved.apiKey.name}» открыт для ${resolved.apiKey.services.join(', ')}`)
+      // В заголовке — только код: HTTP разрешает в значениях лишь ASCII, и русский
+      // текст ронял ответ целиком (ERR_INVALID_CHAR), подменяя конверт ошибки
+      // сервиса внутренней ошибкой Fastify. Подробности — в теле и в журнале.
+      reply.header('x-apistend-error', 'key-scope')
+      reply.header('x-apistend-key-services', resolved.apiKey.services.join(','))
       return reply.code(err.status).send(err.body)
     }
   }

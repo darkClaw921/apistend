@@ -50,7 +50,16 @@ const createApp = z.object({
     .optional(),
 })
 
-const updateApp = createApp.partial()
+/**
+ * Правка приложения: тот же набор полей, но без значения по умолчанию у kind.
+ *
+ * partial() снимает обязательность, а default() — нет. Из-за этого правка
+ * одного только названия переводила приложение обратно в вид server_ui,
+ * даже если оно было api_only.
+ */
+const updateApp = createApp.partial().extend({
+  kind: z.enum(B24_APP_KINDS).optional(),
+})
 
 const openApp = z.object({
   placement: z.string().default('DEFAULT'),
