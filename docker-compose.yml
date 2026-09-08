@@ -1,3 +1,12 @@
+# Полный стенд APIStend одной командой: `docker compose up`.
+#
+# Раньше здесь был только postgres, а шлюз и кабинет предлагалось поднимать
+# отдельно через pnpm. Лендинг при этом обещал «запуск у себя» со ссылкой
+# на этот файл — обещание было шире того, что файл делает.
+#
+# Кому нужна только база (разработка с pnpm dev на хосте) — команда прежняя:
+# `docker compose up -d postgres`, она же за `pnpm db:up`.
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -8,6 +17,7 @@ services:
       POSTGRES_PASSWORD: apistend
       POSTGRES_DB: apistend
     ports:
+      # 5433 снаружи, чтобы не конфликтовать с локально установленным PostgreSQL.
       - '5433:5432'
     volumes:
       - apistend-pgdata:/var/lib/postgresql/data
@@ -16,6 +26,70 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  api:
+    # Оба сервиса собираются из одного Dockerfile и делят один тег: второй
+    # проход берётся из кеша целиком и стоит секунды. Разные образы означали бы
+    # два одинаковых дерева зависимостей монорепозитория.
+    build: &apistend-build
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Адрес, по которому API видит браузер. Попадает в клиентский код
+        # на этапе сборки, поэтому задаётся здесь, а не в environment.
+        NEXT_PUBLIC_API_URL: http://localhost:8080
+    image: apistend:local
+    container_name: apistend-api
+    restart: unless-stopped
+    command: ['api']
+    environment:
+      DATABASE_URL: postgresql://apistend:apistend@postgres:5432/apistend?schema=public
+      # Ключ подписи сессий. Значение по умолчанию — для локального стенда;
+      # для чего-то большего задайте свой: JWT_SECRET=$(openssl rand -base64 32).
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-0000000000000000000000000=}
+      # По умолчанию API слушает 127.0.0.1 — из контейнера это было бы
+      # недоступно снаружи.
+      API_HOST: 0.0.0.0
+      API_PORT: '8080'
+      WEB_ORIGIN: http://localhost:3100
+      APISTEND_PUBLIC_ORIGIN: http://localhost:8080
+      # NODE_ENV=production в образе запрещает доставку вебхуков на приватные
+      # адреса (защита от SSRF в общем сервисе). На своей машине это как раз
+      # нужный сценарий, поэтому разрешаем явно. Учтите: «localhost» для
+      # контейнера — он сам; чтобы достучаться до приложения на хосте,
+      # указывайте host.docker.internal. Доставка через `apistend listen`
+      # этим не ограничена — агент сам приходит к API по опубликованному порту.
+      WEBHOOK_ALLOW_PRIVATE_TARGETS: '1'
+    ports:
+      - '8080:8080'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fs http://127.0.0.1:8080/health > /dev/null']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  web:
+    build: *apistend-build
+    image: apistend:local
+    container_name: apistend-web
+    restart: unless-stopped
+    command: ['web']
+    environment:
+      WEB_PORT: '3100'
+      # Браузер ходит в API по опубликованному порту, а сам Next при отрисовке
+      # лендинга на сервере — по имени сервиса внутри сети compose: «localhost»
+      # изнутри контейнера указывал бы на него самого.
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+      APISTEND_INTERNAL_API_URL: http://api:8080
+    ports:
+      - '3100:3100'
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
   apistend-pgdata:

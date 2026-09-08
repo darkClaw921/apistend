@@ -17,20 +17,27 @@ import type { LucideIcon } from 'lucide-react'
  * - кнопка «Как устроена безопасность» вела на страницу, которой нет.
  *
  * Вместо этого — то, что проверяется в репозитории: MIT в LICENSE, запуск
- * у себя (docker-compose.yml + быстрый старт в README), синтетические
+ * у себя (docker compose up поднимает весь стенд), синтетические
  * демо-данные вместо боевых (README, раздел «Как собирается ответ мока»).
  * Пропсов нет, весь текст статичен — компонент серверный.
  */
 
 const GITHUB = 'https://github.com/darkClaw921/apistend'
-/** Вторая кнопка макета вела в никуда. Ведём в файл, который и поднимает базу
- *  при установке к себе, — он существует и говорит ровно то, что обещает чип. */
-const COMPOSE = 'https://github.com/darkClaw921/apistend/blob/main/docker-compose.yml'
+/**
+ * Вторая кнопка ведёт в docker-compose.yml — файл, который поднимает стенд.
+ *
+ * Какое-то время он поднимал только postgres, а шлюз и кабинет предлагалось
+ * запускать отдельно; кнопка «Запуск у себя» с подписью «docker-compose.yml»
+ * обещала больше, чем файл делал. Теперь в нём три сервиса, и обещание сходится
+ * с содержимым: миграции и сид накатываются на старте, стенд поднимается
+ * одной командой.
+ */
+const COMPOSE = `${'https://github.com/darkClaw921/apistend'}/blob/main/docker-compose.yml`
 
 const CHIPS: readonly { icon: LucideIcon; label: string }[] = [
   { icon: Scale, label: 'Открытый код, MIT' },
   { icon: Server, label: 'On-premise' },
-  { icon: Container, label: 'Docker Compose' },
+  { icon: Container, label: 'docker compose up' },
   { icon: FlaskConical, label: 'Синтетические данные' },
 ]
 
@@ -45,9 +52,9 @@ const FACTS: readonly { icon: LucideIcon; text: string; label: string; source: s
   },
   {
     icon: Server,
-    text: 'Ставится на вашу машину или ваш сервер: база поднимается из docker-compose.yml, шлюз и веб запускаются рядом. При установке к себе ключи, журнал запросов и трафик не выходят за периметр.',
+    text: 'Ставится на вашу машину или ваш сервер одной командой: docker compose up поднимает базу, шлюз и кабинет, накатывает миграции и заводит демо-данные. При установке к себе ключи, журнал запросов и трафик не выходят за периметр.',
     label: 'Установка к себе',
-    source: 'быстрый старт — в README',
+    source: 'три сервиса в docker-compose.yml, порядок запуска — в README',
   },
   {
     icon: FlaskConical,
@@ -65,7 +72,7 @@ export function Trust() {
           Можно поставить в свой контур целиком
         </h2>
         <p className="mt-[14px] max-w-[680px] text-center text-[16px] leading-[26px] text-nav-text">
-          Код открыт под MIT, база поднимается из docker-compose.yml, демо-данные синтетические.
+          Код открыт под MIT, стенд поднимается одной командой, демо-данные синтетические.
           При установке к себе ключи и трафик остаются внутри вашей сети.
         </p>
 
@@ -87,7 +94,7 @@ export function Trust() {
             className="inline-flex items-center gap-[8px] rounded-[6px] border border-nav-border bg-night-2 px-[21px] py-[11px] text-[14px] font-medium text-white transition-colors hover:bg-night-3"
           >
             Запуск у себя
-            <span className="font-mono text-[13px] text-nav-text">docker-compose.yml</span>
+            <span className="font-mono text-[13px] text-nav-text">docker compose up</span>
           </a>
         </div>
 
