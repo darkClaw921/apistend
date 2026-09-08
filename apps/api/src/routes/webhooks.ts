@@ -7,7 +7,7 @@ import {
 import { prisma } from '../db.ts'
 import { requireSandbox } from '../lib/guard.ts'
 import { dispatchWebhook } from '../webhooks/dispatcher.ts'
-import { liveBursts, startBurst, stopBurst } from '../webhooks/burst.ts'
+import { isScenarioRunning, liveBursts, startBurst, stopBurst } from '../webhooks/burst.ts'
 import { checkPublicTarget } from '../lib/webhook-target.ts'
 import { sessionSummary } from '../tunnel/registry.ts'
 import { SESSION_TOKEN_TTL, newSessionToken } from '../tunnel/server.ts'
@@ -34,6 +34,46 @@ const createWebhook = z.object({
   // Список, а не свободная строка: пустое значение и мусор доходили до журнала
   // доставок и до самого запроса.
   httpMethod: z.enum(['POST', 'PUT', 'PATCH']).default('POST'),
+})
+
+/**
+ * Ключ из заголовка Authorization для маршрутов CLI.
+ *
+ * Bearer необязателен: `apistend login` кладёт ключ как есть, и ломать это
+ * ради формальности незачем.
+ */
+function bearerKey(auth: unknown): string | null {
+  if (typeof auth !== 'string') return null
+  const trimmed = auth.trim()
+  if (trimmed.length === 0) return null
+  return /^Bearer\s+(.+)$/i.exec(trimmed)?.[1] ?? trimmed
+}
+
+/**
+ * Тело POST /v1/tunnel/sessions.
+ *
+ * Схемы здесь не было: нестроковый deviceId уходил прямо в Prisma и возвращался
+ * пятисоткой вместо внятного отказа. CLI шлёт ровно эти поля.
+ */
+const tunnelSessionInput = z.object({
+  deviceId: z.string().min(1).max(120).optional(),
+  deviceName: z.string().max(200).optional(),
+  agentVersion: z.string().max(80).optional(),
+  forward: z.string().max(300).optional(),
+})
+
+/**
+ * Тело POST /v1/tunnel/trigger.
+ *
+ * count и rate приходили из CLI без всякой проверки: строка вместо числа
+ * доезжала до планировщика серий, а отрицательное значение — до расписания.
+ * Потолки те же, что у серии из кабинета, — обрезкой занимается startBurst.
+ */
+const triggerInput = z.object({
+  event: z.string().min(2).max(80),
+  count: z.number().int().min(1).max(1_000_000).optional(),
+  rate: z.number().int().min(1).max(10_000).optional(),
+  errorRate: z.number().int().min(0).max(100).optional(),
 })
 
 const burstInput = z.object({
@@ -250,9 +290,30 @@ export function registerWebhookRoutes(app: FastifyInstance): void {
     if (!w) return reply.code(404).send({ error: 'NOT_FOUND' })
     const updated = await prisma.webhook.update({
       where: { id: w.id },
-      data: { status: w.status === 'paused' ? 'active' : 'paused' },
+      // Выключаем только работающий; из любого другого состояния — включаем.
+      // Раньше условие смотрело на «paused», и вебхук в состоянии failing
+      // сначала уходил в паузу и лишь вторым нажатием возвращался в работу,
+      // хотя доставка успешных событий его больше не расклеивает: снятие
+      // приостановки — ручное действие, ровно как в бою.
+      data: { status: w.status === 'active' ? 'paused' : 'active' },
     })
     return reply.send({ id: updated.id, status: updated.status })
+  })
+
+  /**
+   * Удаление вебхука.
+   *
+   * Создать вебхук из кабинета было можно, а убрать — нечем: список копился
+   * и вычищался только сбросом демо-данных. Доставки и серии этого вебхука
+   * уходят вместе с ним каскадом — так описана связь в схеме.
+   */
+  app.delete<{ Params: { id: string } }>('/api/webhooks/:id', async (req, reply) => {
+    const ctx = await requireSandbox(req, reply)
+    if (!ctx) return
+    const { count } = await prisma.webhook.deleteMany({
+      where: { id: req.params.id, sandboxId: ctx.sandbox.id },
+    })
+    return count > 0 ? reply.send({ deleted: true }) : reply.code(404).send({ error: 'NOT_FOUND' })
   })
 
   /** «Повторить ошибочные» — доступно только для сервисов, которые вообще делают повторы. */
@@ -333,6 +394,15 @@ export function registerWebhookRoutes(app: FastifyInstance): void {
       where: { id: req.params.id, sandboxId: ctx.sandbox.id },
     })
     if (!scenario) return reply.code(404).send({ error: 'NOT_FOUND' })
+
+    // Второй запуск того же сценария поверх идущего давал две серии с одним
+    // scenarioId: прогресс писали обе, а полоса на экране показывала одну.
+    if (isScenarioRunning(scenario.id)) {
+      return reply.code(409).send({
+        error: 'SCENARIO_RUNNING',
+        message: 'Сценарий уже выполняется — дождитесь конца или остановите его',
+      })
+    }
 
     const event = firstEvent(scenario.steps)
     const webhook = await prisma.webhook.findFirst({
@@ -444,9 +514,16 @@ export function registerWebhookRoutes(app: FastifyInstance): void {
    * В ответ одноразовый токен с TTL 10 минут, которым CLI поднимает WebSocket.
    */
   app.post('/v1/tunnel/sessions', async (req, reply) => {
-    const auth = req.headers.authorization
-    const raw = typeof auth === 'string' ? /^Bearer\s+(.+)$/i.exec(auth.trim())?.[1] ?? auth.trim() : null
+    const raw = bearerKey(req.headers.authorization)
     if (!raw) return reply.code(401).send({ error: 'NO_KEY', message: 'Требуется серверный ключ stend_sk_' })
+
+    const parsedBody = tunnelSessionInput.safeParse(req.body ?? {})
+    if (!parsedBody.success) {
+      return reply.code(400).send({
+        error: 'VALIDATION',
+        issues: parsedBody.error.issues.map((i) => `${i.path.join('.') || 'тело'}: ${i.message}`),
+      })
+    }
 
     const apiKey = await prisma.apiKey.findUnique({
       where: { keyHash: hashApiKey(raw) },
@@ -462,7 +539,7 @@ export function registerWebhookRoutes(app: FastifyInstance): void {
       })
     }
 
-    const body = (req.body ?? {}) as { deviceId?: string; deviceName?: string; agentVersion?: string; forward?: string }
+    const body = parsedBody.data
     const deviceId = body.deviceId ?? randomBytes(8).toString('hex')
     const forward = normalizeForward(body.forward ?? 'localhost:3000')
     if (!forward) {
@@ -507,8 +584,7 @@ export function registerWebhookRoutes(app: FastifyInstance): void {
 
   /** Состояние агента — команда `apistend status`. */
   app.get('/v1/tunnel/status', async (req, reply) => {
-    const auth = req.headers.authorization
-    const raw = typeof auth === 'string' ? /^Bearer\s+(.+)$/i.exec(auth.trim())?.[1] ?? auth.trim() : null
+    const raw = bearerKey(req.headers.authorization)
     if (!raw) return reply.code(401).send({ error: 'NO_KEY' })
 
     const apiKey = await prisma.apiKey.findUnique({ where: { keyHash: hashApiKey(raw) }, include: { sandbox: true } })
@@ -524,15 +600,20 @@ export function registerWebhookRoutes(app: FastifyInstance): void {
 
   /** Команда `apistend trigger <event>` — то же, что кнопка «Тест». */
   app.post('/v1/tunnel/trigger', async (req, reply) => {
-    const auth = req.headers.authorization
-    const raw = typeof auth === 'string' ? /^Bearer\s+(.+)$/i.exec(auth.trim())?.[1] ?? auth.trim() : null
+    const raw = bearerKey(req.headers.authorization)
     if (!raw) return reply.code(401).send({ error: 'NO_KEY' })
 
     const apiKey = await prisma.apiKey.findUnique({ where: { keyHash: hashApiKey(raw) } })
     if (!apiKey || apiKey.status === 'revoked') return reply.code(401).send({ error: 'INVALID_KEY' })
 
-    const { event } = (req.body ?? {}) as { event?: string }
-    if (!event) return reply.code(400).send({ error: 'NO_EVENT', message: 'Укажите событие' })
+    const parsedTrigger = triggerInput.safeParse(req.body ?? {})
+    if (!parsedTrigger.success) {
+      return reply.code(400).send({
+        error: 'VALIDATION',
+        issues: parsedTrigger.error.issues.map((i) => `${i.path.join('.') || 'тело'}: ${i.message}`),
+      })
+    }
+    const { event, count, rate, errorRate } = parsedTrigger.data
 
     const webhook = await prisma.webhook.findFirst({
       where: { sandboxId: apiKey.sandboxId, event },
@@ -550,8 +631,7 @@ export function registerWebhookRoutes(app: FastifyInstance): void {
     }
 
     // Без count/rate — одиночная отправка, как кнопка «Тест».
-    const body = (req.body ?? {}) as { count?: number; rate?: number; errorRate?: number }
-    if (!body.count && !body.rate) {
+    if (count === undefined && rate === undefined) {
       const result = await dispatchWebhook({ sandboxId: apiKey.sandboxId, webhookId: webhook.id, isTest: true })
       return reply.send(result)
     }
@@ -559,9 +639,9 @@ export function registerWebhookRoutes(app: FastifyInstance): void {
     const burst = await startBurst({
       sandboxId: apiKey.sandboxId,
       webhookId: webhook.id,
-      count: body.count ?? body.rate ?? 1,
-      ratePerSec: body.rate ?? 1,
-      errorRate: body.errorRate,
+      count: count ?? rate ?? 1,
+      ratePerSec: rate ?? 1,
+      errorRate,
     })
     if (typeof burst === 'string') return reply.code(burstErrorStatus(burst)).send(burstErrorBody(burst))
     return reply.code(202).send(burst)
@@ -569,8 +649,7 @@ export function registerWebhookRoutes(app: FastifyInstance): void {
 
   /** Прогресс серий для `apistend trigger --watch`: авторизация серверным ключом. */
   app.get('/v1/tunnel/bursts', async (req, reply) => {
-    const auth = req.headers.authorization
-    const raw = typeof auth === 'string' ? /^Bearer\s+(.+)$/i.exec(auth.trim())?.[1] ?? auth.trim() : null
+    const raw = bearerKey(req.headers.authorization)
     if (!raw) return reply.code(401).send({ error: 'NO_KEY' })
     const apiKey = await prisma.apiKey.findUnique({ where: { keyHash: hashApiKey(raw) } })
     if (!apiKey || apiKey.status === 'revoked') return reply.code(401).send({ error: 'INVALID_KEY' })

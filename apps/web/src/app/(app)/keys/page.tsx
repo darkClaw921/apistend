@@ -136,7 +136,7 @@ export default function KeysPage() {
         ),
       },
       {
-        key: 'services', header: 'Доступные сервисы', width: 148,
+        key: 'services', header: 'Доступные сервисы', width: 148, className: 'max-lg:hidden',
         render: (k) => (
           <span className="flex flex-wrap gap-[4px]">
             {k.services.map((s) => <ServiceChip key={s} service={s} />)}
@@ -144,11 +144,11 @@ export default function KeysPage() {
         ),
       },
       {
-        key: 'created', header: 'Создан', width: 104,
+        key: 'created', header: 'Создан', width: 110, className: 'max-xl:hidden',
         render: (k) => <span className="text-text-secondary tabular">{formatDate(k.createdAt)}</span>,
       },
       {
-        key: 'lastUsed', header: 'Последний запрос', width: 152,
+        key: 'lastUsed', header: 'Последний запрос', width: 152, className: 'max-xl:hidden',
         render: (k) => (
           <div className="flex flex-col">
             <span className="text-text-secondary tabular">
@@ -161,16 +161,16 @@ export default function KeysPage() {
         ),
       },
       {
-        key: 'requests', header: 'Запросов за сутки', width: 132, mono: true,
+        key: 'requests', header: 'Запросов за сутки', width: 132, mono: true, className: 'max-xl:hidden',
         // Просто число. Лимитов нет — прогресс-бару здесь не место.
         render: (k) => <span className="text-text-primary">{formatInt(k.requestsPerDay)}</span>,
       },
       {
-        key: 'status', header: 'Статус', width: 116,
+        key: 'status', header: 'Статус', width: 132,
         render: (k) => <StatusChip tone={STATUS_TONE[k.status]}>{STATUS_LABEL[k.status]}</StatusChip>,
       },
       {
-        key: 'actions', header: '', width: 44, align: 'right',
+        key: 'actions', header: '', width: 58, align: 'right',
         render: (k) => (
           <button type="button" aria-label={`Действия с ключом ${k.name}`}
             onClick={() => setRevokeTarget(k)}
@@ -216,8 +216,13 @@ export default function KeysPage() {
           ) : error && !data ? (
             <ErrorState message={error} onRetry={() => void load()} />
           ) : (
-            <DataTable columns={columns} rows={rows} rowKey={(k) => k.id}
-              rowTone={(k) => (k.status === 'revoked' ? 'warning' : 'default')} />
+            // Панель обрезает по overflow-hidden, а восемь колонок в 556 px
+            // не помещаются. Собственный горизонтальный скролл — чтобы до
+            // правых колонок можно было добраться, а не догадываться о них.
+            <div className="overflow-x-auto scrollbar-thin">
+              <DataTable columns={columns} rows={rows} rowKey={(k) => k.id}
+                rowTone={(k) => (k.status === 'revoked' ? 'warning' : 'default')} />
+            </div>
           )}
           {data ? (
             <PanelFooter
@@ -231,7 +236,10 @@ export default function KeysPage() {
           ) : null}
         </Panel>
 
-        <div className="flex shrink-0 gap-[20px]">
+        {/* «Поведение песочницы» фиксировано в 440 px и не сжимается: на узком
+            экране соседней панели оставалось девяносто пикселей. Ниже 1280
+            панели встают друг под другом. */}
+        <div className="flex shrink-0 gap-[20px] max-xl:flex-col">
           {/* Базовые адреса моков */}
           <Panel className="min-w-0 flex-1">
             <PanelHeader title="Базовые адреса моков" />
@@ -273,7 +281,7 @@ export default function KeysPage() {
           </Panel>
 
           {/* Поведение песочницы */}
-          <Panel className="w-[440px] shrink-0">
+          <Panel className="xl:w-[440px] xl:shrink-0">
             <PanelHeader title="Поведение песочницы" />
             <div className="flex flex-col gap-[18px] p-[16px]">
               <Slider

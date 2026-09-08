@@ -34,6 +34,7 @@ export type B24ErrorKey = keyof typeof B24_ERRORS
 /** Числовые коды gRPC, которые Ozon отдаёт в поле code конверта rpcStatus. */
 const OZON_GRPC = {
   INVALID_ARGUMENT: 3,
+  DEADLINE_EXCEEDED: 4,
   NOT_FOUND: 5,
   PERMISSION_DENIED: 7,
   RESOURCE_EXHAUSTED: 8,
@@ -137,7 +138,9 @@ export function buildScenarioError(
         ...res,
         headers: {
           ...res.headers,
-          'x-ratelimit-limit': String(profile.rateLimit.limit),
+          // Ёмкость, а не средняя скорость: клиент по этому заголовку считает,
+          // сколько запросов может отправить сразу. Тот же смысл, что у шлюза.
+          'x-ratelimit-limit': String(profile.rateLimit.burst),
           'x-ratelimit-remaining': '0',
           'x-ratelimit-retry': String(profile.rateLimit.retryAfterSeconds ?? 20),
           'retry-after': String(profile.rateLimit.retryAfterSeconds ?? 20),
@@ -147,6 +150,34 @@ export function buildScenarioError(
     case 'server_error':
       return wildberriesError(500, 'Internal Server Error', 'internal error', requestId)
   }
+}
+
+/**
+ * Конверт сценария «Таймаут»: HTTP 504.
+ *
+ * Отдельная функция, а не ветка buildScenarioError, по существу дела: у боевых
+ * сервисов таймаут — это ОТСУТСТВИЕ ответа, кода ошибки для него не заведено.
+ * Раньше сюда подставлялся конверт server_error, и клиент получал под кодом 504
+ * тело, в котором написано 500, — расхождение, которое в бою невозможно.
+ *
+ * Форма конверта остаётся родной для сервиса, а то, что ответ синтетический,
+ * видно по заголовку x-apistend-scenario: timeout.
+ */
+export function timeoutError(service: ServiceCode, requestId: string): MockErrorResponse {
+  if (service === 'bitrix24') {
+    // Кода из документации здесь нет и быть не может — портал в этой ситуации
+    // просто не отвечает. Конверт портала сохраняем, код помечаем как шлюзовой.
+    return {
+      status: 504,
+      body: { error: 'GATEWAY_TIMEOUT', error_description: 'Gateway timeout' },
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    }
+  }
+  if (service === 'ozon') {
+    // DEADLINE_EXCEEDED — ровно тот код gRPC, которым описывается невышедший в срок вызов.
+    return ozonError(504, OZON_GRPC.DEADLINE_EXCEEDED, 'Deadline exceeded')
+  }
+  return wildberriesError(504, 'Gateway Timeout', 'upstream did not answer in time', requestId, 'ag-gateway')
 }
 
 /** Ошибка «нет такого метода в этой песочнице» в родном конверте сервиса. */

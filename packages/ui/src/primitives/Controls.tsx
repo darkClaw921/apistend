@@ -61,7 +61,17 @@ export function SegmentControl({
   segments, value, onChange, className,
 }: { segments: readonly Segment[]; value: string; onChange: (v: string) => void; className?: string }) {
   return (
-    <div role="tablist" className={cn('inline-flex shrink-0 gap-[3px] rounded-[6px] bg-surface-2 p-[3px]', className)}>
+    <div
+      role="tablist"
+      className={cn(
+        'inline-flex shrink-0 gap-[3px] rounded-[6px] bg-surface-2 p-[3px]',
+        // Кнопки не переносятся (whitespace-nowrap) — значит на узком экране
+        // переключатель обязан скроллиться внутри себя, иначе последние сегменты
+        // просто уезжают за край и до них не добраться.
+        'max-w-full overflow-x-auto scrollbar-thin',
+        className,
+      )}
+    >
       {segments.map((s) => {
         const active = s.value === value
         return (

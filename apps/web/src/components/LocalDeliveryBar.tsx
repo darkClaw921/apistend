@@ -28,8 +28,8 @@ export function LocalDeliveryBar({ agent, loading }: { agent: LocalAgent | null;
   const connected = agent?.connected === true
 
   return (
-    <section className="flex shrink-0 items-center gap-[20px] rounded-[10px] border border-border bg-surface p-[16px]">
-      <div className="flex w-[430px] shrink-0 items-start gap-[12px]">
+    <section className="flex shrink-0 items-center gap-[20px] rounded-[10px] border border-border bg-surface p-[16px] max-xl:flex-col max-xl:items-stretch max-xl:gap-[12px]">
+      <div className="flex items-start gap-[12px] xl:w-[430px] xl:shrink-0">
         <span className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[10px] bg-accent-soft">
           <LaptopMinimal size={20} className="text-accent" aria-hidden />
         </span>
@@ -71,7 +71,7 @@ export function LocalDeliveryBar({ agent, loading }: { agent: LocalAgent | null;
         </button>
       </div>
 
-      <div className="flex w-[190px] shrink-0 flex-col items-end gap-[6px]">
+      <div className="flex flex-col items-end gap-[6px] xl:w-[190px] xl:shrink-0">
         {connected ? (
           <>
             <span className="text-[13px] font-semibold text-text-primary">

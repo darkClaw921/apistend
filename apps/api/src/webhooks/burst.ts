@@ -93,6 +93,15 @@ interface Runner {
 }
 
 const runners = new Map<string, Runner>()
+/**
+ * Заявки на запуск, ещё не дошедшие до runners.
+ *
+ * Между проверкой потолка и постановкой серии в работу лежит создание строки
+ * в базе — то есть await. Два одновременных запроса успевали проверить потолок
+ * до того, как первый из них попадал в runners, и оба проходили: BURST_MAX_CONCURRENT
+ * обходился простым параллельным вызовом. Место резервируется синхронно, здесь.
+ */
+const starting = new Map<string, number>()
 let timer: NodeJS.Timeout | null = null
 /**
  * Такт занят. setInterval не ждёт завершения предыдущего вызова: если запись пачки
@@ -107,6 +116,25 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(value)))
 }
 
+/** Сколько серий песочницы уже идёт или вот-вот пойдёт. */
+function occupiedSlots(sandboxId: string): number {
+  let running = 0
+  for (const r of runners.values()) if (r.sandboxId === sandboxId) running++
+  return running + (starting.get(sandboxId) ?? 0)
+}
+
+function releaseSlot(sandboxId: string): void {
+  const left = (starting.get(sandboxId) ?? 1) - 1
+  if (left > 0) starting.set(sandboxId, left)
+  else starting.delete(sandboxId)
+}
+
+/** Идёт ли прямо сейчас серия этого сценария. Сценарий не запускается поверх себя. */
+export function isScenarioRunning(scenarioId: string): boolean {
+  for (const r of runners.values()) if (r.scenarioId === scenarioId) return true
+  return false
+}
+
 /**
  * Ставит серию в работу.
  * Возвращает описание принятой серии либо код отказа — коды разные,
@@ -116,6 +144,18 @@ export async function startBurst(req: BurstRequest): Promise<BurstStartResult | 
   if (!Number.isFinite(req.count) || !Number.isFinite(req.ratePerSec)) return 'BAD_PARAMS'
   if (req.count < 1 || req.ratePerSec < 1) return 'BAD_PARAMS'
 
+  // Место занимаем ДО первого await — иначе потолок проверяют все, а занимают все же.
+  if (occupiedSlots(req.sandboxId) >= env.burstMaxConcurrent) return 'TOO_MANY_BURSTS'
+  starting.set(req.sandboxId, (starting.get(req.sandboxId) ?? 0) + 1)
+  try {
+    return await startReserved(req)
+  } finally {
+    releaseSlot(req.sandboxId)
+  }
+}
+
+/** Продолжение startBurst с уже занятым местом в потолке одновременных серий. */
+async function startReserved(req: BurstRequest): Promise<BurstStartResult | BurstError> {
   const webhook = await prisma.webhook.findFirst({
     where: { id: req.webhookId, sandboxId: req.sandboxId },
   })
@@ -124,9 +164,6 @@ export async function startBurst(req: BurstRequest): Promise<BurstStartResult | 
 
   // Локальная доставка без агента насыпала бы тысячи строк в очередь и ничего не проверила.
   if (webhook.target === 'local' && !getSession(req.sandboxId)) return 'NO_AGENT'
-
-  const active = [...runners.values()].filter((r) => r.sandboxId === req.sandboxId).length
-  if (active >= env.burstMaxConcurrent) return 'TOO_MANY_BURSTS'
 
   const count = clamp(req.count, 1, env.burstMaxCount)
   const ratePerSec = clamp(req.ratePerSec, 1, env.burstMaxRatePerSec)

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import type { CustomMock } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../db.ts'
 import { requireSandbox } from '../lib/guard.ts'
@@ -147,11 +148,18 @@ export function registerMockRoutes(app: FastifyInstance): void {
     const prefix = parsed.data.pathPrefix.replace(/\/$/, '')
     const created: string[] = []
     const skipped: string[] = []
+    /** Операции, до которых импорт не дошёл из-за потолка. Молчать о них нельзя. */
+    let leftOver = 0
 
     for (const { path, method, op, pathItem } of iterateOperations(doc)) {
-      if (created.length >= parsed.data.limit) break
       // Мок обслуживает только эти методы: HEAD и OPTIONS движку нечего отдавать.
       if (!MOCKABLE.includes(method as (typeof MOCKABLE)[number])) continue
+      if (created.length >= parsed.data.limit) {
+        // Раньше здесь стоял break, и остаток спецификации исчезал молча:
+        // ответ «создано 100» на файле из 460 операций читается как «всё готово».
+        leftOver++
+        continue
+      }
 
       const response = extractResponse(op, resolve)
       const mockPath = `${prefix}${path}`
@@ -193,7 +201,14 @@ export function registerMockRoutes(app: FastifyInstance): void {
       }
     }
 
-    return reply.send({ created: created.length, skipped: skipped.length, examples: created.slice(0, 5) })
+    return reply.send({
+      created: created.length,
+      skipped: skipped.length,
+      examples: created.slice(0, 5),
+      /** Сколько операций осталось за потолком: пользователь решит, повышать ли limit. */
+      leftOver,
+      limit: parsed.data.limit,
+    })
   })
 
   app.post('/api/mocks', async (req, reply) => {
@@ -265,12 +280,24 @@ export function registerMockRoutes(app: FastifyInstance): void {
     })
     if (!mock) return reply.code(404).send({ error: 'NOT_FOUND', message: 'Мок не найден' })
 
-    const { sampleBody } = (req.body ?? {}) as { sampleBody?: unknown }
+    const { sampleBody, sampleParams } = (req.body ?? {}) as {
+      sampleBody?: unknown
+      sampleParams?: Record<string, unknown>
+    }
+    // Параметры пути: присланные вызывающим, а для остальных — образец из имени.
+    // Пустой объект оставлял {{params.id}} пустой строкой, и тест-вызов показывал
+    // не то, что придёт по настоящему адресу.
+    const params: Record<string, string> = {}
+    for (const name of pathParamNames(mock.path)) {
+      const given = sampleParams?.[name]
+      params[name] = given === undefined || given === null ? `sample-${name}` : String(given)
+    }
+
     const body = mock.templatingEnabled
       ? renderTemplate(mock.responseBody, {
           body: sampleBody ?? {},
           query: {},
-          params: {},
+          params,
           now: new Date(),
         })
       : mock.responseBody
@@ -298,15 +325,28 @@ export function registerMockRoutes(app: FastifyInstance): void {
   app.post('/api/mocks/preview', async (req, reply) => {
     const ctx = await requireSandbox(req, reply)
     if (!ctx) return
-    const { template, sampleBody } = (req.body ?? {}) as { template?: string; sampleBody?: unknown }
+    const { template, sampleBody, sampleParams } = (req.body ?? {}) as {
+      template?: string
+      sampleBody?: unknown
+      sampleParams?: Record<string, unknown>
+    }
     if (typeof template !== 'string') return reply.code(400).send({ error: 'NO_TEMPLATE' })
+
+    // Образцы параметров пути: редактор ещё не знает, на каком адресе окажется
+    // мок, поэтому имя параметра подставляется само собой понятным значением.
+    const params: Record<string, string> = { id: 'sample-id' }
+    for (const [name, value] of Object.entries(sampleParams ?? {})) {
+      if (value !== undefined && value !== null) params[name] = String(value)
+    }
 
     const rendered = renderTemplate(template, {
       body: sampleBody ?? { externalId: 'EXT-10422', customer: { id: 'C-77' }, items: [{ sku: '2037841009335' }] },
       query: {},
-      params: {},
+      params,
       now: new Date(),
-      random: seededRandom(`${ctx.sandbox.id}:${template.length}`),
+      // Соль — сам шаблон: один и тот же текст даёт один и тот же предпросмотр
+      // при каждом открытии. По длине два разных шаблона совпадали бы солью.
+      random: seededRandom(`${ctx.sandbox.id}:${template}`),
     })
 
     let valid = true
@@ -338,10 +378,11 @@ export function registerMockRoutes(app: FastifyInstance): void {
       return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Неверный или отозванный ключ' })
     }
 
-    const mock = await findMock(resolved.sandbox.id, req.method, path)
-    if (!mock) {
+    const found = await findMock(resolved.sandbox.id, req.method, path)
+    if (!found) {
       return reply.code(404).send({ error: 'MOCK_NOT_FOUND', message: `Мок ${req.method} ${path} не найден` })
     }
+    const { mock, params } = found
     if (mock.status !== 'active') {
       return reply.code(409).send({
         error: 'MOCK_NOT_ACTIVE',
@@ -353,7 +394,7 @@ export function registerMockRoutes(app: FastifyInstance): void {
       ? renderTemplate(mock.responseBody, {
           body: parseJson(req.body),
           query: (req.query ?? {}) as Record<string, unknown>,
-          params: {},
+          params,
           now: new Date(),
         })
       : mock.responseBody
@@ -391,23 +432,52 @@ export function registerMockRoutes(app: FastifyInstance): void {
   })
 }
 
-/** Точное совпадение пути, затем шаблонное: /custom/erp/orders/{id} */
-async function findMock(sandboxId: string, method: string, path: string) {
+/**
+ * Точное совпадение пути, затем шаблонное: /custom/erp/orders/{id}
+ *
+ * Возвращает и значения, подставленные в фигурные скобки. Раньше совпадение
+ * шаблона просто отбрасывалось, params всегда был пуст, и {{params.id}}
+ * в теле ответа разворачивался в пустую строку — плейсхолдер существовал,
+ * но не работал ни разу.
+ */
+async function findMock(
+  sandboxId: string, method: string, path: string,
+): Promise<{ mock: CustomMock; params: Record<string, string> } | null> {
   const exact = await prisma.customMock.findFirst({
     where: { sandboxId, httpMethod: method.toUpperCase(), path },
   })
-  if (exact) return exact
+  if (exact) return { mock: exact, params: {} }
 
   const candidates = await prisma.customMock.findMany({
     where: { sandboxId, httpMethod: method.toUpperCase(), path: { contains: '{' } },
   })
+  const actual = path.split('/')
   for (const mock of candidates) {
-    const pattern = new RegExp(
-      `^${mock.path.split('/').map((s) => (s.startsWith('{') && s.endsWith('}') ? '[^/]+' : s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('/')}$`,
-    )
-    if (pattern.test(path)) return mock
+    const template = mock.path.split('/')
+    if (template.length !== actual.length) continue
+
+    const params: Record<string, string> = {}
+    let matched = true
+    for (let i = 0; i < template.length; i++) {
+      const segment = template[i]!
+      if (segment.startsWith('{') && segment.endsWith('}') && segment.length > 2) {
+        // Пустой сегмент параметром не считается: /custom/orders// — не заказ.
+        if (actual[i]!.length === 0) { matched = false; break }
+        params[segment.slice(1, -1)] = decodeURIComponent(actual[i]!)
+        continue
+      }
+      if (segment !== actual[i]) { matched = false; break }
+    }
+    if (matched) return { mock, params }
   }
   return null
+}
+
+/** Имена параметров из шаблона пути: /custom/orders/{id}/lines/{line} → [id, line] */
+function pathParamNames(path: string): string[] {
+  return path.split('/')
+    .filter((s) => s.startsWith('{') && s.endsWith('}') && s.length > 2)
+    .map((s) => s.slice(1, -1))
 }
 
 function parseJson(body: unknown): unknown {

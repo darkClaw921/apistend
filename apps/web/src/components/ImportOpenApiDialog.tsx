@@ -6,6 +6,15 @@ import { ButtonPrimary, ButtonSecondary, Dialog } from '@apistend/ui'
 import { api, ApiError } from '@/lib/api'
 import { Field, FormError } from './Field'
 
+interface ImportResult {
+  created: number
+  skipped: number
+  examples: string[]
+  /** Операции, до которых импорт не дошёл из-за потолка за один заход. */
+  leftOver: number
+  limit: number
+}
+
 /**
  * Импорт своих моков из OpenAPI 3.x.
  *
@@ -24,7 +33,7 @@ export function ImportOpenApiDialog({
   const [pathPrefix, setPathPrefix] = useState('/custom/imported')
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
-  const [result, setResult] = useState<{ created: number; skipped: number; examples: string[] } | null>(null)
+  const [result, setResult] = useState<ImportResult | null>(null)
 
   async function pickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -55,6 +64,15 @@ export function ImportOpenApiDialog({
             Создано моков: <b className="text-text-primary">{result.created}</b>.
             {result.skipped > 0 ? ` Пропущено как уже существующие: ${result.skipped}.` : ''}
           </p>
+          {result.leftOver > 0 ? (
+            // Потолок в 100 операций за заход раньше срабатывал молча, и ответ
+            // «создано 100» на файле из 460 читался как «импортировано всё».
+            <p className="rounded-[6px] border border-warning/40 bg-warning-soft px-[12px] py-[10px] text-[12px] leading-[1.5] text-text-secondary">
+              За потолком в {result.limit} операций осталось ещё{' '}
+              <b className="text-text-primary">{result.leftOver}</b>. Повторите импорт того же
+              файла — уже созданные моки пропустятся как дубли, и очередь продвинется дальше.
+            </p>
+          ) : null}
           {result.examples.length > 0 ? (
             <ul className="flex flex-col gap-[4px] rounded-[6px] border border-border bg-bg p-[12px]">
               {result.examples.map((e) => (
