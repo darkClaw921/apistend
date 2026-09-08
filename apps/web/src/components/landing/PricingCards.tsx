@@ -7,7 +7,7 @@ import { Check, Zap } from 'lucide-react'
  */
 export function PricingCards() {
   return (
-    <section className="bg-nav-bg px-[20px] py-[88px] text-center md:px-[80px]">
+    <section id="pricing" className="bg-nav-bg px-[20px] py-[88px] text-center md:px-[80px]">
       <div className="mx-auto max-w-[1280px]">
         <h2 className="text-[40px] leading-[1.1] font-bold tracking-[-2px] text-white md:text-[56px]">
           Простые цены.

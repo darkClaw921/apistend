@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import type { Route } from 'next'
 import { PlugZap, ArrowRight, Timer, Zap, Check, CornerDownRight, ArrowDown } from 'lucide-react'
 import { API_URL } from '@/lib/api'
 import { formatInt, formatMethods, ServiceSquare, ServiceDot } from '@apistend/ui'
@@ -97,7 +98,7 @@ export default async function LandingPage() {
       </section>
 
       {/* 3. Сервисы */}
-      <section className="px-[20px] py-[88px] md:px-[80px]">
+      <section id="services" className="px-[20px] py-[88px] md:px-[80px]">
         <div className="mx-auto max-w-[1280px]">
           <p className="text-[11px] font-semibold tracking-[0.8px] text-accent uppercase">Сервисы</p>
           <h2 className="mt-[12px] max-w-[720px] text-[30px] leading-[1.15] font-bold tracking-[-1px] text-text-primary md:text-[38px]">
@@ -146,7 +147,7 @@ export default async function LandingPage() {
       </section>
 
       {/* 4. Возможности */}
-      <section className="bg-bg px-[20px] py-[88px] md:px-[80px]">
+      <section id="features" className="bg-bg px-[20px] py-[88px] md:px-[80px]">
         <div className="mx-auto max-w-[1280px]">
           <p className="text-[11px] font-semibold tracking-[0.8px] text-accent uppercase">Возможности</p>
           <h2 className="mt-[12px] max-w-[720px] text-[30px] leading-[1.15] font-bold tracking-[-1px] text-text-primary md:text-[38px]">
@@ -174,7 +175,7 @@ export default async function LandingPage() {
       </section>
 
       {/* 5. Вебхуки на localhost */}
-      <section className="bg-nav-bg px-[20px] py-[88px] md:px-[80px]">
+      <section id="webhooks" className="bg-nav-bg px-[20px] py-[88px] md:px-[80px]">
         <div className="mx-auto flex max-w-[1280px] flex-col gap-[56px] lg:flex-row">
           <div className="w-full lg:w-[600px] lg:shrink-0">
             <p className="text-[11px] font-semibold tracking-[0.8px] text-accent uppercase">Вебхуки</p>
@@ -235,7 +236,7 @@ export default async function LandingPage() {
       </section>
 
       {/* 6. Как это работает */}
-      <section className="px-[20px] py-[88px] md:px-[80px]">
+      <section id="how" className="px-[20px] py-[88px] md:px-[80px]">
         <div className="mx-auto max-w-[1280px]">
           <p className="text-[11px] font-semibold tracking-[0.8px] text-accent uppercase">Как это работает</p>
           <h2 className="mt-[12px] max-w-[720px] text-[30px] leading-[1.15] font-bold tracking-[-1px] text-text-primary md:text-[38px]">
@@ -265,7 +266,7 @@ export default async function LandingPage() {
       </section>
 
       {/* 7. Каталог */}
-      <section className="bg-bg px-[20px] py-[88px] md:px-[80px]">
+      <section id="catalog" className="bg-bg px-[20px] py-[88px] md:px-[80px]">
         <div className="mx-auto max-w-[1280px]">
           <div className="flex flex-wrap items-end justify-between gap-[16px]">
             <h2 className="max-w-[720px] text-[30px] leading-[1.15] font-bold tracking-[-1px] text-text-primary md:text-[38px]">
@@ -319,9 +320,15 @@ export default async function LandingPage() {
           <Link href="/register" className="inline-flex items-center gap-[8px] rounded-[6px] bg-accent px-[24px] py-[14px] text-[15px] font-semibold text-white">
             Создать песочницу <ArrowRight size={16} aria-hidden />
           </Link>
-          <Link href="/catalog" className="inline-flex items-center rounded-[6px] border border-[#2C3742] px-[24px] py-[14px] text-[15px] font-semibold text-white">
+          {/* Проект открытый, и обсуждения идут в трекере — это и есть «команда». */}
+          <a
+            href={`${GITHUB}/issues`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center rounded-[6px] border border-[#2C3742] px-[24px] py-[14px] text-[15px] font-semibold text-white"
+          >
             Поговорить с командой
-          </Link>
+          </a>
         </div>
         <p className="mt-[18px] text-[13px] text-[#6C7A8A]">Без карты · без лимитов на запросы · отказ в один клик</p>
       </section>
@@ -341,16 +348,12 @@ export default async function LandingPage() {
                 Демо-копии боевых API для разработки и тестирования интеграций.
               </p>
             </div>
-            {[
-              { title: 'Продукт', links: ['Каталог методов', 'Вебхуки', 'Свои моки', 'Цены'] },
-              { title: 'Разработчикам', links: ['Документация', 'Быстрый старт', 'CLI', 'Примеры на GitHub'] },
-              { title: 'Компания', links: ['О проекте', 'Дорожная карта', 'Контакты'] },
-            ].map((col) => (
+            {FOOTER_COLUMNS.map((col) => (
               <div key={col.title}>
                 <p className="text-[13px] font-semibold text-text-primary">{col.title}</p>
                 <ul className="mt-[10px] flex flex-col gap-[8px]">
                   {col.links.map((l) => (
-                    <li key={l}><span className="text-[13px] text-text-secondary">{l}</span></li>
+                    <li key={l.label}><FooterLink {...l} /></li>
                   ))}
                 </ul>
               </div>
@@ -368,6 +371,62 @@ export default async function LandingPage() {
       </footer>
     </div>
   )
+}
+
+const GITHUB = 'https://github.com/darkClaw921/apistend'
+
+/**
+ * Ссылки футера. Каждая ведёт туда, что существует на самом деле: секция этой
+ * страницы, каталог методов или файл в репозитории. Пунктов «Дорожная карта»
+ * и «Контакты» из макета здесь нет — таких страниц не существует, а мёртвый
+ * пункт в футере хуже отсутствующего.
+ */
+const FOOTER_COLUMNS: ReadonlyArray<{
+  title: string
+  links: ReadonlyArray<{ label: string; href: string; external?: boolean }>
+}> = [
+  {
+    title: 'Продукт',
+    links: [
+      { label: 'Каталог методов', href: '/catalog' },
+      { label: 'Сервисы', href: '#services' },
+      { label: 'Вебхуки', href: '#webhooks' },
+      { label: 'Цены', href: '#pricing' },
+    ],
+  },
+  {
+    title: 'Разработчикам',
+    links: [
+      { label: 'Документация', href: `${GITHUB}/tree/main/docs`, external: true },
+      { label: 'Быстрый старт', href: '#how' },
+      { label: 'CLI', href: 'https://www.npmjs.com/package/apistend', external: true },
+      { label: 'Примеры на GitHub', href: `${GITHUB}/tree/main/examples`, external: true },
+    ],
+  },
+  {
+    title: 'Компания',
+    links: [
+      { label: 'О проекте', href: `${GITHUB}#readme`, external: true },
+      { label: 'Исходный код', href: GITHUB, external: true },
+      { label: 'Лицензия MIT', href: `${GITHUB}/blob/main/LICENSE`, external: true },
+    ],
+  },
+]
+
+function FooterLink({ label, href, external }: { label: string; href: string; external?: boolean }) {
+  const className = 'text-[13px] text-text-secondary transition-colors hover:text-text-primary'
+  if (external) {
+    return (
+      <a href={href} target="_blank" rel="noreferrer" className={className}>
+        {label}
+      </a>
+    )
+  }
+  // Якорь этой же страницы — обычной ссылкой: работает и до гидратации.
+  if (href.startsWith('#')) return <a href={href} className={className}>{label}</a>
+  // typedRoutes проверяет только литералы, а href здесь приходит из массива —
+  // приведение типа тут предписано документацией Next.
+  return <Link href={href as Route} className={className}>{label}</Link>
 }
 
 function Feature({ title, text, chips }: { title: string; text: string; chips?: string[] }) {
