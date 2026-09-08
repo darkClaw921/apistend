@@ -6,7 +6,7 @@ import {
   LayoutDashboard, LibraryBig, Boxes, Terminal, ScrollText, Webhook, GitBranch,
   Database, AppWindow, KeyRound, Users, Settings, PlugZap, ChevronsUpDown, EllipsisVertical,
 } from 'lucide-react'
-import { NavItem, NavSection, formatInt } from '@apistend/ui'
+import { NavItem, NavSection, cn, formatInt } from '@apistend/ui'
 import type { Me } from '@/lib/types'
 
 /**
@@ -47,14 +47,45 @@ const SECTIONS = [
   },
 ] as const
 
-export function Sidebar({ me, requestsThisMonth }: { me: Me; requestsThisMonth: number }) {
+export function Sidebar({
+  me, requestsThisMonth, open = false, onClose,
+}: {
+  me: Me
+  requestsThisMonth: number
+  /**
+   * Открыт ли сайдбар на узком экране. Макет каркаса требует прямо:
+   * «до 1024 px сайдбар — в бургер-меню» (00-app-shell.md). До этого он занимал
+   * свои 248 px всегда, и на телефоне от контента оставалась треть ширины.
+   */
+  open?: boolean
+  onClose?: () => void
+}) {
   const pathname = usePathname()
   const sandbox = me.sandboxes[0]
 
+  // Переход по разделу на узком экране закрывает шторку: иначе она остаётся
+  // поверх только что открытого экрана.
+  const closeOnNavigate = () => onClose?.()
+
   return (
-    <aside className="flex h-full w-[248px] shrink-0 flex-col justify-between bg-nav-bg">
+    <>
+      {open ? (
+        <div
+          className="fixed inset-0 z-40 bg-nav-bg/50 lg:hidden"
+          onClick={onClose}
+          aria-hidden
+        />
+      ) : null}
+
+    <aside
+      className={cn(
+        'flex h-full w-[248px] shrink-0 flex-col justify-between bg-nav-bg',
+        'max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-50 max-lg:transition-transform',
+        open ? 'max-lg:translate-x-0' : 'max-lg:-translate-x-full',
+      )}
+    >
       <div className="flex flex-col gap-[8px] px-[12px] py-[16px]">
-        <Link href="/overview" className="flex items-center gap-[10px] p-[8px]">
+        <Link href="/overview" onClick={closeOnNavigate} className="flex items-center gap-[10px] p-[8px]">
           <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[8px] bg-accent">
             <PlugZap size={17} className="text-white" aria-hidden />
           </span>
@@ -95,6 +126,7 @@ export function Sidebar({ me, requestsThisMonth }: { me: Me; requestsThisMonth: 
                         render={({ className, children }) => (
                           <Link
                             href={item.href}
+                            onClick={closeOnNavigate}
                             className={className}
                             aria-current={active ? 'page' : undefined}
                           >
@@ -135,5 +167,6 @@ export function Sidebar({ me, requestsThisMonth }: { me: Me; requestsThisMonth: 
         </div>
       </div>
     </aside>
+    </>
   )
 }

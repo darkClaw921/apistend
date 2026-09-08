@@ -14,11 +14,34 @@ import { Panel } from './Panel.tsx'
  * фокус оставался на странице под ним. Здесь это сделано один раз.
  */
 
+/**
+ * Стек открытых оверлеев.
+ *
+ * Каждый оверлей слушает Escape сам, и без общего стека одно нажатие закрывало
+ * бы все разом: открытые уведомления схлопывались вместе с палитрой поиска,
+ * поверх которой их и открыли. Escape обрабатывает только верхний.
+ */
+const stack: symbol[] = []
+
 /** Закрытие по Escape. Отдельным хуком, потому что нужно обоим оверлеям. */
 function useEscape(onClose: () => void): void {
+  const id = useRef<symbol>(undefined)
+  if (!id.current) id.current = Symbol('overlay')
+
+  useEffect(() => {
+    const self = id.current!
+    stack.push(self)
+    return () => {
+      const at = stack.indexOf(self)
+      if (at !== -1) stack.splice(at, 1)
+    }
+  }, [])
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape') return
+      if (stack[stack.length - 1] !== id.current) return
+      onClose()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
@@ -113,6 +136,54 @@ export function DropdownPanel({
           className,
         )}
       >
+        {children}
+      </div>
+    </>
+  )
+}
+
+/**
+ * Правая панель-деталка. На широком экране — обычная колонка, до 1280 px —
+ * шторка поверх содержимого.
+ *
+ * Так требует макет каркаса: «До 1280 px правую панель-деталку сворачивать
+ * в шторку» (design-handoff/screens/00-app-shell.md). Без этого на узком экране
+ * деталка выдавливала список до полутора сотен пикселей, и читать в нём было
+ * нечего.
+ */
+export function DetailPane({
+  open, onClose, children, className,
+}: {
+  /** Показана ли шторка на узком экране. На xl и шире значение не влияет ни на что. */
+  open: boolean
+  onClose: () => void
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <>
+      {open ? (
+        <div className="fixed inset-0 z-40 bg-nav-bg/40 xl:hidden" onClick={onClose} aria-hidden />
+      ) : null}
+      <div
+        className={cn(
+          'flex min-h-0 flex-col',
+          'max-xl:fixed max-xl:inset-y-0 max-xl:right-0 max-xl:z-50 max-xl:w-[min(460px,100vw)]',
+          'max-xl:transition-transform max-xl:p-[12px]',
+          open ? 'max-xl:translate-x-0' : 'max-xl:translate-x-full',
+          className,
+        )}
+      >
+        {open ? (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Закрыть панель"
+            className="absolute top-[20px] right-[20px] z-10 flex h-[28px] w-[28px] items-center justify-center rounded-[6px] bg-surface text-text-tertiary hover:text-text-secondary xl:hidden"
+          >
+            <X size={15} aria-hidden />
+          </button>
+        ) : null}
         {children}
       </div>
     </>

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { SERVICE_LIST, isServiceCode } from '@apistend/shared'
 import { prisma } from '../db.ts'
-import { requireSandbox } from '../lib/guard.ts'
+import { clampNumber, requireSandbox } from '../lib/guard.ts'
 import { flushRequestLogs } from '../lib/log-buffer.ts'
 import { engine } from '../gateway.ts'
 
@@ -97,7 +97,7 @@ export function registerOverviewRoutes(app: FastifyInstance): void {
 
   app.get<{ Querystring: { q?: string; limit?: string } }>('/api/search', async (req, reply) => {
     const q = (req.query.q ?? '').trim().toLowerCase()
-    const limit = Math.min(Math.max(Number(req.query.limit ?? 8), 1), 30)
+    const limit = clampNumber(req.query.limit, 8, 1, 30)
     if (q.length < 2) return reply.send({ query: q, total: 0, results: [] })
 
     const results: Array<{

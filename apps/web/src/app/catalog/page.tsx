@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ChevronLeft, ChevronRight, Copy, FileDown, SlidersHorizontal, X } from 'lucide-react'
 import {
-  ButtonPrimary, ButtonSecondary, CounterChip, DataTable, EmptyState, ErrorState,
+  ButtonPrimary, ButtonSecondary, CounterChip, DataTable, DetailPane, EmptyState, ErrorState,
   MethodBadge, Panel, PanelFooter, PanelHeader, SearchField, SegmentControl,
   ServiceDot, SkeletonRows, StatusChip, formatInt, formatMethods, meta,
 } from '@apistend/ui'
@@ -72,6 +72,9 @@ function CatalogScreen() {
   const linkedId = searchParams.get('method')
   const [globalSearch, setGlobalSearch] = useState('')
   const [exporting, setExporting] = useState(false)
+  // На широком экране деталка всегда рядом; на узком она шторка и открывается
+  // только по выбору строки — иначе перекрывала бы список сразу после загрузки.
+  const [detailOpen, setDetailOpen] = useState(false)
 
   // Дебаунс 200 мс — как задано в спецификации поведения поиска.
   useEffect(() => {
@@ -193,11 +196,13 @@ function CatalogScreen() {
         ),
       },
       {
-        key: 'description', header: 'Описание',
+        // Описание и версия уходят первыми: на узком экране столбцы налезали
+        // друг на друга, а путь метода важнее и того, и другого.
+        key: 'description', header: 'Описание', className: 'max-xl:hidden',
         render: (m) => <span className="text-text-secondary" title={m.title}>{m.description || m.title}</span>,
       },
       {
-        key: 'version', header: 'Версия', width: 74, mono: true,
+        key: 'version', header: 'Версия', width: 74, mono: true, className: 'max-lg:hidden',
         render: (m) => <span className="text-text-tertiary">{m.version}</span>,
       },
       {
@@ -228,7 +233,6 @@ function CatalogScreen() {
         title="Каталог API"
         search={globalSearch}
         onSearchChange={setGlobalSearch}
-        showTools={shell !== null}
         action={
           shell ? (
             <ButtonPrimary onClick={() => router.push('/keys')}>Новая песочница</ButtonPrimary>
@@ -338,6 +342,7 @@ function CatalogScreen() {
                   rowTone={(m) => (m.id === selectedId ? 'selected' : 'default')}
                   onRowClick={(m) => {
                     setSelectedId(m.id)
+                    setDetailOpen(true)
                     // Идентификатор уезжает в адрес — ссылкой на метод можно
                     // поделиться. replaceState, а не router: перерисовывать
                     // страницу ради выделения строки незачем.
@@ -384,7 +389,9 @@ function CatalogScreen() {
             />
           </Panel>
 
-          <MethodDetailPanel methodId={selectedId} totalCatalog={totalCatalog} />
+          <DetailPane open={detailOpen} onClose={() => setDetailOpen(false)} className="min-w-0 flex-1">
+            <MethodDetailPanel methodId={selectedId} totalCatalog={totalCatalog} />
+          </DetailPane>
         </div>
       </main>
     </>

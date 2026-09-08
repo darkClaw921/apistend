@@ -2,8 +2,9 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import { BookOpen } from 'lucide-react'
+import { BookOpen, Menu } from 'lucide-react'
 import { Dialog, IconButton, KbdChip, SearchField } from '@apistend/ui'
+import { useOptionalShell } from './AppShell'
 import { GlobalSearch } from './GlobalSearch'
 import { NotificationsBell } from './NotificationsBell'
 
@@ -27,12 +28,15 @@ export function Topbar({
   search: string
   onSearchChange: (v: string) => void
   /**
-   * Глобальный поиск и кнопки кабинета. Выключаются в каталоге для гостя:
-   * уведомлений у него нет, а искать по логам ему нечего.
+   * Инструменты шапки. Поиск и документация остаются и гостю — каталог открыт
+   * без входа, и искать по нему он вправе; уведомления показываются только
+   * вошедшему, потому что берутся из его песочницы.
    */
   showTools?: boolean
 }) {
   const router = useRouter()
+  // Гость каталога сайдбара не имеет — и кнопки меню у него не будет.
+  const shell = useOptionalShell()
   const [searchOpen, setSearchOpen] = useState(false)
 
   // ⌘K нарисован в макете с самого начала — теперь он что-то делает.
@@ -50,6 +54,17 @@ export function Topbar({
 
   return (
     <header className="flex h-[64px] shrink-0 items-center gap-[10px] border-b border-border bg-surface px-[24px]">
+      {shell ? (
+        <button
+          type="button"
+          onClick={shell.openMenu}
+          aria-label="Открыть меню"
+          className="-ml-[6px] flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[6px] text-text-secondary hover:bg-bg lg:hidden"
+        >
+          <Menu size={18} aria-hidden />
+        </button>
+      ) : null}
+
       <div className="flex min-w-0 flex-col">
         <span className="truncate text-[11px] text-text-tertiary">{breadcrumb}</span>
         <h1 className="truncate text-[17px] font-bold tracking-[-0.2px] text-text-primary">{title}</h1>
@@ -75,7 +90,7 @@ export function Topbar({
             <IconButton aria-label="Документация" onClick={() => router.push('/catalog')}>
               <BookOpen size={16} aria-hidden />
             </IconButton>
-            <NotificationsBell />
+            {shell ? <NotificationsBell /> : null}
           </>
         ) : null}
         {action}

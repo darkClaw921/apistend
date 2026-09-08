@@ -1,6 +1,8 @@
+import { createHash, randomUUID } from 'node:crypto'
 import { SignJWT, jwtVerify } from 'jose'
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import { env } from '../env.ts'
+import { prisma } from '../db.ts'
 
 /**
  * Сессия пользователя. Логин и пароль, без подтверждения почты и OAuth —
@@ -8,6 +10,11 @@ import { env } from '../env.ts'
  *
  * Токен живёт в httpOnly-cookie: JavaScript страницы до него не добирается,
  * поэтому XSS не приводит к угону сессии.
+ *
+ * Рядом с токеном ведётся запись в таблице сессий. Без неё выход не значил
+ * ничего: cookie удалялась в браузере, а сам токен оставался действительным
+ * ещё две недели — скопированный с чужого компьютера, он продолжал работать.
+ * Теперь у токена есть идентификатор, и выход эту запись удаляет.
  */
 
 const COOKIE = 'apistend_session'
@@ -20,13 +27,33 @@ export interface SessionClaims {
   email: string
 }
 
-export async function issueSession(reply: FastifyReply, claims: SessionClaims): Promise<void> {
-  const token = await new SignJWT({ email: claims.email })
+/** Хеш, а не сам идентификатор: в базе секретов не держим. */
+function hashOf(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+export async function issueSession(
+  reply: FastifyReply,
+  claims: SessionClaims,
+  request?: FastifyRequest,
+): Promise<void> {
+  const sessionId = randomUUID()
+  const token = await new SignJWT({ email: claims.email, sid: sessionId })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(claims.userId)
     .setIssuedAt()
     .setExpirationTime(`${TTL_SECONDS}s`)
     .sign(secret)
+
+  await prisma.authSession.create({
+    data: {
+      userId: claims.userId,
+      tokenHash: hashOf(sessionId),
+      userAgent: request?.headers['user-agent']?.slice(0, 200) ?? null,
+      ip: request?.ip ?? null,
+      expiresAt: new Date(Date.now() + TTL_SECONDS * 1000),
+    },
+  })
 
   reply.setCookie(COOKIE, token, {
     httpOnly: true,
@@ -47,8 +74,31 @@ export async function readSession(request: FastifyRequest): Promise<SessionClaim
   try {
     const { payload } = await jwtVerify(token, secret)
     if (!payload.sub) return null
+
+    // Токен подписан верно, но мог быть отозван выходом.
+    const sid = typeof payload.sid === 'string' ? payload.sid : null
+    if (!sid) return null
+    const live = await prisma.authSession.findUnique({
+      where: { tokenHash: hashOf(sid) },
+      select: { expiresAt: true },
+    })
+    if (!live || live.expiresAt.getTime() <= Date.now()) return null
+
     return { userId: payload.sub, email: String(payload.email ?? '') }
   } catch {
     return null
+  }
+}
+
+/** Гасит сессию, которой пришёл запрос. Вызывается выходом. */
+export async function revokeSession(request: FastifyRequest): Promise<void> {
+  const token = request.cookies[COOKIE]
+  if (!token) return
+  try {
+    const { payload } = await jwtVerify(token, secret)
+    const sid = typeof payload.sid === 'string' ? payload.sid : null
+    if (sid) await prisma.authSession.deleteMany({ where: { tokenHash: hashOf(sid) } })
+  } catch {
+    // Токен нечитаем — гасить нечего.
   }
 }

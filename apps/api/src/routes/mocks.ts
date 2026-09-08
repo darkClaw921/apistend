@@ -14,17 +14,43 @@ import {
 
 /** Экран «Свои моки» и обслуживание созданных пользователем эндпоинтов. */
 
-const upsert = z.object({
+/** Поля мока без значений по умолчанию — общая основа создания и правки. */
+const mockShape = {
   httpMethod: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-  path: z.string().min(2).max(300).startsWith('/', 'Путь должен начинаться со слэша'),
+  // Ровно /custom/…: по другому адресу мок недостижим — обслуживается только
+  // ветка /custom/*. Раньше схема принимала любой путь, и мок молча создавался
+  // мёртвым.
+  path: z.string().min(2).max(300)
+    .startsWith('/custom/', 'Путь мока начинается с /custom/ — по этому адресу его вызывает песочница'),
   title: z.string().min(2).max(120),
-  status: z.enum(['active', 'draft', 'disabled']).default('draft'),
-  responseStatusCode: z.number().int().min(100).max(599).default(200),
-  contentType: z.string().max(120).default('application/json'),
-  delayMs: z.number().int().min(0).max(3_000).default(250),
-  templatingEnabled: z.boolean().default(true),
-  responseBody: z.string().max(200_000).default(''),
+  status: z.enum(['active', 'draft', 'disabled']),
+  // 1xx — не ответ, а промежуточный сигнал: клиент продолжит ждать тело,
+  // которого не будет, и запрос повиснет до таймаута.
+  responseStatusCode: z.number().int().min(200).max(599),
+  contentType: z.string().max(120),
+  delayMs: z.number().int().min(0).max(3_000),
+  templatingEnabled: z.boolean(),
+  responseBody: z.string().max(200_000),
+}
+
+const upsert = z.object({
+  ...mockShape,
+  status: mockShape.status.default('draft'),
+  responseStatusCode: mockShape.responseStatusCode.default(200),
+  contentType: mockShape.contentType.default('application/json'),
+  delayMs: mockShape.delayMs.default(250),
+  templatingEnabled: mockShape.templatingEnabled.default(true),
+  responseBody: mockShape.responseBody.default(''),
 })
+
+/**
+ * Правка: те же поля, но без значений по умолчанию.
+ *
+ * partial() снимает обязательность, а default() — нет: он подставляет значение
+ * даже когда поля в теле не было. Из-за этого «поменять статус» затирало
+ * и тело ответа, и задержку, и код — всё, что не прислали.
+ */
+const patchMock = z.object(mockShape).partial()
 
 /** P2002 — нарушение уникального индекса (sandboxId, httpMethod, path). */
 function isUniqueViolation(e: unknown): boolean {
@@ -37,8 +63,13 @@ const MOCKABLE = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const
 const importSpec = z.object({
   /** Сырой текст файла: JSON или YAML — разберём и то, и другое. */
   document: z.string().min(2).max(5_000_000),
-  /** Префикс пути, чтобы импортированное не смешивалось с уже созданным. */
-  pathPrefix: z.string().max(100).default('/imported'),
+  /**
+   * Префикс пути. Внутри /custom — там и только там песочница обслуживает
+   * свои моки; префикс вне этой ветки создавал моки, которые нельзя вызвать.
+   */
+  pathPrefix: z.string().max(100)
+    .startsWith('/custom', 'Префикс начинается с /custom')
+    .default('/custom/imported'),
   status: z.enum(['active', 'draft', 'disabled']).default('draft'),
   /** Потолок за один импорт: спецификация на тысячу операций забьёт экран. */
   limit: z.number().int().min(1).max(200).default(100),
@@ -124,6 +155,12 @@ export function registerMockRoutes(app: FastifyInstance): void {
 
       const response = extractResponse(op, resolve)
       const mockPath = `${prefix}${path}`
+      // Обрезка до 300 символов склеила бы разные операции в один путь,
+      // и вторая молча ушла бы в дубли. Такие операции пропускаем.
+      if (mockPath.length > 300) {
+        skipped.push(`${method} ${mockPath.slice(0, 60)}…`)
+        continue
+      }
       const title = firstSentence(cleanText(op.summary ?? op.description ?? path), 110) || path
 
       try {
@@ -131,14 +168,16 @@ export function registerMockRoutes(app: FastifyInstance): void {
           data: {
             sandboxId: ctx.sandbox.id,
             httpMethod: method as (typeof MOCKABLE)[number],
-            path: mockPath.slice(0, 300),
+            path: mockPath,
             title: title.slice(0, 120),
             status: parsed.data.status,
             responseStatusCode: response.successStatus,
             contentType: 'application/json',
             delayMs: 250,
             templatingEnabled: true,
-            responseBody: response.example === undefined
+            // null в примере равнозначен его отсутствию: строка «null» в теле
+            // ответа выглядит как ошибка, а обещали пустой объект.
+            responseBody: response.example == null
               ? '{}'
               : JSON.stringify(response.example, null, 2).slice(0, 200_000),
             headers: {},
@@ -185,7 +224,7 @@ export function registerMockRoutes(app: FastifyInstance): void {
   app.patch<{ Params: { id: string } }>('/api/mocks/:id', async (req, reply) => {
     const ctx = await requireSandbox(req, reply)
     if (!ctx) return
-    const parsed = upsert.partial().safeParse(req.body)
+    const parsed = patchMock.safeParse(req.body)
     if (!parsed.success) {
       return reply.code(400).send({ error: 'VALIDATION', issues: parsed.error.issues.map((i) => i.message) })
     }
@@ -208,6 +247,54 @@ export function registerMockRoutes(app: FastifyInstance): void {
    * Детерминированный: один и тот же мок выглядит одинаково между открытиями,
    * иначе предпросмотр «плывёт» при каждом нажатии клавиши.
    */
+  /**
+   * Тест-вызов мока из кабинета.
+   *
+   * Публичный путь /custom/* требует ключ песочницы, а он показывается ровно
+   * один раз при создании — кабинет его не хранит. Поэтому вызов делается
+   * по сессии и отдаёт ровно то, что получил бы клиент: код, тип, тело
+   * с подставленными плейсхолдерами и заявленную задержку. Саму задержку
+   * не выдерживаем: проверяют содержимое ответа, а не секундомер.
+   */
+  app.post<{ Params: { id: string } }>('/api/mocks/:id/test', async (req, reply) => {
+    const ctx = await requireSandbox(req, reply)
+    if (!ctx) return
+
+    const mock = await prisma.customMock.findFirst({
+      where: { id: req.params.id, sandboxId: ctx.sandbox.id },
+    })
+    if (!mock) return reply.code(404).send({ error: 'NOT_FOUND', message: 'Мок не найден' })
+
+    const { sampleBody } = (req.body ?? {}) as { sampleBody?: unknown }
+    const body = mock.templatingEnabled
+      ? renderTemplate(mock.responseBody, {
+          body: sampleBody ?? {},
+          query: {},
+          params: {},
+          now: new Date(),
+        })
+      : mock.responseBody
+
+    let validJson = true
+    try {
+      if (mock.contentType.includes('json')) JSON.parse(body)
+    } catch {
+      validJson = false
+    }
+
+    return reply.send({
+      status: mock.responseStatusCode,
+      contentType: mock.contentType,
+      delayMs: mock.delayMs,
+      body,
+      validJson,
+      // Черновик и выключенный по публичному пути не отвечают — говорим об этом
+      // прямо, иначе тест-вызов вводил бы в заблуждение.
+      servedPublicly: mock.status === 'active',
+      mockStatus: mock.status,
+    })
+  })
+
   app.post('/api/mocks/preview', async (req, reply) => {
     const ctx = await requireSandbox(req, reply)
     if (!ctx) return

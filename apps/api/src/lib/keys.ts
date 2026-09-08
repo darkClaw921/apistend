@@ -79,3 +79,18 @@ export async function verifyPassword(hash: string, password: string): Promise<bo
     return false
   }
 }
+
+/**
+ * Прячет секреты в тексте, который уходит в журнал запросов.
+ *
+ * Ключ приходит не только заголовком: у Bitrix24 он лежит в параметре auth,
+ * и интеграции часто дублируют его в теле. Тело запроса — данные пользователя,
+ * их журнал хранит, и вместе с ними сохранялся рабочий ключ открытым текстом.
+ * Оставляем начало и хвост — ровно столько, чтобы узнать свой ключ в списке.
+ */
+export function maskSecretsInText(text: string): string {
+  return text.replace(
+    /(stend_(?:sbx|sk|whsec)_)([0-9a-f]{8,})/gi,
+    (_all, prefix: string, body: string) => `${prefix}${body.slice(0, 4)}••••${body.slice(-4)}`,
+  )
+}

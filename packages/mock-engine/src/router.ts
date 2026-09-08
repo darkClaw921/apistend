@@ -72,18 +72,35 @@ export class MockRouter {
     return null
   }
 
-  /** Пути, похожие на запрошенный: подсказка «возможно, вы имели в виду» в ошибке 404. */
+  /**
+   * Пути, похожие на запрошенный: подсказка «возможно, вы имели в виду» в 404.
+   *
+   * Считается по всему каталогу, а он у Bitrix24 на тысячу с лишним методов.
+   * На вменяемом пути это доли миллисекунды, но на длинной строке набор триграмм
+   * растёт вместе с ней, и один запрос занимал событийный цикл на треть секунды —
+   * два десятка таких запросов подряд подвешивали шлюз целиком. Осмысленных
+   * путей такой длины не бывает: подсказку для них просто не считаем.
+   */
   suggest(path: string, limit = 3): string[] {
+    if (path.length > MAX_SUGGEST_PATH) return []
+
     const target = path.toLowerCase()
     const all = [...this.exact.values(), ...this.templates.map((t) => t.method)]
+    const seen = new Set<string>()
     return all
       .map((m) => ({ path: m.path, score: similarity(target, m.path.toLowerCase()) }))
       .filter((x) => x.score > 0.55)
       .sort((a, b) => b.score - a.score)
+      // Один и тот же путь встречается у разных методов (GET и POST) — в подсказке
+      // он нужен один раз.
+      .filter((x) => (seen.has(x.path) ? false : (seen.add(x.path), true)))
       .slice(0, limit)
       .map((x) => x.path)
   }
 }
+
+/** Длиннее этого осмысленных путей не бывает — считать по ним подсказку незачем. */
+const MAX_SUGGEST_PATH = 256
 
 function compile(method: CatalogMethod): TemplateRoute {
   const names: string[] = []

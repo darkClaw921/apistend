@@ -215,4 +215,30 @@ cli.option('--json', 'Машиночитаемый вывод')
 cli.help()
 cli.version(VERSION)
 
-cli.parse()
+/**
+ * Разбор аргументов вынесен в try: cac бросает на неизвестном флаге, и без
+ * перехвата пользователь видел стек из внутренностей библиотеки вместо
+ * подсказки. Заодно закрываются два молчания: без команды печаталась пустота
+ * с кодом 0, и то же самое — на команду, которой нет.
+ */
+try {
+  cli.parse()
+
+  const requested = process.argv[2]
+  // Разбор прошёл, но команда не опознана: cac в этом случае молчит и выходит
+  // с нулём, как будто всё в порядке.
+  if (requested && !requested.startsWith('-') && !cli.matchedCommandName) {
+    out.error(`Неизвестная команда «${requested}».`, 'Список команд: apistend --help')
+    process.exit(1)
+  }
+  // Запуск без аргументов тоже печатал пустоту — показываем справку.
+  if (!requested) cli.outputHelp()
+} catch (e) {
+  // cac бросает на неизвестном флаге. Без перехвата наружу вываливался стек
+  // из внутренностей библиотеки. Сообщение у него английское — переводим,
+  // остальной вывод CLI на русском.
+  const raw = e instanceof Error ? e.message : String(e)
+  const unknown = /^Unknown option `(.+)`$/.exec(raw)
+  out.error(unknown ? `Неизвестный параметр ${unknown[1]}.` : raw, 'Справка: apistend --help')
+  process.exit(1)
+}

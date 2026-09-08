@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { isServiceCode, SERVICE_LIST, SERVICE_PROFILES, type CatalogMethod, type ServiceCode } from '@apistend/shared'
 import { engine } from '../gateway.ts'
 import { env } from '../env.ts'
+import { clampNumber } from '../lib/guard.ts'
 
 /**
  * Каталог методов.
@@ -64,8 +65,8 @@ export function registerCatalogRoutes(app: FastifyInstance): void {
 
   app.get<{ Querystring: ListQuery }>('/api/catalog', async (req, reply) => {
     const { service, q, method, readiness } = req.query
-    const limit = Math.min(Math.max(Number(req.query.limit ?? 50), 1), 200)
-    const offset = Math.max(Number(req.query.offset ?? 0), 0)
+    const limit = clampNumber(req.query.limit, 50, 1, 200)
+        const offset = clampNumber(req.query.offset, 0, 0, 1_000_000)
 
     const codes: ServiceCode[] =
       service && isServiceCode(service) ? [service] : SERVICE_LIST.map((s) => s.code)

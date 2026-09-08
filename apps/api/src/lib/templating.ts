@@ -51,6 +51,10 @@ export function renderTemplate(template: string, ctx: TemplateContext): string {
         const factor = unit === 'd' ? 86_400_000 : unit === 'h' ? 3_600_000 : unit === 'm' ? 60_000 : 1_000
         ms += sign * amount * factor
       }
+      // Дата за пределами допустимого диапазона роняет toISOString с RangeError,
+      // а вместе с ним и весь запрос. Неподъёмный сдвиг ведёт себя как любой
+      // непонятный плейсхолдер — остаётся в тексте как есть.
+      if (!Number.isFinite(ms) || Math.abs(ms) > 8.64e15) return match
       return new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z')
     }
 

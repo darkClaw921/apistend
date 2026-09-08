@@ -52,6 +52,48 @@ export async function buildServer() {
     },
   )
 
+  /**
+   * Повторённый query-параметр (?q=a&q=b) Fastify отдаёт массивом, а маршруты
+   * ждут строку — и падали на q.trim(). Схлопываем к последнему значению:
+   * так же поступает большинство серверов, и клиент, приславший параметр
+   * дважды, получает предсказуемый результат вместо ошибки.
+   */
+  app.addHook('onRequest', async (req) => {
+    const query = req.query as Record<string, unknown> | undefined
+    if (!query) return
+    for (const [key, value] of Object.entries(query)) {
+      if (Array.isArray(value)) query[key] = value[value.length - 1]
+    }
+  })
+
+  /**
+   * Единый обработчик ошибок.
+   *
+   * По умолчанию Fastify отдаёт клиенту message исключения — а это внутренности:
+   * текст вроде «q.trim is not a function» или дамп запроса Prisma с именами
+   * колонок и значениями. Наружу должен уходить один и тот же безликий конверт,
+   * подробности — в журнал сервера.
+   *
+   * Ошибки валидации и явные 4xx это не трогает: их код меньше 500.
+   */
+  app.setErrorHandler((error: unknown, req, reply) => {
+    const e = error as { statusCode?: number; code?: string; message?: string }
+    const status = e.statusCode ?? 500
+    if (status < 500) {
+      return reply.code(status).send({
+        error: e.code ?? 'BAD_REQUEST',
+        message: e.message ?? 'Некорректный запрос',
+      })
+    }
+
+    req.log.error({ err: error, url: req.url, method: req.method }, 'необработанная ошибка')
+    return reply.code(500).send({
+      error: 'INTERNAL',
+      message: 'Внутренняя ошибка сервиса. Повторите запрос позже.',
+      requestId: req.id,
+    })
+  })
+
   app.get('/health', async () => ({
     ok: true,
     services: engine.loadedServices,

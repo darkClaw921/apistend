@@ -17,6 +17,11 @@ export interface Column<T> {
   render: (row: T, index: number) => ReactNode
   /** Моноширинный шрифт: пути, коды, время, идентификаторы. */
   mono?: boolean
+  /**
+   * Классы колонки целиком: применяются к col, th и td.
+   * Так колонку можно скрыть на узком экране (`max-xl:hidden`) — без этого
+   * скрывались бы только ячейки, а заголовок и ширина оставались бы на месте.
+   */
   className?: string
 }
 
@@ -49,7 +54,7 @@ export function DataTable<T>({
     <table className={cn('w-full table-fixed border-collapse', className)}>
       <colgroup>
         {columns.map((c) => (
-          <col key={c.key} style={c.width ? { width: c.width } : undefined} />
+          <col key={c.key} className={c.className} style={c.width ? { width: c.width } : undefined} />
         ))}
       </colgroup>
       <thead className="sticky top-0 z-10">
@@ -62,6 +67,7 @@ export function DataTable<T>({
                 'border-b border-border py-[9px] text-[11px] font-semibold tracking-[0.3px] text-text-tertiary',
                 dense ? 'px-[12px]' : 'px-[16px]',
                 c.align === 'right' ? 'text-right' : 'text-left',
+                c.className,
               )}
             >
               {c.header}

@@ -48,13 +48,29 @@ export function registerTunnel(app: FastifyInstance, log: (msg: string) => void)
       return
     }
 
+    // Отклонение внутри этого обработчика некому поймать: без try/catch любая
+    // ошибка базы во время апгрейда роняла процесс целиком.
     void (async () => {
+      try {
       const record = await prisma.tunnelSession.findUnique({
         where: { tokenHash: hashToken(token) },
         include: { sandbox: true, apiKey: true },
       })
 
       if (!record || record.expiresAt < new Date()) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
+        socket.destroy()
+        return
+      }
+
+      // Токен одноразовый — так он и описан в схеме. Гасим его условием на
+      // usedAt: два одновременных подключения одним токеном должны закончиться
+      // ровно одним успехом, а не гонкой за вытеснение чужого агента.
+      const claimed = await prisma.tunnelSession.updateMany({
+        where: { id: record.id, usedAt: null },
+        data: { usedAt: new Date() },
+      })
+      if (claimed.count === 0) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
         socket.destroy()
         return
@@ -68,6 +84,11 @@ export function registerTunnel(app: FastifyInstance, log: (msg: string) => void)
       wss.handleUpgrade(request, socket, head, (ws) => {
         void onConnected(ws, record.id, log)
       })
+      } catch (e) {
+        log(`апгрейд туннеля: ${String(e)}`)
+        socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n')
+        socket.destroy()
+      }
     })()
   })
 

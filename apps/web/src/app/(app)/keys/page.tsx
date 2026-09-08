@@ -376,6 +376,9 @@ export default function KeysPage() {
                   try {
                     await api.post('/api/sandbox/reset')
                     setResetting(false)
+                    // Подпись «Последний сброс» берётся из профиля, а не из
+                    // ответа ключей — без обновления каркаса она оставалась старой.
+                    await shell.refresh()
                     void load()
                   } catch (e) {
                     setError(e instanceof ApiError ? e.message : 'Не удалось сбросить данные')
