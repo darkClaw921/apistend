@@ -1,0 +1,53 @@
+name: Deploy
+
+# Деплой едет только после зелёного CI, а не параллельно с ним: иначе прод
+# успевает обновиться раньше, чем упадут тесты.
+#
+# Три условия ниже — не перестраховка. Раннер стоит на самом проде, а
+# репозиторий публичный, поэтому запускать его вправе только пуш в main
+# этого репозитория. CI гоняется и на pull_request, в том числе из форков;
+# без проверки event == 'push' форк получил бы выполнение кода на сервере.
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+# Джобе не нужен ни репозиторий, ни токен: она только называет коммит.
+permissions: {}
+
+jobs:
+  deploy:
+    if: >-
+      github.repository == 'darkClaw921/apistend' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'))
+
+    runs-on: [self-hosted, linux, x64, apistend-prod]
+    timeout-minutes: 60
+
+    steps:
+      # Здесь намеренно нет ни checkout, ни установки зависимостей, ни сборки.
+      #
+      # Всё это делает /usr/local/bin/apistend-deploy — скрипт, который лежит
+      # на самом сервере и в репозиторий не входит. Причина в том, что условия
+      # выше защищают только ЭТОТ файл: раннер обслуживает весь репозиторий, а
+      # в pull request из форка можно принести собственный workflow с
+      # `runs-on: self-hosted`, и его никакой `if` отсюда не остановит.
+      #
+      # Поэтому раннер работает от пользователя runner, который не читает
+      # /etc/apistend, не пишет в /srv/apistend/current и через sudo может
+      # запустить ровно один скрипт. Скрипт разворачивает только коммит,
+      # уже влитый в main (git merge-base --is-ancestor), — назвать чужой
+      # коммит бесполезно.
+      - name: Развернуть
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: sudo -n /usr/local/bin/apistend-deploy "$SHA"

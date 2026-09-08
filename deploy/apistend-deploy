@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+#
+# ЭТАЛОН. Рабочая копия живёт на сервере: /usr/local/bin/apistend-deploy,
+# владелец root, права 0755. Сервер НЕ берёт этот файл из репозитория и не
+# должен — в этом весь смысл: файл workflow можно подменить в pull request
+# из форка, файл на диске сервера нельзя. Здесь он лежит, чтобы схему можно
+# было восстановить, и обновляется вручную (scp + chown root:root).
+#
+# Разворачивает APIStend на проде. Единственное, что раннеру позволено
+# запускать через sudo.
+#
+# Почему логика здесь, а не в файле workflow: репозиторий публичный, а раннер
+# стоит на боевой машине. Файл workflow приходит из репозитория и в pull request
+# из форка может быть любым; файл на диске сервера подменить нельзя.
+#
+# Раннер не имеет доступа ни к /srv/apistend/current, ни к /etc/apistend —
+# всё, что он может, это назвать коммит, и только тот, что уже влит в main.
+set -euo pipefail
+
+SHA=${1:-}
+if [[ ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Нужен полный SHA коммита, получено: ${SHA:-пусто}" >&2
+  exit 2
+fi
+
+APP=/srv/apistend/current
+WEB=$APP/apps/web
+
+as_deploy() {
+  su deploy -s /bin/bash -c "set -a; . /etc/apistend/app.env; set +a; cd '$APP' && $1"
+}
+
+echo "── коммит $SHA"
+as_deploy "git fetch --quiet origin main"
+
+# Разворачивается только то, что уже в main. Без этой проверки джоба могла бы
+# попросить выкатить коммит из чужой ветки или из pull request.
+if ! as_deploy "git merge-base --is-ancestor $SHA origin/main"; then
+  echo "$SHA не является предком origin/main — отказ" >&2
+  exit 3
+fi
+as_deploy "git checkout --quiet --force $SHA"
+
+echo "── зависимости"
+# --prod=false обязателен: при NODE_ENV=production pnpm выбросил бы prisma
+# и dotenv, а dotenv импортируется в рантайме.
+as_deploy "pnpm install --frozen-lockfile --prod=false"
+
+echo "── схема базы"
+as_deploy "pnpm --filter @apistend/api exec prisma generate"
+as_deploy "pnpm --filter @apistend/api exec prisma migrate deploy"
+
+echo "── сборка кабинета"
+# Копия на жёстких ссылках: место почти не тратится, а сломанная сборка
+# не оставляет прод без работающего кабинета.
+as_deploy "rm -rf '$WEB/.next.prev'"
+if [ -d "$WEB/.next" ]; then
+  as_deploy "cp -al '$WEB/.next' '$WEB/.next.prev'"
+fi
+
+# next build перезаписывает .next под работающим процессом, и вдвоём им тесно
+# на 1,9 ГБ. Мок-шлюз при этом продолжает отвечать — падает только кабинет.
+systemctl stop apistend-web.service
+
+if as_deploy "cd apps/web && NODE_OPTIONS=--max-old-space-size=1400 pnpm exec next build"; then
+  as_deploy "rm -rf '$WEB/.next.prev'"
+else
+  echo "сборка не удалась — возвращаю предыдущую" >&2
+  as_deploy "rm -rf '$WEB/.next'"
+  [ -d "$WEB/.next.prev" ] && as_deploy "mv '$WEB/.next.prev' '$WEB/.next'"
+  systemctl start apistend-web.service
+  exit 4
+fi
+
+echo "── запуск"
+systemctl restart apistend-api.service
+systemctl restart apistend-web.service
+
+echo "── проверка"
+for _ in $(seq 1 30); do
+  # -s без -S: пока сервисы поднимаются, отказ соединения — норма,
+  # и печатать его тридцать раз незачем.
+  api=$(curl -fs -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health || true)
+  web=$(curl -fs -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/ || true)
+  if [ "$api" = "200" ] && [ "$web" = "200" ]; then
+    echo "API и кабинет отвечают, развёрнут $SHA"
+    exit 0
+  fi
+  sleep 4
+done
+
+echo "не поднялось: API=$api WEB=$web" >&2
+journalctl -u apistend-api -u apistend-web -n 60 --no-pager >&2 || true
+exit 5

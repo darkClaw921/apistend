@@ -12,6 +12,11 @@
     "esModuleInterop": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
+    // API на проде исполняется как есть: `node src/server.ts`, Node снимает типы
+    // на лету и НЕ транспилирует. Поэтому enum, namespace и параметры-свойства
+    // конструктора там падают с SyntaxError. Vitest их выполняет, tsc без этого
+    // флага молчит — то есть без него сборка зелёная, а прод в крэш-лупе.
+    "erasableSyntaxOnly": true,
     "skipLibCheck": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
