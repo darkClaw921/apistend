@@ -19,7 +19,12 @@ export async function loadAppAuth(appId: string): Promise<AppAuthEnvelope | null
   if (!app || app.state === 'uninstalled') return null
 
   const existing = await prisma.b24AppToken.findFirst({
-    where: { appId, revokedAt: null, expiresAt: { gt: new Date(Date.now() + 60_000) } },
+    // Замещённая обновлением пара не годится: её access_token уже мёртв,
+    // и приложение получило бы вместе с событием заведомо нерабочий токен.
+    where: {
+      appId, revokedAt: null, supersededAt: null,
+      expiresAt: { gt: new Date(Date.now() + 60_000) },
+    },
     orderBy: { createdAt: 'desc' },
   })
   const token = existing ?? (await issueTokenPair(app, 1))

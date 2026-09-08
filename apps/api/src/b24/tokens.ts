@@ -5,6 +5,8 @@ import {
   B24_AUTH_CODE_TTL_SECONDS,
   B24_REFRESH_TTL_SECONDS,
   B24_TOKEN_TTL_SECONDS,
+  clampRefreshTtl,
+  clampTokenTtl,
   type B24TokenResponse,
 } from '@apistend/shared'
 import { prisma } from '../db.ts'
@@ -71,6 +73,11 @@ async function loadFromDb(accessToken: string): Promise<AppContext | null> {
   // Просроченный токен НЕ отбрасываем: шлюз обязан отличить «токен истёк»
   // (401 expired_token, и приложение пойдёт обновлять) от «токена нет вовсе»
   // (401 NO_AUTH_FOUND). Отозванный — именно что нет.
+  //
+  // Замещённый обновлением (supersededAt) остаётся видимым и отвечает
+  // expired_token: у приложения могла остаться копия старого токена — например,
+  // во фрейме, пока серверная часть уже обновилась, — и она обязана узнать
+  // «пора обновиться», а не «такого токена не существует».
   if (token && !token.revokedAt && token.app.state !== 'uninstalled') {
     value = { app: token.app, token, sandbox: token.app.sandbox }
   }
@@ -84,15 +91,29 @@ export function invalidateAppTokenCache(): void {
 }
 
 export function appTokenExpired(token: B24AppToken, now = new Date()): boolean {
-  return token.expiresAt.getTime() <= now.getTime()
+  return token.supersededAt !== null || token.expiresAt.getTime() <= now.getTime()
 }
 
-/** Выпускает новую пару токенов и отзывает предыдущие пары этого приложения. */
+/** Приложение в объёме, которого хватает для выдачи пары. */
+export type TokenIssuer = Pick<B24App, 'id' | 'scope'> & {
+  tokenTtlSeconds?: number
+  refreshTtlSeconds?: number
+}
+
+function ttlOf(app: TokenIssuer): { access: number; refresh: number } {
+  return {
+    access: clampTokenTtl(app.tokenTtlSeconds ?? B24_TOKEN_TTL_SECONDS),
+    refresh: clampRefreshTtl(app.refreshTtlSeconds ?? B24_REFRESH_TTL_SECONDS),
+  }
+}
+
+/** Выпускает новую пару токенов. */
 export async function issueTokenPair(
-  app: Pick<B24App, 'id' | 'scope'>,
+  app: TokenIssuer,
   portalUserId: number,
 ): Promise<B24AppToken> {
   const now = Date.now()
+  const ttl = ttlOf(app)
   // Боевой портал выдаёт новую пару при каждой отрисовке фрейма, а прежняя
   // продолжает действовать до своего срока. Здесь так же: старые не отзываем,
   // иначе открытая в соседней вкладке копия приложения внезапно теряет доступ.
@@ -103,12 +124,30 @@ export async function issueTokenPair(
       refreshToken: generateOpaqueToken(),
       portalUserId,
       scope: app.scope,
-      expiresAt: new Date(now + B24_TOKEN_TTL_SECONDS * 1000),
-      refreshExpiresAt: new Date(now + B24_REFRESH_TTL_SECONDS * 1000),
+      expiresAt: new Date(now + ttl.access * 1000),
+      refreshExpiresAt: new Date(now + ttl.refresh * 1000),
     },
   })
   invalidateAppTokenCache()
   return token
+}
+
+/**
+ * Немедленно состаривает все действующие пары приложения.
+ *
+ * Ждать даже десять секунд при отладке утомительно, а проверять надо не срок,
+ * а поведение приложения после отказа. Токены именно состариваются, а не
+ * отзываются: приложение обязано получить expired_token и пойти обновляться,
+ * а не NO_AUTH_FOUND, после которого обновлять уже нечего.
+ */
+export async function expireAppTokens(appId: string): Promise<number> {
+  const past = new Date(Date.now() - 1_000)
+  const result = await prisma.b24AppToken.updateMany({
+    where: { appId, revokedAt: null, expiresAt: { gt: past } },
+    data: { expiresAt: past },
+  })
+  invalidateAppTokenCache()
+  return result.count
 }
 
 /**
@@ -122,15 +161,21 @@ export async function refreshTokenPair(refreshToken: string): Promise<{ app: B24
     where: { refreshToken },
     include: { app: true },
   })
-  if (!existing || existing.revokedAt) return null
+  if (!existing || existing.revokedAt || existing.supersededAt) return null
   if (existing.refreshExpiresAt.getTime() <= Date.now()) return null
   if (existing.app.state === 'uninstalled') return null
 
   const now = Date.now()
+  const ttl = ttlOf(existing.app)
   const [, created] = await prisma.$transaction([
     // Прежняя пара гасится: документация прямо требует сохранить новый refresh_token
     // вместо старого, и мок, продолжающий принимать старый, скроет ошибку хранения.
-    prisma.b24AppToken.update({ where: { id: existing.id }, data: { revokedAt: new Date() } }),
+    // Именно замещение, а не отзыв: старый access_token обязан отвечать
+    // expired_token, иначе клиент не поймёт, что надо обновиться.
+    prisma.b24AppToken.update({
+      where: { id: existing.id },
+      data: { supersededAt: new Date(), expiresAt: new Date() },
+    }),
     prisma.b24AppToken.create({
       data: {
         appId: existing.appId,
@@ -138,8 +183,8 @@ export async function refreshTokenPair(refreshToken: string): Promise<{ app: B24
         refreshToken: generateOpaqueToken(),
         portalUserId: existing.portalUserId,
         scope: existing.scope,
-        expiresAt: new Date(now + B24_TOKEN_TTL_SECONDS * 1000),
-        refreshExpiresAt: new Date(now + B24_REFRESH_TTL_SECONDS * 1000),
+        expiresAt: new Date(now + ttl.access * 1000),
+        refreshExpiresAt: new Date(now + ttl.refresh * 1000),
       },
     }),
   ])
@@ -162,7 +207,9 @@ export function tokenResponse(app: B24App, token: B24AppToken, sandboxId: string
   return {
     access_token: token.accessToken,
     refresh_token: token.refreshToken,
-    expires_in: B24_TOKEN_TTL_SECONDS,
+    // Не константа: срок настраивается в карточке приложения, и клиент, который
+    // верит expires_in, обязан увидеть настоящее значение, а не боевые 3600.
+    expires_in: secondsLeft(token),
     expires: Math.floor(token.expiresAt.getTime() / 1000),
     scope: token.scope.join(','),
     domain: portalDomain(),
@@ -207,4 +254,9 @@ export async function consumeAuthCode(code: string): Promise<{ app: B24App; port
   if (claimed.count === 0) return null
 
   return { app: row.app, portalUserId: row.portalUserId }
+}
+
+/** Сколько секунд осталось токену. Не меньше единицы: ноль клиенты трактуют по-разному. */
+export function secondsLeft(token: Pick<B24AppToken, 'expiresAt'>, now = Date.now()): number {
+  return Math.max(1, Math.round((token.expiresAt.getTime() - now) / 1000))
 }

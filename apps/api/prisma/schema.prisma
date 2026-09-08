@@ -548,6 +548,13 @@ model B24App {
   /// что запрос действительно от портала.
   applicationToken String
   version     Int         @default(1)
+  /// Срок жизни access_token в секундах. Боевой портал всегда даёт час, и это
+  /// единственное осознанное расхождение: дождаться протухания при отладке иначе
+  /// нельзя, а проверять надо именно обработку expired_token.
+  tokenTtlSeconds Int     @default(3600)
+  /// Срок жизни refresh_token. Короткое значение позволяет проверить и вторую
+  /// ветку: когда обновлять уже нечем и приложение обязано пройти OAuth заново.
+  refreshTtlSeconds Int   @default(15552000)
   installedAt DateTime?
   /// Причина последней неудачной установки: пустой фрейм, отказ обработчика, таймаут.
   lastInstallNote String?
@@ -582,8 +589,13 @@ model B24AppToken {
   expiresAt    DateTime
   /// Срок refresh_token. Боевое значение — 180 суток.
   refreshExpiresAt DateTime
-  /// Заполняется при обновлении: старая пара перестаёт действовать, но остаётся видна.
+  /// Пара отозвана совсем: приложение удалено или установка сброшена.
+  /// Такой токен неотличим от мусорного — портал отвечает NO_AUTH_FOUND.
   revokedAt    DateTime?
+  /// Пара замещена новой при обновлении. Это НЕ то же самое, что отзыв:
+  /// клиент обязан получить expired_token и пойти обновляться, иначе
+  /// библиотека, которая повторяет вызов только на этой ошибке, сдастся.
+  supersededAt DateTime?
   createdAt    DateTime @default(now())
 
   app B24App @relation(fields: [appId], references: [id], onDelete: Cascade)

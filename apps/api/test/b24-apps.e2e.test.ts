@@ -545,6 +545,133 @@ describe('портал', () => {
   })
 })
 
+describe('срок жизни токена', () => {
+  it('сообщает приложению настроенный срок, а не боевой час', async () => {
+    const app = await createApp({ tokenTtlSeconds: 5 })
+    expect(app.tokenTtlSeconds).toBe(5)
+
+    const opened = await openFrame(String(app.id))
+    // Приложение решает по этому полю, когда пора обновляться: константа
+    // вместо настроенного срока сделала бы настройку бесполезной.
+    expect(opened.fields.AUTH_EXPIRES).toBe('5')
+
+    const refreshed = await fetch(
+      `${apiBase}/oauth/token/?grant_type=refresh_token&client_id=${app.clientId}` +
+        `&client_secret=${app.clientSecret}&refresh_token=${opened.fields.REFRESH_ID}`,
+    )
+    const pair = (await refreshed.json()) as Record<string, number>
+    expect(pair.expires_in).toBe(5)
+  })
+
+  it('отвергает срок за пределами допустимого', async () => {
+    const tooShort = await cabinet('/api/b24/apps', {
+      title: 'Слишком быстро', kind: 'server_ui', scope: ['crm'],
+      handlerUrl: `${receiverBase}/handler`, tokenTtlSeconds: 1,
+    })
+    expect(tooShort.status).toBe(400)
+
+    const tooLong = await cabinet('/api/b24/apps', {
+      title: 'Слишком долго', kind: 'server_ui', scope: ['crm'],
+      handlerUrl: `${receiverBase}/handler`, tokenTtlSeconds: 90_000,
+    })
+    expect(tooLong.status).toBe(400)
+  })
+
+  it('проходит цикл восстановления целиком', async () => {
+    const app = await createApp({ tokenTtlSeconds: 5 })
+    const opened = await openFrame(String(app.id))
+
+    // Пока токен жив, вызов проходит.
+    expect((await rest('app.info', opened.fields.AUTH_ID!)).status).toBe(200)
+
+    // Ждать даже пять секунд в тесте незачем: интересует не срок, а поведение
+    // после отказа. Кнопка «Состарить сейчас» делает ровно это.
+    const expired = await cabinet<{ expired: number }>(`/api/b24/apps/${app.id}/expire-tokens`, {})
+    expect(expired.status).toBe(200)
+    expect(expired.data.expired).toBeGreaterThan(0)
+    invalidateAppTokenCache()
+
+    // Именно expired_token, а не NO_AUTH_FOUND: после второго обновлять было бы нечем.
+    const denied = await rest('app.info', opened.fields.AUTH_ID!)
+    expect(denied.status).toBe(401)
+    expect(denied.body.error).toBe('expired_token')
+
+    // Приложение идёт за новой парой — refresh_token состаривание не затронуло.
+    const refreshed = await fetch(
+      `${apiBase}/oauth/token/?grant_type=refresh_token&client_id=${app.clientId}` +
+        `&client_secret=${app.clientSecret}&refresh_token=${opened.fields.REFRESH_ID}`,
+    )
+    expect(refreshed.status).toBe(200)
+    const pair = (await refreshed.json()) as Record<string, string>
+
+    // И повторяет исходный вызов.
+    const retried = await rest('app.info', pair.access_token!)
+    expect(retried.status).toBe(200)
+    expect((retried.body.result as Record<string, unknown>).CODE).toBeTruthy()
+  })
+
+  it('после протухания refresh_token требует пройти OAuth заново', async () => {
+    const app = await createApp({ tokenTtlSeconds: 5, refreshTtlSeconds: 60 })
+    const opened = await openFrame(String(app.id))
+
+    await prisma.b24AppToken.updateMany({
+      where: { refreshToken: opened.fields.REFRESH_ID },
+      data: { refreshExpiresAt: new Date(Date.now() - 1_000) },
+    })
+
+    const refused = await fetch(
+      `${apiBase}/oauth/token/?grant_type=refresh_token&client_id=${app.clientId}` +
+        `&client_secret=${app.clientSecret}&refresh_token=${opened.fields.REFRESH_ID}`,
+    )
+    // Обновлять больше нечем: документация велит проходить полный цикл заново.
+    expect(((await refused.json()) as Record<string, unknown>).error).toBe('invalid_grant')
+  })
+
+  it('замещённый обновлением токен отвечает expired_token, а не NO_AUTH_FOUND', async () => {
+    const app = await createApp({ tokenTtlSeconds: 60 })
+    const opened = await openFrame(String(app.id))
+    const oldToken = opened.fields.AUTH_ID!
+
+    // Серверная часть приложения обновилась, а во фрейме осталась копия старого
+    // токена — обычная ситуация, когда открыто и то и другое.
+    const refreshed = await fetch(
+      `${apiBase}/oauth/token/?grant_type=refresh_token&client_id=${app.clientId}` +
+        `&client_secret=${app.clientSecret}&refresh_token=${opened.fields.REFRESH_ID}`,
+    )
+    expect(refreshed.status).toBe(200)
+    invalidateAppTokenCache()
+
+    const denied = await rest('app.info', oldToken)
+    expect(denied.status).toBe(401)
+    // NO_AUTH_FOUND означал бы «такого токена не существует», и клиент,
+    // который повторяет вызов только на expired_token, просто сдался бы:
+    // ровно это и произошло с библиотекой BX24.js при проверке в браузере.
+    expect(denied.body.error).toBe('expired_token')
+  })
+
+  it('отозванный токен отвечает NO_AUTH_FOUND: обновлять уже нечего', async () => {
+    const app = await createApp()
+    const opened = await openFrame(String(app.id))
+
+    // Сброс установки отзывает пары совсем — приложение обязано увидеть разницу.
+    await cabinet(`/api/b24/apps/${app.id}/reinstall`, {})
+    invalidateAppTokenCache()
+
+    const denied = await rest('app.info', opened.fields.AUTH_ID!)
+    expect(denied.status).toBe(401)
+    expect(String(denied.body.error)).toBe('NO_AUTH_FOUND')
+  })
+
+  it('новая пара наследует срок приложения, а не боевой', async () => {
+    const app = await createApp({ tokenTtlSeconds: 30 })
+    const { data } = await cabinet<{ token: { expiresInSeconds: number } }>(
+      `/api/b24/apps/${app.id}/token`, {},
+    )
+    expect(data.token.expiresInSeconds).toBeLessThanOrEqual(30)
+    expect(data.token.expiresInSeconds).toBeGreaterThan(25)
+  })
+})
+
 describe('библиотека BX24.js', () => {
   it('отдаётся без авторизации и с разрешённым CORS', async () => {
     const response = await fetch(`${apiBase}/api/v1/`)
