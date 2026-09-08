@@ -56,7 +56,10 @@ export function registerLogRoutes(app: FastifyInstance): void {
         },
       }),
       prisma.requestLog.aggregate({ where, _avg: { durationMs: true }, _count: true }),
-      prisma.requestLog.count({ where: { ...where, statusCode: { gte: 400 } } }),
+      // AND, а не перезапись statusCode: при фильтре «5xx» разворот объекта
+      // подменял условие {gte: 500} на {gte: 400}, и доля ошибок считалась
+      // от чужого знаменателя — на экране стояло «292,9 %».
+      prisma.requestLog.count({ where: { AND: [where, { statusCode: { gte: 400 } }] } }),
       hourlyBuckets(ctx.sandbox.id, since),
     ])
 
