@@ -10,7 +10,7 @@ import { IconButton, SearchField, KbdChip } from '@apistend/ui'
  * Справа: глобальный поиск 280 px, две Icon Button, одно основное действие.
  */
 export function Topbar({
-  breadcrumb, title, action, search, onSearchChange,
+  breadcrumb, title, action, search, onSearchChange, showTools = true,
 }: {
   breadcrumb: string
   title: string
@@ -18,6 +18,11 @@ export function Topbar({
   action?: ReactNode
   search: string
   onSearchChange: (v: string) => void
+  /**
+   * Глобальный поиск и кнопки кабинета. Выключаются в каталоге для гостя:
+   * уведомлений у него нет, а поиск по логам ему нечего искать.
+   */
+  showTools?: boolean
 }) {
   return (
     <header className="flex h-[64px] shrink-0 items-center gap-[10px] border-b border-border bg-surface px-[24px]">
@@ -27,26 +32,30 @@ export function Topbar({
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-[10px]">
-        <div className="relative">
-          <SearchField
-            value={search}
-            onValueChange={onSearchChange}
-            placeholder="Поиск методов, сервисов, логов"
-            width={280}
-            aria-label="Глобальный поиск"
-          />
-          {search.length === 0 ? (
-            <span className="pointer-events-none absolute top-1/2 right-[10px] -translate-y-1/2">
-              <KbdChip>⌘K</KbdChip>
-            </span>
-          ) : null}
-        </div>
-        <IconButton aria-label="Документация">
-          <BookOpen size={16} aria-hidden />
-        </IconButton>
-        <IconButton aria-label="Уведомления">
-          <Bell size={16} aria-hidden />
-        </IconButton>
+        {showTools ? (
+          <>
+            <div className="relative">
+              <SearchField
+                value={search}
+                onValueChange={onSearchChange}
+                placeholder="Поиск методов, сервисов, логов"
+                width={280}
+                aria-label="Глобальный поиск"
+              />
+              {search.length === 0 ? (
+                <span className="pointer-events-none absolute top-1/2 right-[10px] -translate-y-1/2">
+                  <KbdChip>⌘K</KbdChip>
+                </span>
+              ) : null}
+            </div>
+            <IconButton aria-label="Документация">
+              <BookOpen size={16} aria-hidden />
+            </IconButton>
+            <IconButton aria-label="Уведомления">
+              <Bell size={16} aria-hidden />
+            </IconButton>
+          </>
+        ) : null}
         {action}
       </div>
     </header>
