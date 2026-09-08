@@ -8,6 +8,16 @@
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
 
+/**
+ * Тот же API, но для запросов с сервера (отрисовка лендинга).
+ *
+ * Обычно совпадает с API_URL. Расходятся они там, где браузер и Next видят
+ * сервис по разным адресам, — например в docker compose: снаружи это
+ * опубликованный localhost:8080, а изнутри контейнера «localhost» указывал бы
+ * на сам Next, и лендинг рисовался бы без единого числа из каталога.
+ */
+export const SERVER_API_URL = process.env.APISTEND_INTERNAL_API_URL ?? API_URL
+
 export class ApiError extends Error {
   readonly status: number
   readonly code: string

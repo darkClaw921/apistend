@@ -1,5 +1,5 @@
 import { EVENTS } from '@apistend/shared'
-import { API_URL } from '@/lib/api'
+import { SERVER_API_URL } from '@/lib/api'
 import type { CatalogListItem, CatalogResponse, ServiceSummary } from '@/lib/types'
 import { LandingNav } from '@/components/landing/LandingNav'
 import { Hero } from '@/components/landing/Hero'
@@ -40,7 +40,7 @@ interface ServicesResponse {
 
 async function loadServices(): Promise<ServicesResponse | null> {
   try {
-    const res = await fetch(`${API_URL}/api/services`, { cache: 'no-store' })
+    const res = await fetch(`${SERVER_API_URL}/api/services`, { cache: 'no-store' })
     if (!res.ok) return null
     return (await res.json()) as ServicesResponse
   } catch {
@@ -72,7 +72,7 @@ const FEATURED_IDS = [
 
 async function loadById(id: string): Promise<CatalogListItem | null> {
   try {
-    const res = await fetch(`${API_URL}/api/catalog/${encodeURIComponent(id)}`, { cache: 'no-store' })
+    const res = await fetch(`${SERVER_API_URL}/api/catalog/${encodeURIComponent(id)}`, { cache: 'no-store' })
     if (!res.ok) return null
     return (await res.json()) as CatalogListItem
   } catch {
@@ -84,7 +84,7 @@ async function loadFirstOfEach(services: ServiceSummary[]): Promise<CatalogListI
   const pages = await Promise.all(
     services.map(async (s) => {
       try {
-        const res = await fetch(`${API_URL}/api/catalog?service=${s.code}&limit=2`, { cache: 'no-store' })
+        const res = await fetch(`${SERVER_API_URL}/api/catalog?service=${s.code}&limit=2`, { cache: 'no-store' })
         if (!res.ok) return []
         return ((await res.json()) as CatalogResponse).methods
       } catch {
