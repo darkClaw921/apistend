@@ -14,11 +14,34 @@ import { Panel } from './Panel.tsx'
  * фокус оставался на странице под ним. Здесь это сделано один раз.
  */
 
+/**
+ * Стек открытых оверлеев.
+ *
+ * Каждый оверлей слушает Escape сам, и без общего стека одно нажатие закрывало
+ * бы все разом: открытые уведомления схлопывались вместе с палитрой поиска,
+ * поверх которой их и открыли. Escape обрабатывает только верхний.
+ */
+const stack: symbol[] = []
+
 /** Закрытие по Escape. Отдельным хуком, потому что нужно обоим оверлеям. */
 function useEscape(onClose: () => void): void {
+  const id = useRef<symbol>(undefined)
+  if (!id.current) id.current = Symbol('overlay')
+
+  useEffect(() => {
+    const self = id.current!
+    stack.push(self)
+    return () => {
+      const at = stack.indexOf(self)
+      if (at !== -1) stack.splice(at, 1)
+    }
+  }, [])
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape') return
+      if (stack[stack.length - 1] !== id.current) return
+      onClose()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
