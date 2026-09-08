@@ -1,13 +1,21 @@
 'use client'
 
-import type { ReactNode } from 'react'
-import { BookOpen, Bell } from 'lucide-react'
-import { IconButton, SearchField, KbdChip } from '@apistend/ui'
+import { useEffect, useState, type ReactNode } from 'react'
+import { useRouter } from 'next/navigation'
+import { BookOpen } from 'lucide-react'
+import { Dialog, IconButton, KbdChip, SearchField } from '@apistend/ui'
+import { GlobalSearch } from './GlobalSearch'
+import { NotificationsBell } from './NotificationsBell'
 
 /**
  * Шапка — высота 64, фон surface, нижняя граница.
  * Слева хлебные крошки 11 px и заголовок экрана 17/700, трекинг −0.2.
  * Справа: глобальный поиск 280 px, две Icon Button, одно основное действие.
+ *
+ * Поле поиска — не поле, а кнопка, открывающая палитру: набирать в узкой
+ * строке шапки список результатов некуда, а по ⌘K её ждут в любом месте.
+ * Пропсы search/onSearchChange сохранены — экраны передают в них своё
+ * состояние, и ломать их сигнатуру ради этого незачем.
  */
 export function Topbar({
   breadcrumb, title, action, search, onSearchChange, showTools = true,
@@ -20,10 +28,26 @@ export function Topbar({
   onSearchChange: (v: string) => void
   /**
    * Глобальный поиск и кнопки кабинета. Выключаются в каталоге для гостя:
-   * уведомлений у него нет, а поиск по логам ему нечего искать.
+   * уведомлений у него нет, а искать по логам ему нечего.
    */
   showTools?: boolean
 }) {
+  const router = useRouter()
+  const [searchOpen, setSearchOpen] = useState(false)
+
+  // ⌘K нарисован в макете с самого начала — теперь он что-то делает.
+  useEffect(() => {
+    if (!showTools) return
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setSearchOpen(true)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [showTools])
+
   return (
     <header className="flex h-[64px] shrink-0 items-center gap-[10px] border-b border-border bg-surface px-[24px]">
       <div className="flex min-w-0 flex-col">
@@ -38,26 +62,30 @@ export function Topbar({
               <SearchField
                 value={search}
                 onValueChange={onSearchChange}
+                onFocus={() => setSearchOpen(true)}
                 placeholder="Поиск методов, сервисов, логов"
                 width={280}
                 aria-label="Глобальный поиск"
+                readOnly
               />
-              {search.length === 0 ? (
-                <span className="pointer-events-none absolute top-1/2 right-[10px] -translate-y-1/2">
-                  <KbdChip>⌘K</KbdChip>
-                </span>
-              ) : null}
+              <span className="pointer-events-none absolute top-1/2 right-[10px] -translate-y-1/2">
+                <KbdChip>⌘K</KbdChip>
+              </span>
             </div>
-            <IconButton aria-label="Документация">
+            <IconButton aria-label="Документация" onClick={() => router.push('/catalog')}>
               <BookOpen size={16} aria-hidden />
             </IconButton>
-            <IconButton aria-label="Уведомления">
-              <Bell size={16} aria-hidden />
-            </IconButton>
+            <NotificationsBell />
           </>
         ) : null}
         {action}
       </div>
+
+      {searchOpen ? (
+        <Dialog title="Поиск по каталогу" onClose={() => setSearchOpen(false)} width={640}>
+          <GlobalSearch onClose={() => setSearchOpen(false)} />
+        </Dialog>
+      ) : null}
     </header>
   )
 }

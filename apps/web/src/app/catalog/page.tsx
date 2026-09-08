@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ChevronLeft, ChevronRight, Copy, FileDown, SlidersHorizontal, X } from 'lucide-react'
 import {
   ButtonPrimary, ButtonSecondary, CounterChip, DataTable, EmptyState, ErrorState,
@@ -34,10 +34,22 @@ const READINESS_FILTERS = [
   { value: 'planned', label: 'запланированные' },
 ] as const
 
+/**
+ * useSearchParams требует границы Suspense — тот же приём, что в консоли и портале.
+ */
 export default function CatalogPage() {
+  return (
+    <Suspense fallback={<div className="flex-1 bg-bg" />}>
+      <CatalogScreen />
+    </Suspense>
+  )
+}
+
+function CatalogScreen() {
   const router = useRouter()
   // null — страницу открыл гость: каталог доступен без входа.
   const shell = useOptionalShell()
+  const searchParams = useSearchParams()
 
   const [services, setServices] = useState<ServiceSummary[]>([])
   const [data, setData] = useState<CatalogResponse | null>(null)
@@ -50,7 +62,13 @@ export default function CatalogPage() {
   const [query, setQuery] = useState('')
   const [debounced, setDebounced] = useState('')
   const [page, setPage] = useState(0)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Метод в адресе: по такой ссылке карточка открывается сразу — это обещано
+  // в шапке файла и нужно поиску из шапки, который сюда и ведёт.
+  const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('method'))
+  // Метод из ссылки почти всегда лежит не на первой странице списка, а карточку
+  // справа грузит отдельный запрос по идентификатору — значит показать его можно
+  // и не находя в выдаче.
+  const linkedId = searchParams.get('method')
   const [globalSearch, setGlobalSearch] = useState('')
 
   // Дебаунс 200 мс — как задано в спецификации поведения поиска.
@@ -83,15 +101,18 @@ export default function CatalogPage() {
     try {
       const res = await api.get<CatalogResponse>(`/api/catalog?${params}`)
       setData(res)
-      setSelectedId((current) =>
-        current && res.methods.some((m) => m.id === current) ? current : (res.methods[0]?.id ?? null),
-      )
+      setSelectedId((current) => {
+        // Сравнение с адресом, а не одноразовый флаг: в режиме разработки React
+        // монтирует компонент дважды, и флаг сгорел бы на первом проходе.
+        if (current && (current === linkedId || res.methods.some((m) => m.id === current))) return current
+        return res.methods[0]?.id ?? null
+      })
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Не удалось загрузить каталог')
     } finally {
       setLoading(false)
     }
-  }, [service, httpMethod, readiness, debounced, page])
+  }, [service, httpMethod, readiness, debounced, page, linkedId])
 
   useEffect(() => { void load() }, [load])
 
@@ -264,7 +285,13 @@ export default function CatalogPage() {
                   rows={data?.methods ?? []}
                   rowKey={(m) => m.id}
                   rowTone={(m) => (m.id === selectedId ? 'selected' : 'default')}
-                  onRowClick={(m) => setSelectedId(m.id)}
+                  onRowClick={(m) => {
+                    setSelectedId(m.id)
+                    // Идентификатор уезжает в адрес — ссылкой на метод можно
+                    // поделиться. replaceState, а не router: перерисовывать
+                    // страницу ради выделения строки незачем.
+                    window.history.replaceState(null, '', `/catalog?method=${encodeURIComponent(m.id)}`)
+                  }}
                 />
               )}
             </div>

@@ -76,6 +76,25 @@ export function registerOverviewRoutes(app: FastifyInstance): void {
    * Поиск по всем демо-API сразу — ключевой блок «Обзора».
    * Ищет по названию метода, пути и описанию во всех сервисах одновременно.
    */
+  /**
+   * Уведомления для колокольчика в шапке.
+   *
+   * Отдельно от /api/overview: тот считает KPI за сутки несколькими агрегатами
+   * по журналу запросов, а шапка висит на каждом экране — гонять ради пяти
+   * строк весь обзор незачем.
+   */
+  app.get('/api/alerts', async (req, reply) => {
+    const ctx = await requireSandbox(req, reply)
+    if (!ctx) return
+
+    const alerts = await prisma.alert.findMany({
+      where: { sandboxId: ctx.sandbox.id },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    })
+    return { alerts }
+  })
+
   app.get<{ Querystring: { q?: string; limit?: string } }>('/api/search', async (req, reply) => {
     const q = (req.query.q ?? '').trim().toLowerCase()
     const limit = Math.min(Math.max(Number(req.query.limit ?? 8), 1), 30)

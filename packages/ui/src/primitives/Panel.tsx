@@ -1,4 +1,4 @@
-import type { HTMLAttributes, ReactNode } from 'react'
+import type { HTMLAttributes, Ref, ReactNode } from 'react'
 import { cn } from '../lib/cn.ts'
 
 /**
@@ -9,9 +9,12 @@ import { cn } from '../lib/cn.ts'
  * Никаких вложенных карточек в карточках: панель → строка → содержимое строки.
  */
 
-export function Panel({ className, children, ...rest }: HTMLAttributes<HTMLDivElement>) {
+export function Panel({
+  className, children, ref, ...rest
+}: HTMLAttributes<HTMLElement> & { ref?: Ref<HTMLElement> }) {
   return (
     <section
+      ref={ref}
       {...rest}
       className={cn(
         'flex min-h-0 flex-col overflow-hidden rounded-[10px] border border-border bg-surface',
