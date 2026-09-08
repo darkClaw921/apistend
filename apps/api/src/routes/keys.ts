@@ -64,6 +64,28 @@ export function registerKeyRoutes(app: FastifyInstance): void {
     })
   })
 
+  /**
+   * Сброс демо-данных песочницы.
+   *
+   * Базовый набор общий и только на чтение — сбрасывать в нём нечего. Личное
+   * пользователя лежит в overlay: созданное, изменённое и удалённое поверх базы.
+   * Поэтому сброс — это удаление overlay, ровно как задумано моделью данных,
+   * и он не трогает ни ключи, ни вебхуки, ни свои моки.
+   */
+  app.post('/api/sandbox/reset', async (req, reply) => {
+    const ctx = await requireSandbox(req, reply)
+    if (!ctx) return
+
+    const removed = await prisma.sandboxOverlay.deleteMany({ where: { sandboxId: ctx.sandbox.id } })
+    const sandbox = await prisma.sandbox.update({
+      where: { id: ctx.sandbox.id },
+      data: { lastResetAt: new Date() },
+      select: { lastResetAt: true },
+    })
+
+    return reply.send({ removed: removed.count, lastResetAt: sandbox.lastResetAt })
+  })
+
   app.post('/api/keys', async (req, reply) => {
     const ctx = await requireSandbox(req, reply)
     if (!ctx) return

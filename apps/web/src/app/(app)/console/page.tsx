@@ -1,7 +1,7 @@
 'use client'
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Copy, FileDown, Play, Plus, Trash2 } from 'lucide-react'
 import {
   ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, IconButton, MethodBadge,
@@ -9,6 +9,7 @@ import {
   formatBytes, formatMs, formatTime, meta,
 } from '@apistend/ui'
 import { api, ApiError } from '@/lib/api'
+import { CreateMockDialog } from '@/components/CreateMockDialog'
 import type { ConsoleResult, MethodDetail, ServiceSummary } from '@/lib/types'
 import { Topbar } from '@/components/Topbar'
 import { useShell } from '@/components/AppShell'
@@ -57,6 +58,7 @@ const DEFAULT_PATH: Record<string, { path: string; method: string }> = {
 
 function ConsoleScreen() {
   const shell = useShell()
+  const router = useRouter()
   const searchParams = useSearchParams()
   const presetMethodId = searchParams.get('method')
 
@@ -70,6 +72,7 @@ function ConsoleScreen() {
   const [leftTab, setLeftTab] = useState('params')
   const [rightTab, setRightTab] = useState('response')
   const [globalSearch, setGlobalSearch] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const [result, setResult] = useState<ConsoleResult | null>(null)
   const [pending, setPending] = useState(false)
@@ -226,7 +229,12 @@ function ConsoleScreen() {
             />
           </div>
 
-          <ButtonSecondary>Сохранить</ButtonSecondary>
+          {/* Макет оставляет развилку «сохранить как свой мок/запрос» открытой.
+              Выбран мок: под него есть и модель, и экран, и движок ответов,
+              а «сохранённых запросов» в продукте не существует вовсе. */}
+          <ButtonSecondary onClick={() => setSaving(true)} disabled={!result}>
+            Сохранить
+          </ButtonSecondary>
         </div>
 
         <div className="flex min-h-0 flex-1 gap-[20px]">
@@ -455,6 +463,20 @@ function ConsoleScreen() {
           </div>
         </div>
       </main>
+
+      {saving && result ? (
+        <CreateMockDialog
+          preset={{
+            httpMethod,
+            path: `/custom${path}`,
+            title: `${httpMethod} ${path}`,
+            responseStatusCode: result.status,
+            responseBody: JSON.stringify(result.body, null, 2),
+          }}
+          onClose={() => setSaving(false)}
+          onCreated={() => { setSaving(false); router.push('/mocks') }}
+        />
+      ) : null}
     </>
   )
 }

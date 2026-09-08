@@ -262,6 +262,23 @@ export interface RecentRequest {
   apiKeyName: string | null
 }
 
+/** Уведомление песочницы. Приходит и в обзоре, и отдельно — для шапки. */
+export interface AlertItem {
+  id: string
+  /** danger | warning | info — так же, как в design-handoff/03-data-model.md. */
+  severity: string
+  title: string
+  meta: string
+  icon: string
+  /** Куда ведёт уведомление: обычно фильтр журнала запросов. */
+  link: string | null
+}
+
+/** GET /api/alerts */
+export interface AlertsResponse {
+  alerts: AlertItem[]
+}
+
 export interface OverviewResponse {
   kpi: {
     requests24h: number
@@ -271,7 +288,7 @@ export interface OverviewResponse {
     activeKeys: number
   }
   recent: RecentRequest[]
-  alerts: Array<{ id: string; severity: string; title: string; meta: string; icon: string; link: string | null }>
+  alerts: AlertItem[]
   services: Array<{ code: string; title: string; methodsCount: number; snapshotDate: string | null; status: string }>
   totalMethods: number
 }

@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { ChevronLeft, ChevronRight, Copy, FileDown, SlidersHorizontal, X } from 'lucide-react'
 import {
   ButtonPrimary, ButtonSecondary, CounterChip, DataTable, EmptyState, ErrorState,
@@ -15,6 +15,7 @@ import type { CatalogListItem, CatalogResponse, ServiceSummary } from '@/lib/typ
 import { Topbar } from '@/components/Topbar'
 import { MethodDetailPanel } from '@/components/MethodDetailPanel'
 import { READINESS_LABEL, READINESS_TONE } from '@/lib/readiness'
+import { buildPostmanCollection, downloadJson } from '@/lib/postman'
 
 /**
  * Экран «Каталог API». design-handoff/screens/02-api-catalog.md.
@@ -34,10 +35,22 @@ const READINESS_FILTERS = [
   { value: 'planned', label: 'запланированные' },
 ] as const
 
+/**
+ * useSearchParams требует границы Suspense — тот же приём, что в консоли и портале.
+ */
 export default function CatalogPage() {
+  return (
+    <Suspense fallback={<div className="flex-1 bg-bg" />}>
+      <CatalogScreen />
+    </Suspense>
+  )
+}
+
+function CatalogScreen() {
   const router = useRouter()
   // null — страницу открыл гость: каталог доступен без входа.
   const shell = useOptionalShell()
+  const searchParams = useSearchParams()
 
   const [services, setServices] = useState<ServiceSummary[]>([])
   const [data, setData] = useState<CatalogResponse | null>(null)
@@ -50,8 +63,15 @@ export default function CatalogPage() {
   const [query, setQuery] = useState('')
   const [debounced, setDebounced] = useState('')
   const [page, setPage] = useState(0)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Метод в адресе: по такой ссылке карточка открывается сразу — это обещано
+  // в шапке файла и нужно поиску из шапки, который сюда и ведёт.
+  const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('method'))
+  // Метод из ссылки почти всегда лежит не на первой странице списка, а карточку
+  // справа грузит отдельный запрос по идентификатору — значит показать его можно
+  // и не находя в выдаче.
+  const linkedId = searchParams.get('method')
   const [globalSearch, setGlobalSearch] = useState('')
+  const [exporting, setExporting] = useState(false)
 
   // Дебаунс 200 мс — как задано в спецификации поведения поиска.
   useEffect(() => {
@@ -83,17 +103,64 @@ export default function CatalogPage() {
     try {
       const res = await api.get<CatalogResponse>(`/api/catalog?${params}`)
       setData(res)
-      setSelectedId((current) =>
-        current && res.methods.some((m) => m.id === current) ? current : (res.methods[0]?.id ?? null),
-      )
+      setSelectedId((current) => {
+        // Сравнение с адресом, а не одноразовый флаг: в режиме разработки React
+        // монтирует компонент дважды, и флаг сгорел бы на первом проходе.
+        if (current && (current === linkedId || res.methods.some((m) => m.id === current))) return current
+        return res.methods[0]?.id ?? null
+      })
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Не удалось загрузить каталог')
     } finally {
       setLoading(false)
     }
-  }, [service, httpMethod, readiness, debounced, page])
+  }, [service, httpMethod, readiness, debounced, page, linkedId])
 
   useEffect(() => { void load() }, [load])
+
+  /**
+   * Экспорт коллекции Postman.
+   *
+   * Выгружается вся текущая выборка, а не видимая страница: фильтры на экране
+   * и есть то, что пользователь выбрал. Каталог отдаёт максимум 200 методов
+   * за раз, поэтому дочитываем страницами — на всём каталоге это около десятка
+   * запросов, и они дешёвые.
+   */
+  async function exportCollection() {
+    setExporting(true)
+    try {
+      const collected: CatalogListItem[] = []
+      const PAGE = 200
+      for (let offset = 0; ; offset += PAGE) {
+        const params = new URLSearchParams({
+          limit: String(PAGE), offset: String(offset), readiness, method: httpMethod,
+        })
+        if (service !== 'all') params.set('service', service)
+        if (debounced.trim().length >= 2) params.set('q', debounced.trim())
+
+        const res = await api.get<CatalogResponse>(`/api/catalog?${params}`)
+        collected.push(...res.methods)
+        if (collected.length >= res.total || res.methods.length === 0) break
+      }
+
+      const note = [
+        service === 'all' ? 'Все сервисы' : (services.find((s) => s.code === service)?.title ?? service),
+        httpMethod === 'any' ? null : `метод ${httpMethod}`,
+        debounced.trim().length >= 2 ? `поиск «${debounced.trim()}»` : null,
+        `${collected.length} методов`,
+      ].filter(Boolean).join(' · ')
+
+      const stamp = new Date().toISOString().slice(0, 10)
+      downloadJson(
+        buildPostmanCollection(collected, services, note),
+        `apistend-catalog-${stamp}.postman_collection.json`,
+      )
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Не удалось собрать коллекцию')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const totalCatalog = useMemo(() => services.reduce((n, s) => n + s.methodsCount, 0), [services])
   const snapshot = services.find((s) => s.snapshotDate)?.snapshotDate ?? null
@@ -235,8 +302,13 @@ export default function CatalogPage() {
                     Группировка: по сервису
                     <SlidersHorizontal size={13} aria-hidden />
                   </span>
-                  <ButtonSecondary tone="quiet" icon={<FileDown size={13} aria-hidden />}>
-                    Экспорт коллекции
+                  <ButtonSecondary
+                    tone="quiet"
+                    icon={<FileDown size={13} aria-hidden />}
+                    onClick={() => void exportCollection()}
+                    disabled={exporting}
+                  >
+                    {exporting ? 'Собираю…' : 'Экспорт коллекции'}
                   </ButtonSecondary>
                 </>
               }
@@ -264,7 +336,13 @@ export default function CatalogPage() {
                   rows={data?.methods ?? []}
                   rowKey={(m) => m.id}
                   rowTone={(m) => (m.id === selectedId ? 'selected' : 'default')}
-                  onRowClick={(m) => setSelectedId(m.id)}
+                  onRowClick={(m) => {
+                    setSelectedId(m.id)
+                    // Идентификатор уезжает в адрес — ссылкой на метод можно
+                    // поделиться. replaceState, а не router: перерисовывать
+                    // страницу ради выделения строки незачем.
+                    window.history.replaceState(null, '', `/catalog?method=${encodeURIComponent(m.id)}`)
+                  }}
                 />
               )}
             </div>

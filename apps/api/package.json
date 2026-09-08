@@ -13,6 +13,7 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
+    "@apistend/catalog-ingest": "workspace:*",
     "@apistend/mock-engine": "workspace:*",
     "@apistend/shared": "workspace:*",
     "@fastify/cookie": "^11.1.2",
@@ -25,6 +26,7 @@
     "jose": "^6.2.12",
     "pg": "^8.23.0",
     "ws": "^8.21.3",
+    "yaml": "^2.8.1",
     "zod": "^4.5.4"
   },
   "devDependencies": {

@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { PlugZap } from 'lucide-react'
+import { LandingNavMobile } from './LandingNavMobile'
 
 /**
  * Nav лендинга — тёмная, высота 77. design-handoff/screens/08-landing.md, п. 1.
@@ -42,7 +43,10 @@ export function LandingNav() {
         ))}
       </ul>
 
-      <div className="ml-auto flex items-center gap-[16px]">
+      {/* До lg разделы уезжают под кнопку: иначе на телефоне попасть в них нечем. */}
+      <LandingNavMobile links={NAV_LINKS} />
+
+      <div className="ml-auto hidden items-center gap-[16px] lg:flex">
         <Link href="/login" className={LINK_CLASS}>Войти</Link>
         <Link
           href="/register"

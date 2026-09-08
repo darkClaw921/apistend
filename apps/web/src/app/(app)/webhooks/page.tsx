@@ -14,6 +14,7 @@ import { api, ApiError } from '@/lib/api'
 import type { DeliveryItem, WebhookItem, WebhooksResponse } from '@/lib/types'
 import { Topbar } from '@/components/Topbar'
 import { LocalDeliveryBar } from '@/components/LocalDeliveryBar'
+import { CreateWebhookDialog } from '@/components/CreateWebhookDialog'
 import { ScenarioForm } from '@/components/ScenarioForm'
 
 /**
@@ -51,6 +52,7 @@ export default function WebhooksPage() {
   const [onlyErrors, setOnlyErrors] = useState(false)
   const [search, setSearch] = useState('')
   const [globalSearch, setGlobalSearch] = useState('')
+  const [creating, setCreating] = useState(false)
   const [selected, setSelected] = useState<DeliveryItem | null>(null)
   const [testing, setTesting] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -228,7 +230,7 @@ export default function WebhooksPage() {
         title="Вебхуки и сценарии"
         search={globalSearch}
         onSearchChange={setGlobalSearch}
-        action={<ButtonPrimary>Новый вебхук</ButtonPrimary>}
+        action={<ButtonPrimary onClick={() => setCreating(true)}>Новый вебхук</ButtonPrimary>}
       />
 
       <main className="flex min-h-0 flex-1 flex-col gap-[20px] overflow-y-auto scrollbar-thin p-[24px]">
@@ -480,6 +482,14 @@ export default function WebhooksPage() {
           </div>
         </div>
       </main>
+
+      {creating ? (
+        <CreateWebhookDialog
+          forwardUrl={data?.localAgent.forwardUrl ?? null}
+          onClose={() => setCreating(false)}
+          onCreated={() => { setCreating(false); void load(true) }}
+        />
+      ) : null}
     </>
   )
 }
