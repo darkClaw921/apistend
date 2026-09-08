@@ -31,6 +31,14 @@ export function useShell(): ShellState {
   return ctx
 }
 
+/**
+ * То же, но без исключения: null означает гостя.
+ * Нужен каталогу — единственному экрану, открытому без входа.
+ */
+export function useOptionalShell(): ShellState | null {
+  return useContext(ShellContext)
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter()
   const [me, setMe] = useState<Me | null>(null)

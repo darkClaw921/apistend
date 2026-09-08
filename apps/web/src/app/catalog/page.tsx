@@ -10,6 +10,7 @@ import {
 } from '@apistend/ui'
 import type { Column } from '@apistend/ui'
 import { api, ApiError } from '@/lib/api'
+import { useOptionalShell } from '@/components/AppShell'
 import type { CatalogListItem, CatalogResponse, ServiceSummary } from '@/lib/types'
 import { Topbar } from '@/components/Topbar'
 import { MethodDetailPanel } from '@/components/MethodDetailPanel'
@@ -35,6 +36,8 @@ const READINESS_FILTERS = [
 
 export default function CatalogPage() {
   const router = useRouter()
+  // null — страницу открыл гость: каталог доступен без входа.
+  const shell = useOptionalShell()
 
   const [services, setServices] = useState<ServiceSummary[]>([])
   const [data, setData] = useState<CatalogResponse | null>(null)
@@ -152,11 +155,20 @@ export default function CatalogPage() {
   return (
     <>
       <Topbar
-        breadcrumb="Проект «Интеграция 1С» / Каталог API"
+        // Гость проекта не имеет, и звать его «Новой песочницей» рано:
+        // сначала регистрация.
+        breadcrumb={shell ? 'Проект «Интеграция 1С» / Каталог API' : 'Демо-API Bitrix24, Ozon и Wildberries'}
         title="Каталог API"
         search={globalSearch}
         onSearchChange={setGlobalSearch}
-        action={<ButtonPrimary onClick={() => router.push('/keys')}>Новая песочница</ButtonPrimary>}
+        showTools={shell !== null}
+        action={
+          shell ? (
+            <ButtonPrimary onClick={() => router.push('/keys')}>Новая песочница</ButtonPrimary>
+          ) : (
+            <ButtonPrimary onClick={() => router.push('/register')}>Создать песочницу</ButtonPrimary>
+          )
+        }
       />
 
       <main className="flex min-h-0 flex-1 flex-col gap-[20px] p-[24px]">
