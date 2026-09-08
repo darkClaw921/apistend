@@ -3,7 +3,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import {
   B24_APP_KINDS, B24_APP_STATUS_LOCAL, B24_LIFECYCLE_EVENTS, B24_OAUTH_ERRORS,
-  B24_PLACEMENTS, B24_SCOPES, B24_TOKEN_TTL_SECONDS, findB24Placement, isB24Scope,
+  B24_PLACEMENTS, B24_REFRESH_TTL_MAX_SECONDS, B24_REFRESH_TTL_MIN_SECONDS, B24_SCOPES,
+  B24_TOKEN_TTL_MAX_SECONDS, B24_TOKEN_TTL_MIN_SECONDS, findB24Placement, isB24Scope,
 } from '@apistend/shared'
 import { prisma } from '../db.ts'
 import { requireSandbox } from '../lib/guard.ts'
@@ -15,8 +16,8 @@ import {
   PORTAL_USERS, serverEndpoint,
 } from '../b24/portal.ts'
 import {
-  consumeAuthCode, issueAuthCode, issueTokenPair, refreshTokenPair, revokeAppTokens,
-  tokenResponse,
+  consumeAuthCode, expireAppTokens, issueAuthCode, issueTokenPair, refreshTokenPair,
+  revokeAppTokens, secondsLeft, tokenResponse,
 } from '../b24/tokens.ts'
 
 /**
@@ -37,6 +38,16 @@ const createApp = z.object({
   handlerUrl: z.string().url('Путь обработчика должен быть адресом').nullish(),
   installUrl: z.string().url('Путь установки должен быть адресом').nullish(),
   menuTitle: z.string().max(120).nullish(),
+  // Боевой портал срока не настраивает — он всегда час. Настройка нужна, чтобы
+  // дождаться expired_token и увидеть, как приложение восстанавливает доступ.
+  tokenTtlSeconds: z.number().int()
+    .min(B24_TOKEN_TTL_MIN_SECONDS, `Срок токена — не меньше ${B24_TOKEN_TTL_MIN_SECONDS} секунд`)
+    .max(B24_TOKEN_TTL_MAX_SECONDS, 'Срок токена — не больше суток')
+    .optional(),
+  refreshTtlSeconds: z.number().int()
+    .min(B24_REFRESH_TTL_MIN_SECONDS, `Срок refresh_token — не меньше ${B24_REFRESH_TTL_MIN_SECONDS} секунд`)
+    .max(B24_REFRESH_TTL_MAX_SECONDS, 'Срок refresh_token — не больше 180 суток')
+    .optional(),
 })
 
 const updateApp = createApp.partial()
@@ -103,6 +114,8 @@ export function registerB24AppRoutes(app: FastifyInstance): void {
         handlerUrl: parsed.data.handlerUrl ?? null,
         installUrl: parsed.data.installUrl ?? null,
         menuTitle: parsed.data.menuTitle ?? null,
+        tokenTtlSeconds: parsed.data.tokenTtlSeconds ?? undefined,
+        refreshTtlSeconds: parsed.data.refreshTtlSeconds ?? undefined,
         clientId: generateClientId(),
         clientSecret: generateClientSecret(),
         applicationToken: generateHexToken(),
@@ -156,6 +169,8 @@ export function registerB24AppRoutes(app: FastifyInstance): void {
         handlerUrl: parsed.data.handlerUrl === undefined ? undefined : parsed.data.handlerUrl,
         installUrl: parsed.data.installUrl === undefined ? undefined : parsed.data.installUrl,
         menuTitle: parsed.data.menuTitle === undefined ? undefined : parsed.data.menuTitle,
+        tokenTtlSeconds: parsed.data.tokenTtlSeconds,
+        refreshTtlSeconds: parsed.data.refreshTtlSeconds,
         // Смена прав или адресов — это новая версия приложения. Боевой портал
         // тоже поднимает VERSION, и приложение по нему понимает, что настройки
         // изменились и стоит перечитать своё окружение.
@@ -255,7 +270,9 @@ export function registerB24AppRoutes(app: FastifyInstance): void {
 
     const fields: Record<string, string> = {
       AUTH_ID: token.accessToken,
-      AUTH_EXPIRES: String(B24_TOKEN_TTL_SECONDS),
+      // Приложение верит этому полю и по нему решает, когда пора обновляться:
+      // константа вместо настроенного срока сделала бы настройку бесполезной.
+      AUTH_EXPIRES: String(secondsLeft(token)),
       REFRESH_ID: token.refreshToken,
       SERVER_ENDPOINT: serverEndpoint(),
       APPLICATION_TOKEN: found.applicationToken,
@@ -372,6 +389,26 @@ export function registerB24AppRoutes(app: FastifyInstance): void {
     }
 
     return reply.send({ token: toToken(token), auth: tokenResponse(found, token, ctx.sandbox.id) })
+  })
+
+  /**
+   * Немедленное протухание всех действующих пар.
+   *
+   * Кнопка для проверки восстановления: даже десять секунд ждать при отладке
+   * утомительно, а интересует не срок, а поведение приложения после отказа.
+   */
+  app.post<{ Params: { id: string } }>('/api/b24/apps/:id/expire-tokens', async (req, reply) => {
+    const ctx = await requireSandbox(req, reply)
+    if (!ctx) return
+    const found = await prisma.b24App.findFirst({ where: { id: req.params.id, sandboxId: ctx.sandbox.id } })
+    if (!found) return reply.code(404).send({ error: 'NOT_FOUND', message: 'Приложение не найдено' })
+
+    const expired = await expireAppTokens(found.id)
+    const refreshed = await prisma.b24App.findUniqueOrThrow({
+      where: { id: found.id },
+      include: appDetail,
+    })
+    return reply.send({ expired, app: toDetail(refreshed) })
   })
 
   /** Обстановка демонстрационного портала: меню, сделки, зарегистрированные виджеты. */
@@ -577,6 +614,8 @@ function toItem(row: AppRow): Record<string, unknown> {
     menuTitle: row.menuTitle,
     applicationToken: row.applicationToken,
     version: row.version,
+    tokenTtlSeconds: row.tokenTtlSeconds,
+    refreshTtlSeconds: row.refreshTtlSeconds,
     installed: row.state === 'installed',
     installedAt: (row.installedAt as Date | null)?.toISOString() ?? null,
     lastInstallNote: row.lastInstallNote,
@@ -635,6 +674,9 @@ function toToken(row: AppRow): Record<string, unknown> {
     scope: row.scope,
     expiresAt: expiresAt.toISOString(),
     expired: expiresAt.getTime() <= Date.now(),
+    // Отрицательное значит «истёк столько-то секунд назад»: интерфейсу нужен
+    // и этот случай, иначе обратный отсчёт замирает на нуле.
+    expiresInSeconds: Math.round((expiresAt.getTime() - Date.now()) / 1000),
     revokedAt: (row.revokedAt as Date | null)?.toISOString() ?? null,
     createdAt: (row.createdAt as Date).toISOString(),
   }

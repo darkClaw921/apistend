@@ -5,18 +5,18 @@ import { useRouter } from 'next/navigation'
 import { Check, Copy, LayoutGrid, Radio, TriangleAlert } from 'lucide-react'
 import {
   ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, DataTable, EmptyState, ErrorState,
-  Panel, PanelFooter, PanelHeader, SkeletonRows, StatusChip, formatDate, formatDayTime,
+  NBSP, Panel, PanelFooter, PanelHeader, SkeletonRows, StatusChip, formatDate, formatDayTime,
   formatInt, formatRelative,
 } from '@apistend/ui'
 import type { ChipTone, Column } from '@apistend/ui'
-import { findB24Placement } from '@apistend/shared'
+import { B24_TOKEN_TTL_SECONDS, findB24Placement } from '@apistend/shared'
 import { api, ApiError } from '@/lib/api'
 import type {
-  B24AppResponse, B24AppState, B24EventHandlerItem, B24PlacementItem,
+  B24AppResponse, B24AppState, B24EventHandlerItem, B24ExpireResponse, B24PlacementItem,
   B24SessionItem, B24TokenItem,
 } from '@/lib/b24'
 import { Topbar } from '@/components/Topbar'
-import { B24AppForm, B24_APP_KIND_LABEL } from '@/components/B24AppForm'
+import { B24AppForm, B24_APP_KIND_LABEL, formatTokenTtl } from '@/components/B24AppForm'
 
 /**
  * Карточка локального приложения: всё, что боевой портал показывает разработчику
@@ -54,6 +54,23 @@ function authTypeLabel(authType: number): string {
   return authType === 0 ? 'сотрудник, вызвавший событие' : `сотрудник № ${authType}`
 }
 
+/** Единица покрупнее по мере роста остатка: в колонке таблицы места на «124 секунды» нет. */
+function durationShort(seconds: number): string {
+  if (seconds < 60) return `${seconds}${NBSP}с`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}${NBSP}мин`
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}${NBSP}ч`
+  return `${formatInt(Math.floor(seconds / 86_400))}${NBSP}сут`
+}
+
+/**
+ * Отсчёт до протухания. На коротком сроке смотрят именно на него, а не на время
+ * в колонке: «через 7 с» говорит, успеет ли следующий вызов REST, а «12:41» — нет.
+ */
+function countdownLabel(seconds: number): string {
+  if (seconds > 0) return `через ${durationShort(seconds)}`
+  return seconds > -5 ? 'истёк только что' : `истёк ${durationShort(-seconds)} назад`
+}
+
 export default function B24AppPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
@@ -65,11 +82,16 @@ export default function B24AppPage({ params }: { params: Promise<{ id: string }>
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
+  const [expireNote, setExpireNote] = useState<string | null>(null)
+  /** Момент последнего ответа: от него отсчитывается остаток, присланный сервером. */
+  const [syncedAt, setSyncedAt] = useState(() => Date.now())
+  const [now, setNow] = useState(() => Date.now())
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       setData(await api.get<B24AppResponse>(`/api/b24/apps/${id}`))
+      setSyncedAt(Date.now())
       setError(null)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Не удалось загрузить приложение')
@@ -80,16 +102,62 @@ export default function B24AppPage({ params }: { params: Promise<{ id: string }>
 
   useEffect(() => { void load() }, [load])
 
+  // Секунда отсчёта идёт на клиенте: дёргать сервер ради каждой цифры незачем.
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1_000)
+    return () => clearInterval(t)
+  }, [])
+
   const app = data?.app ?? null
+
+  /** Сколько осталось паре сейчас: серверный остаток минус время, прошедшее с ответа. */
+  const elapsed = (now - syncedAt) / 1000
+  const remaining = useCallback(
+    (t: B24TokenItem) => Math.round(t.expiresInSeconds - elapsed),
+    [elapsed],
+  )
+
+  /**
+   * Токены протухают сами, и увидеть это надо без перезагрузки страницы. Пока
+   * какой-то паре осталось меньше минуты, опрос учащается: на коротком сроке
+   * разница между «действует» и «истёк» решается парой секунд.
+   */
+  const expiringSoon = (app?.tokens ?? []).some(
+    (t) => t.revokedAt === null && !t.expired && remaining(t) < 60,
+  )
+  useEffect(() => {
+    const t = setInterval(() => void load(true), expiringSoon ? 2_000 : 5_000)
+    return () => clearInterval(t)
+  }, [load, expiringSoon])
 
   async function act(action: string, path: string) {
     setBusy(action)
+    setExpireNote(null)
     try {
       await api.post(path)
       setError(null)
       await load()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Не удалось выполнить действие')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  /**
+   * Состарить все действующие пары. Ради этого настройка срока и делалась: когда
+   * проверяешь обработчик 401, ждать даже десяти секунд незачем.
+   */
+  async function expireTokens() {
+    setBusy('expire')
+    try {
+      const res = await api.post<B24ExpireResponse>(`/api/b24/apps/${id}/expire-tokens`)
+      setData((cur) => (cur ? { ...cur, app: res.app } : cur))
+      setSyncedAt(Date.now())
+      setExpireNote(res.expired === 0 ? 'Действующих пар не было' : `Состарено пар: ${formatInt(res.expired)}`)
+      setError(null)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Не удалось состарить токены')
     } finally {
       setBusy(null)
     }
@@ -171,15 +239,37 @@ export default function B24AppPage({ params }: { params: Promise<{ id: string }>
         render: (t) => <CopyValue value={t.refreshToken} label="refresh_token" />,
       },
       {
-        key: 'expires', header: 'Действует до', width: 148, mono: true,
-        render: (t) => <span className="text-text-secondary">{formatDayTime(t.expiresAt)}</span>,
+        key: 'expires', header: 'Действует до', width: 148,
+        render: (t) => {
+          const left = remaining(t)
+          return (
+            <span className="flex flex-col">
+              <span className="font-mono text-[12px] text-text-secondary tabular">{formatDayTime(t.expiresAt)}</span>
+              <span
+                className={`text-[11px] tabular ${
+                  t.revokedAt !== null
+                    ? 'text-text-tertiary'
+                    : t.expired || left <= 0
+                      ? 'text-danger'
+                      : left < 60
+                        ? 'text-warning'
+                        : 'text-text-tertiary'
+                }`}
+              >
+                {t.revokedAt !== null ? 'отозван' : countdownLabel(t.expired ? Math.min(left, 0) : left)}
+              </span>
+            </span>
+          )
+        },
       },
       {
         key: 'state', header: 'Состояние', width: 118,
         render: (t) => (
           t.revokedAt !== null
             ? <StatusChip tone="neutral">Отозван</StatusChip>
-            : t.expired
+            // Истечение считаем и по клиентскому отсчёту: иначе чип отстаёт от
+            // соседней колонки на целый интервал опроса.
+            : t.expired || remaining(t) <= 0
               ? <StatusChip tone="danger">Истёк</StatusChip>
               : <StatusChip tone="success">Действует</StatusChip>
         ),
@@ -189,7 +279,7 @@ export default function B24AppPage({ params }: { params: Promise<{ id: string }>
         render: (t) => <span className="text-text-secondary">№ {t.portalUserId}</span>,
       },
     ],
-    [],
+    [remaining],
   )
 
   const sessionColumns: Array<Column<B24SessionItem>> = useMemo(
@@ -332,14 +422,27 @@ export default function B24AppPage({ params }: { params: Promise<{ id: string }>
                   <PanelHeader
                     title="Токены"
                     count={<CounterChip>{app.tokens.length}</CounterChip>}
+                    subtitle={`access_token — ${formatTokenTtl(app.tokenTtlSeconds)}`}
                     right={
-                      <ButtonSecondary
-                        tone="quiet"
-                        disabled={busy !== null}
-                        onClick={() => void act('token', `/api/b24/apps/${id}/token`)}
-                      >
-                        {busy === 'token' ? 'Выпускаем…' : 'Выпустить новую пару'}
-                      </ButtonSecondary>
+                      <>
+                        {expireNote ? (
+                          <span className="text-[11px] text-text-tertiary">{expireNote}</span>
+                        ) : null}
+                        <ButtonSecondary
+                          tone="quiet"
+                          disabled={busy !== null || app.tokens.length === 0}
+                          onClick={() => void expireTokens()}
+                        >
+                          {busy === 'expire' ? 'Состариваем…' : 'Состарить сейчас'}
+                        </ButtonSecondary>
+                        <ButtonSecondary
+                          tone="quiet"
+                          disabled={busy !== null}
+                          onClick={() => void act('token', `/api/b24/apps/${id}/token`)}
+                        >
+                          {busy === 'token' ? 'Выпускаем…' : 'Выпустить новую пару'}
+                        </ButtonSecondary>
+                      </>
                     }
                   />
                   {app.tokens.length > 0 ? (
@@ -350,6 +453,21 @@ export default function B24AppPage({ params }: { params: Promise<{ id: string }>
                       description="Пара выдаётся, когда портал открывает приложение во фрейме или когда приложение меняет refresh_token на новую пару."
                     />
                   )}
+                  <PanelFooter
+                    left={
+                      <>
+                        <p className="leading-[1.5] text-text-secondary">
+                          Дальше приложение обязано справиться само: получить от REST 401 expired_token,
+                          обменять refresh_token на новую пару, сохранить её вместо старой и повторить тот же вызов.
+                        </p>
+                        <p className="mt-[4px] leading-[1.5]">
+                          Обновлять пару по расписанию, не дожидаясь ошибки, не надо: боевой портал считает
+                          это злоупотреблением и блокирует приложение. «Состарить сейчас» делает все действующие
+                          пары недействительными немедленно — следующий вызов REST ответит 401 expired_token.
+                        </p>
+                      </>
+                    }
+                  />
                 </Panel>
 
                 <Panel className="shrink-0">
@@ -410,6 +528,25 @@ export default function B24AppPage({ params }: { params: Promise<{ id: string }>
                         <span className="block truncate text-[12px] text-text-primary">{app.menuTitle ?? '—'}</span>
                       </ParamRow>
                     ) : null}
+
+                    <ParamRow label="Срок жизни токенов">
+                      <span className="flex flex-wrap items-center gap-[8px]">
+                        <span className="text-[12px] text-text-primary">
+                          access_token — {formatTokenTtl(app.tokenTtlSeconds)}
+                        </span>
+                        {app.tokenTtlSeconds === B24_TOKEN_TTL_SECONDS ? null : (
+                          <StatusChip tone="warning">
+                            {app.tokenTtlSeconds < B24_TOKEN_TTL_SECONDS ? 'короче боевого' : 'дольше боевого'}
+                          </StatusChip>
+                        )}
+                      </span>
+                      <p className="mt-[4px] text-[11px] leading-[1.4] text-text-tertiary">
+                        refresh_token — {formatTokenTtl(app.refreshTtlSeconds)}.{' '}
+                        {app.tokenTtlSeconds === B24_TOKEN_TTL_SECONDS
+                          ? 'Как в боевом Bitrix24: там срок всегда час и настройки не имеет.'
+                          : 'В бою access_token живёт час и настройки не имеет — перед переносом верните 3600.'}
+                      </p>
+                    </ParamRow>
 
                     <ParamRow label="Состояние">
                       <span className="flex flex-wrap items-center gap-[8px]">

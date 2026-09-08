@@ -38,6 +38,16 @@ export interface B24AppItem {
   menuTitle: string | null
   applicationToken: string
   version: number
+  /**
+   * Срок жизни access_token в секундах.
+   *
+   * Боевой портал всегда даёт 3600 и настройки не имеет. Здесь она есть ровно
+   * для одной проверки: дождаться expired_token и увидеть, как приложение
+   * восстанавливает доступ само.
+   */
+  tokenTtlSeconds: number
+  /** Срок жизни refresh_token в секундах. */
+  refreshTtlSeconds: number
   /** app.info → INSTALLED. До installFinish события не идут и виджеты не показываются. */
   installed: boolean
   installedAt: string | null
@@ -78,8 +88,17 @@ export interface B24TokenItem {
   scope: string[]
   expiresAt: string
   expired: boolean
+  /** Сколько секунд осталось. Отрицательное — токен уже протух. */
+  expiresInSeconds: number
   revokedAt: string | null
   createdAt: string
+}
+
+/** Ответ POST /api/b24/apps/:id/expire-tokens */
+export interface B24ExpireResponse {
+  /** Сколько действующих пар состарено. */
+  expired: number
+  app: B24AppDetail
 }
 
 export interface B24SessionItem {

@@ -2,7 +2,12 @@
 
 import { useMemo, useState } from 'react'
 import { X } from 'lucide-react'
-import { ButtonPrimary, ButtonSecondary, Panel, SearchField, SegmentControl } from '@apistend/ui'
+import { ButtonPrimary, ButtonSecondary, Panel, SearchField, SegmentControl, formatInt } from '@apistend/ui'
+import {
+  B24_REFRESH_TTL_MAX_SECONDS, B24_REFRESH_TTL_MIN_SECONDS, B24_REFRESH_TTL_SECONDS,
+  B24_TOKEN_TTL_MAX_SECONDS, B24_TOKEN_TTL_MIN_SECONDS, B24_TOKEN_TTL_PRESETS,
+  B24_TOKEN_TTL_SECONDS, clampRefreshTtl, clampTokenTtl,
+} from '@apistend/shared'
 import { api, ApiError } from '@/lib/api'
 import type { B24AppDetail, B24AppKind, B24ScopeOption } from '@/lib/b24'
 import { Field, FormError } from './Field'
@@ -31,6 +36,52 @@ export const B24_APP_KIND_SHORT: Readonly<Record<B24AppKind, string>> = {
 
 /** Права, отмеченные в новой карточке: без них не работают ни CRM, ни виджеты. */
 const DEFAULT_SCOPE = ['crm', 'placement']
+
+/**
+ * Короткие сроки refresh_token для быстрого выбора.
+ *
+ * Боевые 180 суток проверить нечем: до них не доживает ни одна отладка. А ветка
+ * «обновлять уже нечем» — refresh_token тоже истёк, приложение обязано отправить
+ * пользователя проходить установку заново — пишется реже всего и ломается чаще всего.
+ */
+const REFRESH_TTL_PRESETS: ReadonlyArray<{ seconds: number; label: string }> = [
+  { seconds: 60, label: 'минута' },
+  { seconds: 300, label: '5 минут' },
+  { seconds: 3600, label: 'час' },
+  { seconds: 86_400, label: 'сутки' },
+  { seconds: B24_REFRESH_TTL_SECONDS, label: '180 суток' },
+]
+
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10
+  const mod100 = n % 100
+  if (mod10 === 1 && mod100 !== 11) return one
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few
+  return many
+}
+
+/**
+ * Срок словами: «10 секунд», «час», «180 суток».
+ *
+ * Живёт рядом с формой, а не в @apistend/ui: подписи должны совпадать
+ * с B24_TOKEN_TTL_PRESETS дословно, иначе выбранное в форме и показанное
+ * в карточке приложения читаются как разные значения. Карточка берёт его отсюда.
+ */
+export function formatTokenTtl(seconds: number): string {
+  if (seconds >= 86_400 && seconds % 86_400 === 0) {
+    const days = seconds / 86_400
+    return days === 1 ? 'сутки' : `${formatInt(days)} ${plural(days, 'сутки', 'суток', 'суток')}`
+  }
+  if (seconds >= 3600 && seconds % 3600 === 0) {
+    const hours = seconds / 3600
+    return hours === 1 ? 'час' : `${formatInt(hours)} ${plural(hours, 'час', 'часа', 'часов')}`
+  }
+  if (seconds >= 60 && seconds % 60 === 0) {
+    const minutes = seconds / 60
+    return minutes === 1 ? 'минута' : `${formatInt(minutes)} ${plural(minutes, 'минута', 'минуты', 'минут')}`
+  }
+  return `${formatInt(seconds)} ${plural(seconds, 'секунда', 'секунды', 'секунд')}`
+}
 
 const TRANSLIT: Readonly<Record<string, string>> = {
   а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i',
@@ -76,6 +127,10 @@ export function B24AppForm({ scopes, app, onCancel, onSaved }: Props) {
   const [menuTitle, setMenuTitle] = useState(app?.menuTitle ?? '')
   const [scope, setScope] = useState<string[]>(app?.scope ?? DEFAULT_SCOPE)
   const [scopeQuery, setScopeQuery] = useState('')
+  // Сроки держим строками: пустое поле и «3e2» должны доживать до проверки границ,
+  // а не превращаться в NaN прямо под курсором.
+  const [tokenTtl, setTokenTtl] = useState(String(app?.tokenTtlSeconds ?? B24_TOKEN_TTL_SECONDS))
+  const [refreshTtl, setRefreshTtl] = useState(String(app?.refreshTtlSeconds ?? B24_REFRESH_TTL_SECONDS))
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
 
@@ -88,7 +143,14 @@ export function B24AppForm({ scopes, app, onCancel, onSaved }: Props) {
   const codeValid = CODE_PATTERN.test(code)
   const handlerValid = kind === 'api_only' || isHttpUrl(handlerUrl)
   const installValid = installUrl.trim() === '' || isHttpUrl(installUrl)
+  // Границы те же, что проверит сервер: промах должен быть виден до отправки.
+  const tokenTtlValue = Number(tokenTtl.trim())
+  const refreshTtlValue = Number(refreshTtl.trim())
+  const tokenTtlValid = Number.isInteger(tokenTtlValue) && clampTokenTtl(tokenTtlValue) === tokenTtlValue
+  const refreshTtlValid = Number.isInteger(refreshTtlValue) && clampRefreshTtl(refreshTtlValue) === refreshTtlValue
+  const tokenPreset = B24_TOKEN_TTL_PRESETS.find((p) => p.seconds === tokenTtlValue)
   const valid = title.trim().length >= 2 && codeValid && handlerValid && installValid
+    && tokenTtlValid && refreshTtlValid
 
   function toggleScope(value: string) {
     setScope((s) => (s.includes(value) ? s.filter((x) => x !== value) : [...s, value]))
@@ -115,6 +177,8 @@ export function B24AppForm({ scopes, app, onCancel, onSaved }: Props) {
           handlerUrl: kind === 'server_ui' ? handlerUrl.trim() : undefined,
           installUrl: installUrl.trim() === '' ? undefined : installUrl.trim(),
           menuTitle: kind === 'server_ui' && menuTitle.trim() !== '' ? menuTitle.trim() : undefined,
+          tokenTtlSeconds: tokenTtlValue,
+          refreshTtlSeconds: refreshTtlValue,
         },
       )
       onSaved(res.app)
@@ -278,6 +342,82 @@ export function B24AppForm({ scopes, app, onCancel, onSaved }: Props) {
               Права проверяются на каждом вызове REST: без нужного портал отвечает insufficient_scope.
               Без placement приложение не сможет зарегистрировать ни одного виджета.
             </p>
+          </div>
+
+          <div className="flex flex-col gap-[8px]">
+            <div className="flex items-baseline justify-between gap-[10px]">
+              <span className="text-[12px] font-medium text-text-secondary">Срок жизни токенов</span>
+              <span className="text-[11px] text-text-tertiary">в бою — час и 180 суток</span>
+            </div>
+
+            <SegmentControl
+              segments={B24_TOKEN_TTL_PRESETS.map((p) => ({ value: String(p.seconds), label: p.label }))}
+              value={tokenTtl.trim()}
+              onChange={setTokenTtl}
+            />
+            <span className="text-[11px] leading-[1.4] text-text-tertiary">
+              {tokenPreset
+                ? tokenPreset.hint
+                : `Своё значение: от ${formatTokenTtl(B24_TOKEN_TTL_MIN_SECONDS)} до ${formatTokenTtl(B24_TOKEN_TTL_MAX_SECONDS)}`}
+            </span>
+
+            <div className="grid grid-cols-2 gap-[10px]">
+              <Field
+                label="access_token, секунд"
+                value={tokenTtl}
+                onChange={setTokenTtl}
+                inputMode="numeric"
+                hint={
+                  tokenTtlValid
+                    ? `Выданная пара проживёт ${formatTokenTtl(tokenTtlValue)}`
+                    : `Допустимо целое от ${formatInt(B24_TOKEN_TTL_MIN_SECONDS)} до ${formatInt(B24_TOKEN_TTL_MAX_SECONDS)} секунд`
+                }
+              />
+              <Field
+                label="refresh_token, секунд"
+                value={refreshTtl}
+                onChange={setRefreshTtl}
+                inputMode="numeric"
+                hint={
+                  refreshTtlValid
+                    ? `Обменять на новую пару можно ${formatTokenTtl(refreshTtlValue)}; боевое значение — 180 суток`
+                    : `Допустимо целое от ${formatInt(B24_REFRESH_TTL_MIN_SECONDS)} до ${formatInt(B24_REFRESH_TTL_MAX_SECONDS)} секунд`
+                }
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-[6px]">
+              <span className="text-[11px] text-text-tertiary">Короткий refresh_token:</span>
+              {REFRESH_TTL_PRESETS.map((p) => (
+                <button
+                  key={p.seconds}
+                  type="button"
+                  onClick={() => setRefreshTtl(String(p.seconds))}
+                  className={`rounded-[4px] px-[7px] py-[3px] text-[11px] ${
+                    p.seconds === refreshTtlValue
+                      ? 'bg-accent-soft text-accent'
+                      : 'bg-surface-2 text-text-secondary hover:bg-surface-3'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            <p className="text-[11px] leading-[1.4] text-text-tertiary">
+              Боевой портал всегда выдаёт access_token на час, и настройки срока у него нет.
+              Короткий срок нужен ровно для одной проверки: дождаться 401 expired_token и увидеть,
+              как приложение само меняет refresh_token на новую пару. Обновлять по расписанию не надо —
+              документация Bitrix24 предписывает дождаться ошибки.
+            </p>
+
+            {tokenTtlValid && tokenTtlValue !== B24_TOKEN_TTL_SECONDS ? (
+              <p className="rounded-[6px] bg-warning-soft px-[10px] py-[7px] text-[11px] leading-[1.4] text-warning">
+                {formatTokenTtl(tokenTtlValue)} вместо часа — расхождение с боем: такого срока
+                на настоящем портале приложение не увидит никогда. Перед переносом верните 3600,
+                иначе проверенным окажется поведение, которого в бою не будет.
+              </p>
+            ) : null}
           </div>
 
           {error ? <FormError>{error}</FormError> : null}

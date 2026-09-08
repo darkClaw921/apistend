@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "b24_apps" ADD COLUMN     "refreshTtlSeconds" INTEGER NOT NULL DEFAULT 15552000,
+ADD COLUMN     "tokenTtlSeconds" INTEGER NOT NULL DEFAULT 3600;

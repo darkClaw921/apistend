@@ -191,6 +191,42 @@ export const B24_TOKEN_TTL_SECONDS = 3600
 /** Срок жизни refresh_token. Боевое значение — 180 суток. */
 export const B24_REFRESH_TTL_SECONDS = 180 * 24 * 3600
 
+/**
+ * Границы срока жизни токенов, настраиваемого в карточке приложения.
+ *
+ * Единственное место, где APIStend сознательно расходится с боевым порталом:
+ * там срок всегда час, и дождаться протухания при отладке нельзя — час это
+ * час. А проверять надо именно его: документация предписывает приложению
+ * дождаться ошибки expired_token и только после неё обновлять пару. Написать
+ * такой обработчик легко, проверить в бою — почти нет, поэтому ошибка обычно
+ * обнаруживается через час работы на проде.
+ *
+ * Нижняя граница в пять секунд позволяет увидеть цикл целиком за один заход,
+ * верхняя совпадает с сутками — дольше отлаживать нечего.
+ */
+export const B24_TOKEN_TTL_MIN_SECONDS = 5
+export const B24_TOKEN_TTL_MAX_SECONDS = 24 * 3600
+
+/** Границы срока refresh_token: от минуты (проверить «пройти OAuth заново») до 180 суток. */
+export const B24_REFRESH_TTL_MIN_SECONDS = 60
+export const B24_REFRESH_TTL_MAX_SECONDS = 180 * 24 * 3600
+
+/** Готовые значения для быстрого выбора в интерфейсе. */
+export const B24_TOKEN_TTL_PRESETS: ReadonlyArray<{ seconds: number; label: string; hint: string }> = [
+  { seconds: 10, label: '10 секунд', hint: 'Цикл виден сразу: вызов, отказ, обновление, повтор' },
+  { seconds: 60, label: 'минута', hint: 'Хватает на ручную проверку без спешки' },
+  { seconds: 300, label: '5 минут', hint: 'Обновление случится посреди работы, а не на старте' },
+  { seconds: 3600, label: 'час', hint: 'Как в боевом Bitrix24' },
+]
+
+export function clampTokenTtl(seconds: number): number {
+  return Math.min(Math.max(Math.round(seconds), B24_TOKEN_TTL_MIN_SECONDS), B24_TOKEN_TTL_MAX_SECONDS)
+}
+
+export function clampRefreshTtl(seconds: number): number {
+  return Math.min(Math.max(Math.round(seconds), B24_REFRESH_TTL_MIN_SECONDS), B24_REFRESH_TTL_MAX_SECONDS)
+}
+
 /** Срок жизни авторизационного кода. Боевое значение — 30 секунд. */
 export const B24_AUTH_CODE_TTL_SECONDS = 30
 

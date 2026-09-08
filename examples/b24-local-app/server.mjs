@@ -39,6 +39,28 @@ const REQUIRED_SCOPE = 'crm, placement, user'
 
 const MAX_BODY_BYTES = 256 * 1024
 
+/**
+ * Ключи приложения для серверного обновления токенов.
+ *
+ * Портал присылает во фрейм access_token и refresh_token, но не client_secret —
+ * и правильно делает: во фрейме секрет оказался бы в браузере. Поэтому пара ключей
+ * берётся из окружения; без неё приложение увидит expired_token, но обменять
+ * refresh_token не сможет — сервер авторизации проверяет именно client_secret.
+ */
+const CLIENT_ID = process.env.B24_CLIENT_ID ?? ''
+const CLIENT_SECRET = process.env.B24_CLIENT_SECRET ?? ''
+const HAS_CREDENTIALS = CLIENT_ID !== '' && CLIENT_SECRET !== ''
+
+/** Метод, на котором показывается восстановление доступа: он есть у приложения с любыми правами. */
+const DEMO_METHOD = 'user.current'
+
+/** Что сказать в терминале и на странице, если ключей нет. Текст один, места два. */
+const CREDENTIALS_HINT = [
+  'Серверное обновление токена выключено: не заданы B24_CLIENT_ID и B24_CLIENT_SECRET.',
+  'Ключи лежат в карточке приложения APIStend, панель «Ключи авторизации». Запуск с ними:',
+  '  B24_CLIENT_ID=local.… B24_CLIENT_SECRET=… node examples/b24-local-app/server.mjs',
+].join('\n')
+
 // ─────────────────────────────── Токены ───────────────────────────────
 
 let tokens = loadTokens()
@@ -61,20 +83,75 @@ function saveTokens(fields) {
   // Поля, которых в запросе не было, не затираются: часть точек встраивания
   // присылает не весь набор, а application_token нужен обработчику событий всегда.
   const previous = tokens ?? {}
+  const expiresIn = Number(fields.AUTH_EXPIRES ?? previous.expiresIn ?? 0)
   tokens = {
     accessToken: fields.AUTH_ID ?? previous.accessToken ?? null,
     refreshToken: fields.REFRESH_ID ?? previous.refreshToken ?? null,
-    expiresIn: Number(fields.AUTH_EXPIRES ?? previous.expiresIn ?? 0),
+    expiresIn,
+    // Портал присылает остаток в секундах, а приложению нужен момент: по нему
+    // считается обратный отсчёт на странице, и он переживает перезапуск.
+    expiresAt: Date.now() + expiresIn * 1000,
     applicationToken: fields.APPLICATION_TOKEN ?? previous.applicationToken ?? null,
     scope: fields.APPLICATION_SCOPE ?? previous.scope ?? '',
     memberId: fields.member_id ?? previous.memberId ?? null,
     domain: fields.DOMAIN ?? previous.domain ?? null,
     protocol: fields.PROTOCOL ?? previous.protocol ?? '0',
     serverEndpoint: fields.SERVER_ENDPOINT ?? previous.serverEndpoint ?? null,
+    // Адрес REST во фрейм не приходит: он есть только в ответе сервера авторизации.
+    // До первого обновления его собирает restBase из DOMAIN и PROTOCOL.
+    clientEndpoint: previous.clientEndpoint ?? null,
     status: fields.status ?? previous.status ?? null,
     savedAt: new Date().toISOString(),
   }
+  writeTokens()
+}
+
+/**
+ * Новая пара, полученная по refresh_token.
+ *
+ * Пара именно заменяется, а не дописывается: выдавая новую, портал гасит прежний
+ * refresh_token. Приложение, сохранившее только access_token, доживёт до следующего
+ * протухания и останется без доступа — обменивать будет нечего.
+ */
+function saveTokenResponse(payload) {
+  const previous = tokens ?? {}
+  const expiresIn = Number(payload.expires_in ?? 0)
+  tokens = {
+    ...previous,
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token,
+    expiresIn,
+    expiresAt: Date.now() + expiresIn * 1000,
+    scope: payload.scope ?? previous.scope ?? '',
+    memberId: payload.member_id ?? previous.memberId ?? null,
+    domain: payload.domain ?? previous.domain ?? null,
+    serverEndpoint: payload.server_endpoint ?? previous.serverEndpoint ?? null,
+    clientEndpoint: payload.client_endpoint ?? previous.clientEndpoint ?? null,
+    status: payload.status ?? previous.status ?? null,
+    savedAt: new Date().toISOString(),
+  }
+  writeTokens()
+}
+
+function writeTokens() {
   writeFileSync(TOKENS_FILE, `${JSON.stringify(tokens, null, 2)}\n`)
+}
+
+/** Сколько секунд осталось access_token. Отрицательное — уже протух. */
+function secondsLeft() {
+  if (!tokens?.expiresAt) return null
+  return Math.round((tokens.expiresAt - Date.now()) / 1000)
+}
+
+/** Состояние токена для страницы: и при отрисовке, и в ответе /api/call оно одно. */
+function tokenState() {
+  return {
+    method: DEMO_METHOD,
+    hasCredentials: HAS_CREDENTIALS,
+    secondsLeft: secondsLeft(),
+    expiresIn: tokens?.expiresIn ?? null,
+    savedAt: tokens?.savedAt ?? null,
+  }
 }
 
 // ─────────────────────────────── Журнал ───────────────────────────────
@@ -156,6 +233,175 @@ function bx24JsUrl(fields) {
   return origin ? `${origin}/api/v1/` : ''
 }
 
+// ────────────────── Вызовы REST со стороны приложения ─────────────────
+
+/**
+ * Базовый адрес REST. В ответе сервера авторизации он приходит полем client_endpoint,
+ * но до первого обновления его ещё нет: во фрейм портал кладёт только DOMAIN
+ * и PROTOCOL. Собираем тем же способом, что и адрес библиотеки, — приложение,
+ * зашившее адрес константой, здесь и сломалось бы.
+ */
+function restBase() {
+  if (tokens?.clientEndpoint) return tokens.clientEndpoint
+  if (!tokens?.domain) return null
+  return `${tokens.protocol === '1' ? 'https' : 'http'}://${tokens.domain}/rest/`
+}
+
+/**
+ * Адрес сервера авторизации тоже не зашит: он собирается из SERVER_ENDPOINT.
+ * В бою портал присылает https://oauth.bitrix.info/rest/, а токены выдаются
+ * на https://oauth.bitrix.info/oauth/token/; в APIStend это тот же путь
+ * на localhost. Правило одно на оба случая: /oauth/token/ в корне названного хоста.
+ */
+function tokenUrl() {
+  if (!tokens?.serverEndpoint) return null
+  return new URL('/oauth/token/', tokens.serverEndpoint).toString()
+}
+
+async function readJson(response) {
+  const text = await response.text()
+  try {
+    return JSON.parse(text)
+  } catch {
+    // И портал, и сервер авторизации отвечают JSON всегда. Текст вместо него —
+    // это ответ прокси или чужого адреса, и показать его полезнее, чем скрыть.
+    return { error: 'invalid_response', error_description: text.slice(0, 300) }
+  }
+}
+
+/**
+ * Один вызов метода текущим access_token.
+ *
+ * Токен уходит в теле, а не в query-строке: в адресе он осел бы в логах веб-сервера
+ * и прокси. Ошибка возвращается вызывающему, а не бросается: 401 здесь — часть
+ * сценария, а не сбой.
+ */
+async function restRequest(method, params) {
+  const base = restBase()
+  if (!base || !tokens?.accessToken) {
+    throw new Error('Токенов нет: приложение ещё не устанавливали в портале')
+  }
+  const body = new URLSearchParams({ ...params, auth: tokens.accessToken })
+  const response = await fetch(`${base}${method}.json`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+    body,
+  })
+  return { status: response.status, payload: await readJson(response) }
+}
+
+/**
+ * Обмен refresh_token на новую пару.
+ *
+ * Запрос идёт GET-ом с ключами приложения — так его описывает документация
+ * и так его шлёт CRest. Ответ приходит тем же конвертом, что и при установке.
+ */
+async function refreshTokens() {
+  const url = tokenUrl()
+  if (!url) return { ok: false, reason: 'портал не сообщил SERVER_ENDPOINT — идти за парой некуда' }
+
+  const query = new URLSearchParams({
+    grant_type: 'refresh_token',
+    client_id: CLIENT_ID,
+    client_secret: CLIENT_SECRET,
+    refresh_token: tokens?.refreshToken ?? '',
+  })
+  const response = await fetch(`${url}?${query.toString()}`)
+  const payload = await readJson(response)
+
+  if (response.status !== 200 || !payload.access_token) {
+    return { ok: false, reason: describeOauthError(payload) }
+  }
+
+  saveTokenResponse(payload)
+  return { ok: true }
+}
+
+/** Отказы сервера авторизации приходят со статусом 400 и означают разное. */
+function describeOauthError(payload) {
+  if (payload.error === 'invalid_grant') {
+    return 'invalid_grant: refresh_token тоже недействителен. Обменивать больше нечего — ' +
+      'нужен полный цикл OAuth, то есть переустановка приложения в портале'
+  }
+  if (payload.error === 'invalid_client') {
+    return 'invalid_client: сервер авторизации не признал client_id или client_secret — ' +
+      'сверьте их с карточкой приложения'
+  }
+  return `${payload.error ?? 'неизвестная ошибка'}: ${payload.error_description ?? ''}`.trim()
+}
+
+/** Чем кончился вызов — заголовок для страницы. */
+const CALL_OUTCOMES = {
+  ok: 'вызов прошёл сразу',
+  refreshed: 'токен протух, обновили пару, повторили вызов',
+  'refresh-failed': 'обновить не удалось',
+  'no-credentials': 'обновлять нечем: нет ключей приложения',
+  'no-tokens': 'токенов нет',
+  error: 'портал ответил ошибкой',
+}
+
+/**
+ * Вызов метода с восстановлением доступа — то, ради чего приложению нужны ключи.
+ *
+ * Порядок предписан документацией: сначала обычный вызов, обновление — только
+ * в ответ на 401 expired_token и ровно один раз. Обновлять по расписанию нельзя:
+ * выдавая новую пару, портал гасит прежнюю, и приложение, обновляющееся «на всякий
+ * случай», отбирает доступ у самого себя. Повтор тоже ровно один: второй отказ —
+ * это уже не протухание, и цикл из него не выйдет.
+ */
+async function callWithRefresh(method, params = {}) {
+  const steps = []
+  const note = (text) => {
+    steps.push(text)
+    log('вызов', text)
+  }
+  let answer = null
+  const done = (outcome) => ({
+    outcome,
+    title: CALL_OUTCOMES[outcome],
+    steps,
+    status: answer?.status ?? null,
+    payload: answer?.payload ?? null,
+    token: tokenState(),
+  })
+
+  const left = secondsLeft()
+  note(`${method}: вызываю с текущим access_token (${left === null ? 'срок неизвестен' : `до протухания ${left} с`})`)
+  answer = await restRequest(method, params)
+
+  if (answer.status !== 401 || answer.payload.error !== 'expired_token') {
+    note(
+      answer.status === 200
+        ? 'портал ответил сразу: токен ещё жив, обновлять нечего'
+        : `портал ответил ${answer.status} ${answer.payload.error ?? ''} — это не протухание, обновление тут не поможет`,
+    )
+    return done(answer.status === 200 ? 'ok' : 'error')
+  }
+
+  note('получен 401 expired_token — по документации это единственный сигнал идти за новой парой')
+
+  if (!HAS_CREDENTIALS) {
+    note('обновлять нечем: B24_CLIENT_ID и B24_CLIENT_SECRET не заданы, а client_secret портал во фрейм не шлёт')
+    return done('no-credentials')
+  }
+
+  note(`обмениваю refresh_token на новую пару: ${tokenUrl()}`)
+  const refreshed = await refreshTokens()
+  if (!refreshed.ok) {
+    note(`обновить не удалось — ${refreshed.reason}`)
+    return done('refresh-failed')
+  }
+  note(`новая пара сохранена вместо прежней, access_token живёт ${tokens.expiresIn} с; прежний refresh_token портал погасил`)
+
+  answer = await restRequest(method, params)
+  note(
+    answer.status === 200
+      ? 'повторил вызов новым токеном — доступ восстановлен, пользователь ничего не заметил'
+      : `повторный вызов вернул ${answer.status} ${answer.payload.error ?? ''} — второй раз не повторяю, это был бы цикл`,
+  )
+  return done(answer.status === 200 ? 'refreshed' : 'error')
+}
+
 // ────────────────────────────── Ответы ──────────────────────────────
 
 /**
@@ -186,6 +432,11 @@ function sendHtml(res, html, fields = {}) {
 function sendText(res, status, text) {
   res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' })
   res.end(text)
+}
+
+function sendJson(res, status, payload) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+  res.end(JSON.stringify(payload))
 }
 
 // ────────────────────────────── Разметка ──────────────────────────────
@@ -405,7 +656,75 @@ ${CLIENT_HELPERS}
     });
   }
 
+  function plural(count, forms) {
+    var tail = Math.abs(count) % 100;
+    var last = tail % 10;
+    if (tail > 10 && tail < 20) return forms[2];
+    if (last === 1) return forms[0];
+    if (last > 1 && last < 5) return forms[1];
+    return forms[2];
+  }
+
+  // Отсчёт ведём от снимка, а не от часов сервера: страница живёт в браузере,
+  // и время у него своё. Снимок обновляется ответом /api/call — после обмена
+  // refresh_token срок начинается заново.
+  var tokenSnapshot = null;
+
+  function applyToken(state) {
+    if (!state) return;
+    tokenSnapshot = { left: state.secondsLeft, at: Date.now() };
+    drawTokenLife();
+  }
+
+  function drawTokenLife() {
+    var node = document.getElementById('ttl');
+    if (!node) return;
+    if (!tokenSnapshot || tokenSnapshot.left === null) {
+      node.textContent = 'Срок токена неизвестен: сохранённых токенов у приложения нет.';
+      node.className = 'state';
+      return;
+    }
+    var left = Math.round(tokenSnapshot.left - (Date.now() - tokenSnapshot.at) / 1000);
+    var words = ['секунду', 'секунды', 'секунд'];
+    node.textContent = left >= 0
+      ? 'access_token живёт ещё ' + left + ' ' + plural(left, words)
+      : 'access_token протух ' + (-left) + ' ' + plural(left, words) + ' назад';
+    node.className = 'state ' + (left >= 0 ? 'ok' : 'fail');
+  }
+
   var actions = {
+    server: function () {
+      show('Серверный вызов', 'Сервер приложения вызывает ' + app.token.method + ' сохранённым токеном…');
+      // Страница не ходит в REST сама: токены и client_secret живут на сервере
+      // приложения, и в браузере им не место.
+      fetch('/api/call', { method: 'POST' })
+        .then(function (response) { return response.json(); })
+        .then(function (data) {
+          applyToken(data.token);
+          var text = data.steps.join('\\n');
+          if (data.payload) text += '\\n\\n' + JSON.stringify(data.payload, null, 2);
+          show('Серверный вызов — ' + data.title, text);
+        })
+        .catch(function (error) {
+          show('Серверный вызов', 'Запрос к приложению не дошёл: ' + error.message);
+        });
+    },
+
+    browser: function () {
+      show('Вызов из браузера', 'Запрашиваю ' + app.token.method + ' через BX24.callMethod…');
+      BX24.callMethod(app.token.method, {}, function (result) {
+        if (result.error()) {
+          show('Вызов из браузера — ошибка', describeError(result.error()));
+          return;
+        }
+        show('Вызов из браузера — обновляла BX24.js',
+          'Протухший токен библиотека меняет сама: свежий она просит у портала через мост,' +
+          ' поэтому client_secret браузеру не нужен и не даётся. Обновляется при этом токен фрейма,' +
+          ' а сохранённая на сервере пара остаётся прежней.\\n\\n' +
+          JSON.stringify(result.data(), null, 2));
+      });
+    },
+
     deals: function () {
       show('crm.deal.list', 'Запрашиваю…');
       BX24.callMethod('crm.deal.list', {
@@ -456,6 +775,10 @@ ${CLIENT_HELPERS}
   };
 
   document.addEventListener('DOMContentLoaded', function () {
+    // Обратный отсчёт от библиотеки не зависит: он идёт и тогда, когда BX24.js
+    // не загрузилась, а серверный вызов остаётся единственной работающей проверкой.
+    applyToken(app.token);
+    setInterval(drawTokenLife, 1000);
     if (libraryMissing()) return;
     var buttons = document.querySelectorAll('button[data-action]');
     for (var i = 0; i < buttons.length; i++) {
@@ -546,6 +869,29 @@ async function handleHandler(req, res, url) {
   </div>`
       : ''
 
+  const credentialsNote = HAS_CREDENTIALS
+    ? `<p class="muted">Ключи приложения заданы: <code>${escapeHtml(CLIENT_ID)}</code>,
+    серверное обновление доступно.</p>`
+    : `<p class="muted">Серверное обновление выключено: не заданы <code>B24_CLIENT_ID</code>
+    и <code>B24_CLIENT_SECRET</code>. Возьмите их в карточке приложения APIStend — панель
+    «Ключи авторизации» — и перезапустите приложение с ними. Портал не кладёт
+    <code>client_secret</code> во фрейм, и без него сервер авторизации новую пару не выдаст:
+    приложение увидит <code>expired_token</code> и на нём остановится.</p>`
+
+  const tokenCard = `<div class="card">
+    <h2>Жизнь токена</h2>
+    <p class="muted">Боевое приложение не обновляет токен по расписанию: оно ждёт
+    <code>401 expired_token</code> и только после отказа меняет пару по <code>refresh_token</code>.
+    Срок жизни задаётся в карточке приложения — поставьте десять секунд и нажмите кнопку,
+    когда отсчёт уйдёт в минус.</p>
+    <p id="ttl" class="state">Считаю остаток…</p>
+    ${credentialsNote}
+    <div class="buttons">
+      <button type="button" data-action="server">Серверный вызов</button>
+      <button type="button" data-action="browser">Вызов из браузера</button>
+    </div>
+  </div>`
+
   const body = `
   <h1>Приложение открыто</h1>
   <p class="muted">Точка встраивания <code>${escapeHtml(placement)}</code>.
@@ -557,6 +903,8 @@ async function handleHandler(req, res, url) {
   </div>
 
   ${dealCard}
+
+  ${tokenCard}
 
   <div class="card">
     <h2>Проверки</h2>
@@ -589,10 +937,45 @@ async function handleHandler(req, res, url) {
         placement,
         placementOptions: options,
         libraryUrl: bx24JsUrl(fields),
+        token: tokenState(),
       },
     }),
     fields,
   )
+}
+
+/**
+ * Эндпоинт кнопки «Серверный вызов».
+ *
+ * Отдаёт не только ответ портала, но и все шаги: смысл проверки в том, что
+ * произошло по дороге, а не в самих данных пользователя.
+ */
+async function handleApiCall(res) {
+  if (!tokens?.accessToken) {
+    return sendJson(res, 200, {
+      outcome: 'no-tokens',
+      title: CALL_OUTCOMES['no-tokens'],
+      steps: ['Сохранённых токенов нет: откройте приложение из портала, мастер установки их сохранит.'],
+      status: null,
+      payload: null,
+      token: tokenState(),
+    })
+  }
+
+  try {
+    return sendJson(res, 200, await callWithRefresh(DEMO_METHOD))
+  } catch (error) {
+    // Ответ всё равно JSON: страница обязана показать причину, а не пустой экран.
+    log('вызов', `не состоялся: ${error.message}`)
+    return sendJson(res, 200, {
+      outcome: 'error',
+      title: CALL_OUTCOMES.error,
+      steps: [error.message],
+      status: null,
+      payload: null,
+      token: tokenState(),
+    })
+  }
 }
 
 async function handleEvents(req, res) {
@@ -637,6 +1020,17 @@ function handleStatus(res) {
     </dl>
   </div>
 
+  <div class="card">
+    <h2>Серверное обновление токена</h2>
+    ${HAS_CREDENTIALS
+      ? `<p class="muted">Ключи приложения заданы: <code>${escapeHtml(CLIENT_ID)}</code>. Получив
+      <code>401 expired_token</code>, приложение само обменяет <code>refresh_token</code>
+      на новую пару и повторит вызов.</p>`
+      : `<p class="muted">Выключено: не заданы <code>B24_CLIENT_ID</code> и <code>B24_CLIENT_SECRET</code>.
+      Ключи лежат в карточке приложения APIStend, панель «Ключи авторизации»; запуск с ними:</p>
+      <pre>B24_CLIENT_ID=local.… B24_CLIENT_SECRET=… node examples/b24-local-app/server.mjs</pre>`}
+  </div>
+
   <p class="muted">Страницы приложения открывает портал POST-запросом и показывает во фрейме.
   По прямой ссылке из браузера они пустые: без полей портала библиотеке BX24.js неоткуда
   взять адрес и авторизацию.</p>
@@ -666,6 +1060,7 @@ const server = createServer((req, res) => {
     if (req.method === 'POST' && route === '/install') return handleInstall(req, res, url)
     if (req.method === 'POST' && route === '/handler') return handleHandler(req, res, url)
     if (req.method === 'POST' && route === '/events') return handleEvents(req, res)
+    if (req.method === 'POST' && route === '/api/call') return handleApiCall(res)
     if (req.method === 'GET' && route === '/') return handleStatus(res)
     if (req.method === 'GET' && (route === '/install' || route === '/handler')) {
       return handleDirectOpen(res, route)
@@ -693,6 +1088,12 @@ server.listen(PORT, () => {
     tokens
       ? `Токены с прошлой установки на месте: ${TOKENS_FILE}`
       : 'Токенов пока нет: откройте приложение в портале, и мастер установки их сохранит.',
+  )
+  console.log('')
+  console.log(
+    HAS_CREDENTIALS
+      ? `Ключи приложения заданы: client_id ${CLIENT_ID}. Протухший токен приложение обновит само.`
+      : CREDENTIALS_HINT,
   )
   console.log('')
 })
