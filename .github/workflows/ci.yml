@@ -41,7 +41,9 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          # Ровно та версия, что на проде: API там исполняется без транспиляции,
+          # и снятие типов должно проверяться тем же движком.
+          node-version: 26
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -66,3 +68,18 @@ jobs:
       # Здесь она стоит полминуты на чужой машине.
       - name: Сборка кабинета
         run: pnpm --filter @apistend/web run build
+
+      # Тесты исполняют исходники через vitest, то есть с полной транспиляцией,
+      # а прод запускает их же напрямую: `node src/server.ts`, со снятием типов
+      # без транспиляции. Это разные вещи, и расхождение видно только здесь.
+      - name: Старт API так же, как на проде
+        working-directory: apps/api
+        run: |
+          node src/server.ts &
+          pid=$!
+          for _ in $(seq 1 30); do
+            curl -fs -o /dev/null http://127.0.0.1:8080/health && break
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:8080/health
+          kill $pid
