@@ -20,6 +20,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@apistend/catalog-ingest':
+        specifier: workspace:*
+        version: link:../../packages/catalog-ingest
       '@apistend/mock-engine':
         specifier: workspace:*
         version: link:../../packages/mock-engine
@@ -56,6 +59,9 @@ importers:
       ws:
         specifier: ^8.21.3
         version: 8.21.3
+      yaml:
+        specifier: ^2.8.1
+        version: 2.9.0
       zod:
         specifier: ^4.5.4
         version: 4.5.4

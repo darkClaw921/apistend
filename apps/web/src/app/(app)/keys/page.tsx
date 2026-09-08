@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Check, Copy, EllipsisVertical, RotateCcw, ShieldAlert } from 'lucide-react'
 import {
-  ButtonPrimary, ButtonSecondary, CodeBlock, DataTable, ErrorState, MethodBadge,
+  ButtonPrimary, ButtonSecondary, CodeBlock, DataTable, Dialog, ErrorState, MethodBadge,
   Panel, PanelFooter, PanelHeader, SearchField, SegmentControl, ServiceChip,
   ServiceSquare, SkeletonRows, Slider, StatusChip, formatDate, formatDayTime,
   formatInt, formatMs, formatPercent, formatRelative, meta,
@@ -42,6 +42,8 @@ export default function KeysPage() {
   const [globalSearch, setGlobalSearch] = useState('')
   const [creating, setCreating] = useState(false)
   const [howTo, setHowTo] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [resetPending, setResetPending] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
 
   const sandbox = shell.me.sandboxes[0]
@@ -300,7 +302,12 @@ export default function KeysPage() {
                     Последний сброс: {sandbox ? formatDayTime(sandbox.lastResetAt) : '—'} (МСК)
                   </span>
                 </div>
-                <ButtonSecondary icon={<RotateCcw size={13} aria-hidden />}>Сбросить сейчас</ButtonSecondary>
+                <ButtonSecondary
+                  icon={<RotateCcw size={13} aria-hidden />}
+                  onClick={() => setResetting(true)}
+                >
+                  Сбросить сейчас
+                </ButtonSecondary>
               </div>
             </div>
           </Panel>
@@ -347,6 +354,41 @@ export default function KeysPage() {
           onClose={() => setCreating(false)}
           onCreated={() => { setCreating(false); void load() }}
         />
+      ) : null}
+
+      {resetting ? (
+        <Dialog title="Сбросить демо-данные" onClose={() => setResetting(false)}>
+          <div className="flex flex-col gap-[14px] p-[16px]">
+            <p className="text-[13px] leading-[1.55] text-text-secondary">
+              Всё, что вы создали, изменили или удалили через API, вернётся к исходному
+              состоянию. Базовый набор данных общий и только на чтение — он не меняется.
+            </p>
+            <p className="text-[12px] leading-[1.5] text-text-tertiary">
+              Ключи, вебхуки и свои моки сброс не трогает.
+            </p>
+            <div className="flex justify-end gap-[10px]">
+              <ButtonSecondary onClick={() => setResetting(false)}>Отмена</ButtonSecondary>
+              <ButtonSecondary
+                tone="danger"
+                disabled={resetPending}
+                onClick={async () => {
+                  setResetPending(true)
+                  try {
+                    await api.post('/api/sandbox/reset')
+                    setResetting(false)
+                    void load()
+                  } catch (e) {
+                    setError(e instanceof ApiError ? e.message : 'Не удалось сбросить данные')
+                  } finally {
+                    setResetPending(false)
+                  }
+                }}
+              >
+                {resetPending ? 'Сбрасываю…' : 'Сбросить'}
+              </ButtonSecondary>
+            </div>
+          </div>
+        </Dialog>
       ) : null}
 
       {howTo && data ? (

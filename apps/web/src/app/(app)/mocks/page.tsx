@@ -10,6 +10,8 @@ import {
 } from '@apistend/ui'
 import type { ChipTone } from '@apistend/ui'
 import { api, ApiError, API_URL } from '@/lib/api'
+import { CreateMockDialog } from '@/components/CreateMockDialog'
+import { ImportOpenApiDialog } from '@/components/ImportOpenApiDialog'
 import type { CustomMockItem, MocksResponse } from '@/lib/types'
 import { Topbar } from '@/components/Topbar'
 
@@ -38,6 +40,8 @@ export default function MocksPage() {
   const [filter, setFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [globalSearch, setGlobalSearch] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tab, setTab] = useState('response')
 
@@ -152,7 +156,7 @@ export default function MocksPage() {
         title="Свои моки"
         search={globalSearch}
         onSearchChange={setGlobalSearch}
-        action={<ButtonPrimary icon={<Plus size={13} aria-hidden />}>Новый мок</ButtonPrimary>}
+        action={<ButtonPrimary icon={<Plus size={13} aria-hidden />} onClick={() => setCreating(true)}>Новый мок</ButtonPrimary>}
       />
 
       <main className="flex min-h-0 flex-1 flex-col gap-[20px] p-[24px]">
@@ -169,8 +173,9 @@ export default function MocksPage() {
           />
           <div className="ml-auto flex items-center gap-[10px]">
             <SearchField value={search} onValueChange={setSearch} placeholder="Поиск по своим мокам" width={260} />
-            <ButtonSecondary>Импорт из OpenAPI</ButtonSecondary>
-            <ButtonSecondary>Шаблоны</ButtonSecondary>
+            <ButtonSecondary onClick={() => setImporting(true)}>Импорт из OpenAPI</ButtonSecondary>
+            {/* Заготовки живут внутри окна создания — отдельного экрана им мало. */}
+            <ButtonSecondary onClick={() => setCreating(true)}>Шаблоны</ButtonSecondary>
           </div>
         </div>
 
@@ -195,7 +200,7 @@ export default function MocksPage() {
                 <EmptyState
                   title="Пока нет своих моков"
                   description="Создайте первый мок или импортируйте OpenAPI-файл"
-                  action={<ButtonSecondary>Создать мок</ButtonSecondary>}
+                  action={<ButtonSecondary onClick={() => setCreating(true)}>Создать мок</ButtonSecondary>}
                 />
               ) : (
                 <ul>
@@ -232,8 +237,24 @@ export default function MocksPage() {
               )}
             </div>
             <PanelFooter
-              left={<span className="inline-flex items-center gap-[5px] font-semibold text-accent"><Plus size={12} aria-hidden /> Создать мок</span>}
-              right={<span className="text-[12px] text-text-secondary">Импортировать JSON</span>}
+              left={
+                <button
+                  type="button"
+                  onClick={() => setCreating(true)}
+                  className="inline-flex items-center gap-[5px] font-semibold text-accent"
+                >
+                  <Plus size={12} aria-hidden /> Создать мок
+                </button>
+              }
+              right={
+                <button
+                  type="button"
+                  onClick={() => setImporting(true)}
+                  className="text-[12px] text-text-secondary hover:text-text-primary"
+                >
+                  Импортировать JSON
+                </button>
+              }
             />
           </Panel>
 
@@ -412,6 +433,20 @@ export default function MocksPage() {
           </Panel>
         </div>
       </main>
+
+      {creating ? (
+        <CreateMockDialog
+          onClose={() => setCreating(false)}
+          onCreated={(id) => { setCreating(false); setSelectedId(id); void load() }}
+        />
+      ) : null}
+
+      {importing ? (
+        <ImportOpenApiDialog
+          onClose={() => setImporting(false)}
+          onImported={() => { setImporting(false); void load() }}
+        />
+      ) : null}
     </>
   )
 }
