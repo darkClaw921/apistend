@@ -15,6 +15,7 @@ import type { CatalogListItem, CatalogResponse, ServiceSummary } from '@/lib/typ
 import { Topbar } from '@/components/Topbar'
 import { MethodDetailPanel } from '@/components/MethodDetailPanel'
 import { READINESS_LABEL, READINESS_TONE } from '@/lib/readiness'
+import { buildPostmanCollection, downloadJson } from '@/lib/postman'
 
 /**
  * Экран «Каталог API». design-handoff/screens/02-api-catalog.md.
@@ -70,6 +71,7 @@ function CatalogScreen() {
   // и не находя в выдаче.
   const linkedId = searchParams.get('method')
   const [globalSearch, setGlobalSearch] = useState('')
+  const [exporting, setExporting] = useState(false)
 
   // Дебаунс 200 мс — как задано в спецификации поведения поиска.
   useEffect(() => {
@@ -115,6 +117,50 @@ function CatalogScreen() {
   }, [service, httpMethod, readiness, debounced, page, linkedId])
 
   useEffect(() => { void load() }, [load])
+
+  /**
+   * Экспорт коллекции Postman.
+   *
+   * Выгружается вся текущая выборка, а не видимая страница: фильтры на экране
+   * и есть то, что пользователь выбрал. Каталог отдаёт максимум 200 методов
+   * за раз, поэтому дочитываем страницами — на всём каталоге это около десятка
+   * запросов, и они дешёвые.
+   */
+  async function exportCollection() {
+    setExporting(true)
+    try {
+      const collected: CatalogListItem[] = []
+      const PAGE = 200
+      for (let offset = 0; ; offset += PAGE) {
+        const params = new URLSearchParams({
+          limit: String(PAGE), offset: String(offset), readiness, method: httpMethod,
+        })
+        if (service !== 'all') params.set('service', service)
+        if (debounced.trim().length >= 2) params.set('q', debounced.trim())
+
+        const res = await api.get<CatalogResponse>(`/api/catalog?${params}`)
+        collected.push(...res.methods)
+        if (collected.length >= res.total || res.methods.length === 0) break
+      }
+
+      const note = [
+        service === 'all' ? 'Все сервисы' : (services.find((s) => s.code === service)?.title ?? service),
+        httpMethod === 'any' ? null : `метод ${httpMethod}`,
+        debounced.trim().length >= 2 ? `поиск «${debounced.trim()}»` : null,
+        `${collected.length} методов`,
+      ].filter(Boolean).join(' · ')
+
+      const stamp = new Date().toISOString().slice(0, 10)
+      downloadJson(
+        buildPostmanCollection(collected, services, note),
+        `apistend-catalog-${stamp}.postman_collection.json`,
+      )
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Не удалось собрать коллекцию')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const totalCatalog = useMemo(() => services.reduce((n, s) => n + s.methodsCount, 0), [services])
   const snapshot = services.find((s) => s.snapshotDate)?.snapshotDate ?? null
@@ -256,8 +302,13 @@ function CatalogScreen() {
                     Группировка: по сервису
                     <SlidersHorizontal size={13} aria-hidden />
                   </span>
-                  <ButtonSecondary tone="quiet" icon={<FileDown size={13} aria-hidden />}>
-                    Экспорт коллекции
+                  <ButtonSecondary
+                    tone="quiet"
+                    icon={<FileDown size={13} aria-hidden />}
+                    onClick={() => void exportCollection()}
+                    disabled={exporting}
+                  >
+                    {exporting ? 'Собираю…' : 'Экспорт коллекции'}
                   </ButtonSecondary>
                 </>
               }
