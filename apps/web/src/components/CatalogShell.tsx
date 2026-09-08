@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { api, ApiError } from '@/lib/api'
 import type { Me } from '@/lib/types'
 import { Sidebar } from './Sidebar'
-import { ShellContext } from './AppShell'
+import { ShellContext, useSearchPalette } from './AppShell'
 import { LandingNav } from './landing/LandingNav'
 
 /**
@@ -22,6 +22,7 @@ export function CatalogShell({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
   const [ready, setReady] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const { openSearch, searchDialog } = useSearchPalette()
 
   async function loadMe() {
     try {
@@ -65,16 +66,19 @@ export function CatalogShell({ children }: { children: ReactNode }) {
   const project = me.sandboxes[0]?.project ?? 'Без названия'
 
   return (
-    <ShellContext.Provider value={{ me, sandboxId, project, refresh: loadMe, openMenu: () => setMenuOpen(true) }}>
+    <ShellContext.Provider
+      value={{ me, sandboxId, project, refresh: loadMe, openMenu: () => setMenuOpen(true), openSearch }}
+    >
       <div className="flex h-screen overflow-hidden bg-bg">
         <Sidebar
           me={me}
-          requestsThisMonth={me.usage.requestsThisMonth}
           open={menuOpen}
           onClose={() => setMenuOpen(false)}
+          onSearch={openSearch}
         />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
       </div>
+      {searchDialog}
     </ShellContext.Provider>
   )
 }

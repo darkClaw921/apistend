@@ -16,6 +16,10 @@ import type { Route } from 'next'
  *
  * Отдельный клиентский компонент: сама навигация остаётся серверной, состояние
  * нужно только здесь.
+ *
+ * Логика прежняя; после перекраски лендинга в тёмное поменяны только цвета —
+ * панель была светлой (белая на bg-night светила фонарём), а рамка кнопки стояла
+ * литералом вместо токена.
  */
 export function LandingNavMobile({
   links,
@@ -31,13 +35,25 @@ export function LandingNavMobile({
         onClick={() => setOpen((v) => !v)}
         aria-label={open ? 'Закрыть меню' : 'Открыть меню'}
         aria-expanded={open}
-        className="flex h-[34px] w-[34px] items-center justify-center rounded-[6px] border border-[#2C3742] text-nav-text transition-colors hover:text-white"
+        className="flex h-[34px] w-[34px] items-center justify-center rounded-[6px] border border-nav-border text-nav-text transition-colors hover:text-white"
       >
         {open ? <X size={17} aria-hidden /> : <Menu size={17} aria-hidden />}
       </button>
 
       {open ? (
-        <DropdownPanel onClose={() => setOpen(false)} label="Меню" className="w-[200px]">
+        /*
+          DropdownPanel — общий примитив кабинета, у него в основе светлые
+          bg-surface и border-border. Здесь фон тёмный, поэтому цвета
+          перекрываем с `!`: `cn` в пакете — это clsx без tailwind-merge, обе
+          пары классов доедут до разметки, а Tailwind расставляет утилиты одного
+          свойства по алфавиту (bg-night-2 раньше bg-surface) — без важности
+          победил бы белый.
+        */
+        <DropdownPanel
+          onClose={() => setOpen(false)}
+          label="Меню"
+          className="w-[220px] border-night-line! bg-night-2!"
+        >
           <ul className="flex flex-col py-[6px]">
             {links.map((item) => (
               <li key={item.label}>
@@ -45,7 +61,7 @@ export function LandingNavMobile({
                   <a
                     href={item.href}
                     onClick={() => setOpen(false)}
-                    className="block px-[14px] py-[9px] text-[14px] text-text-secondary hover:bg-bg hover:text-text-primary"
+                    className="block px-[14px] py-[9px] text-[14px] text-night-text hover:bg-night-3 hover:text-white"
                   >
                     {item.label}
                   </a>
@@ -53,7 +69,7 @@ export function LandingNavMobile({
                   <Link
                     href={item.href as Route}
                     onClick={() => setOpen(false)}
-                    className="block px-[14px] py-[9px] text-[14px] text-text-secondary hover:bg-bg hover:text-text-primary"
+                    className="block px-[14px] py-[9px] text-[14px] text-night-text hover:bg-night-3 hover:text-white"
                   >
                     {item.label}
                   </Link>
@@ -62,18 +78,18 @@ export function LandingNavMobile({
             ))}
           </ul>
 
-          <div className="flex flex-col gap-[8px] border-t border-border p-[12px]">
+          <div className="flex flex-col gap-[8px] border-t border-night-line p-[12px]">
             <Link
               href="/login"
               onClick={() => setOpen(false)}
-              className="text-center text-[13px] text-text-secondary hover:text-text-primary"
+              className="text-center text-[13px] text-night-text hover:text-white"
             >
               Войти
             </Link>
             <Link
               href="/register"
               onClick={() => setOpen(false)}
-              className="rounded-[6px] bg-accent px-[16px] py-[9px] text-center text-[13px] font-semibold text-white"
+              className="rounded-[6px] bg-accent px-[16px] py-[9px] text-center text-[13px] font-semibold text-white hover:bg-accent-hover"
             >
               Начать бесплатно
             </Link>

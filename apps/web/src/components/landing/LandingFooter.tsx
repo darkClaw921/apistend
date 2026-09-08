@@ -1,0 +1,164 @@
+import Link from 'next/link'
+import type { Route } from 'next'
+import { GitBranch, Package, PlugZap, type LucideIcon } from 'lucide-react'
+import { FooterStatus } from './FooterStatus'
+
+/**
+ * Футер лендинга. Макет: «Footer» в APIStend.pen (экспорт 16_Footer.html).
+ *
+ * Раскладка перенесена как в макете: слева бренд с описанием и кнопками-иконками,
+ * справа колонки ссылок, внизу отбивка со статусом и копирайтом. Изменён состав:
+ * в макете пять колонок и восемнадцать пунктов, из которых существуют единицы —
+ * «Дорожная карта», «Блог», «Контакты», «Оферта», «Справочник ошибок», «Статус
+ * сервиса» и четыре правовые страницы не существуют ни как страница, ни как файл
+ * в репозитории. Мёртвый пункт в футере хуже отсутствующего, поэтому колонки
+ * собраны заново из настоящих адресов: якорей этой страницы, каталога методов
+ * и файлов репозитория. Осталось три колонки — сетка разложена под три, а не
+ * добита заглушками до пяти.
+ */
+
+const GITHUB = 'https://github.com/darkClaw921/apistend'
+const NPM = 'https://www.npmjs.com/package/apistend'
+
+type FooterLinkItem = { label: string; href: string; external?: boolean }
+
+/* Проверено на дереве репозитория: каталоги docs/ и examples/ есть, LICENSE есть. */
+const FOOTER_COLUMNS: ReadonlyArray<{ title: string; links: ReadonlyArray<FooterLinkItem> }> = [
+  {
+    title: 'Продукт',
+    links: [
+      { label: 'Сервисы', href: '#services' },
+      { label: 'Возможности', href: '#features' },
+      { label: 'Вебхуки', href: '#webhooks' },
+      { label: 'Каталог методов', href: '/catalog' },
+      { label: 'Цены', href: '#pricing' },
+    ],
+  },
+  {
+    title: 'Разработчикам',
+    links: [
+      { label: 'Быстрый старт', href: '#how' },
+      { label: 'Документация', href: `${GITHUB}/tree/main/docs`, external: true },
+      { label: 'Примеры интеграций', href: `${GITHUB}/tree/main/examples`, external: true },
+      /* Пункт макета «CLI и агент» ведёт в npm: отдельной страницы про CLI нет,
+         а пакет apistend — это и есть CLI с командой listen. */
+      { label: 'CLI apistend', href: NPM, external: true },
+    ],
+  },
+  {
+    title: 'Проект',
+    links: [
+      { label: 'О проекте', href: `${GITHUB}#readme`, external: true },
+      { label: 'Исходный код', href: GITHUB, external: true },
+      /* Замена «Контактов» из макета: формы обратной связи нет, обсуждения идут
+         в трекере — туда же ведёт кнопка «Поговорить с командой» в CTA. */
+      { label: 'Задачи и обсуждения', href: `${GITHUB}/issues`, external: true },
+      { label: 'Лицензия MIT', href: `${GITHUB}/blob/main/LICENSE`, external: true },
+    ],
+  },
+]
+
+/**
+ * Кнопки-иконки. В макете их три (github, send, youtube), но канала в Telegram
+ * и на YouTube у проекта нет — оставлены две с настоящими адресами.
+ * Брендовых иконок в lucide 1.x больше нет, поэтому берём ближайшие по смыслу,
+ * как уже сделано в Compatible.
+ */
+const SOCIALS: ReadonlyArray<{ label: string; href: string; Icon: LucideIcon }> = [
+  { label: 'Исходный код на GitHub', href: GITHUB, Icon: GitBranch },
+  { label: 'Пакет apistend в npm', href: NPM, Icon: Package },
+]
+
+export function LandingFooter() {
+  return (
+    <footer className="border-t border-night-3 bg-night px-[20px] pt-[56px] pb-[32px] md:px-[80px]">
+      <div className="mx-auto flex max-w-[1280px] flex-col gap-[40px]">
+        {/* До md бренд стоит над колонками: 280 px бренда и три колонки в строку
+            не помещаются уже на планшете. */}
+        <div className="flex flex-col gap-[32px] md:flex-row md:gap-[40px]">
+          <div className="flex flex-col items-start gap-[14px] md:w-[280px] md:shrink-0">
+            <Link href="/" className="flex items-center gap-[10px]">
+              <span className="flex h-[28px] w-[28px] items-center justify-center rounded-[8px] bg-accent">
+                <PlugZap size={16} className="text-white" aria-hidden />
+              </span>
+              <span className="text-[16px] font-bold tracking-[-0.3px] text-white">APIStend</span>
+            </Link>
+
+            <p className="text-[13px] leading-[21px] text-nav-text">
+              Демо-копии российских API для разработки и тестирования интеграций.
+            </p>
+
+            <ul className="flex items-center gap-[8px] pt-[6px]">
+              {SOCIALS.map(({ label, href, Icon }) => (
+                <li key={label}>
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={label}
+                    title={label}
+                    /* В экспорте радиус 8 px, но в проекте шкала 6/10/14/20 — ближайший. */
+                    className="flex h-[30px] w-[30px] items-center justify-center rounded-[10px] bg-code-surface text-nav-text transition-colors hover:text-white"
+                  >
+                    <Icon size={15} aria-hidden />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Три колонки вместо пяти: на телефоне — две, дальше все три в строку. */}
+          <nav
+            aria-label="Разделы сайта"
+            className="grid flex-1 grid-cols-2 gap-x-[20px] gap-y-[32px] sm:grid-cols-3"
+          >
+            {FOOTER_COLUMNS.map((col) => (
+              <div key={col.title} className="flex flex-col items-start gap-[12px]">
+                <p className="text-[13px] font-semibold text-white">{col.title}</p>
+                <ul className="flex flex-col gap-[12px]">
+                  {col.links.map((link) => (
+                    <li key={link.label}>
+                      <FooterLink {...link} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </nav>
+        </div>
+
+        {/*
+          Отбивка. В макете справа стоят «Политика конфиденциальности» и «Условия
+          использования» — таких страниц нет, обе ссылки убраны. Копирайт занял
+          освободившееся место справа; текст оговорки о товарных знаках взят
+          дословно из текущего лендинга — он юридически выверен.
+        */}
+        <div className="flex flex-col gap-[16px] border-t border-night-line pt-[24px] md:flex-row md:items-center md:justify-between md:gap-[24px]">
+          <FooterStatus />
+          <p className="text-[12px] leading-[1.6] text-code-muted md:max-w-[860px] md:text-right">
+            © 2026 APIStend. Демо-копии не связаны с ООО «1С-Битрикс», ООО «Интернет Решения» (Ozon)
+            и ООО «Вайлдберриз». Названия и товарные знаки принадлежат правообладателям
+            и используются исключительно для указания совместимости.
+          </p>
+        </div>
+      </div>
+    </footer>
+  )
+}
+
+const LINK_CLASS = 'text-[13px] text-nav-text transition-colors hover:text-white'
+
+function FooterLink({ label, href, external }: FooterLinkItem) {
+  if (external) {
+    return (
+      <a href={href} target="_blank" rel="noreferrer" className={LINK_CLASS}>
+        {label}
+      </a>
+    )
+  }
+  // Якорь этой же страницы — обычной ссылкой: работает и до гидратации.
+  if (href.startsWith('#')) return <a href={href} className={LINK_CLASS}>{label}</a>
+  // typedRoutes проверяет только литералы, а href здесь приходит из массива —
+  // приведение типа тут предписано документацией Next.
+  return <Link href={href as Route} className={LINK_CLASS}>{label}</Link>
+}

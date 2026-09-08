@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import Link from 'next/link'
 import { PlugZap } from 'lucide-react'
-import { API_URL } from '@/lib/api'
+import { useServiceHealth } from '@/lib/health'
 
 /**
  * Каркас экранов входа и регистрации. Макет: «Экран — Вход» и «Экран — Регистрация»
@@ -88,15 +88,7 @@ function AuthTop() {
  * вместо неё спрашиваем /health и говорим то, что он ответил.
  */
 function AuthBottom() {
-  const [state, setState] = useState<'checking' | 'ok' | 'down'>('checking')
-
-  useEffect(() => {
-    let cancelled = false
-    fetch(`${API_URL}/health`)
-      .then((r) => { if (!cancelled) setState(r.ok ? 'ok' : 'down') })
-      .catch(() => { if (!cancelled) setState('down') })
-    return () => { cancelled = true }
-  }, [])
+  const state = useServiceHealth()
 
   const label = state === 'checking' ? 'проверяем сервис…'
     : state === 'ok' ? 'все системы работают'

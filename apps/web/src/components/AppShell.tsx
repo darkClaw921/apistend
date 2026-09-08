@@ -2,9 +2,11 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
+import { Dialog } from '@apistend/ui'
 import { api, ApiError } from '@/lib/api'
 import type { Me } from '@/lib/types'
 import { Sidebar } from './Sidebar'
+import { GlobalSearch } from './GlobalSearch'
 
 /**
  * Каркас приложения: сайдбар 248 + шапка 64 + область контента с паддингом 24.
@@ -25,6 +27,12 @@ interface ShellState {
    * одно и то же значение незачем.
    */
   openMenu: () => void
+  /**
+   * Открыть палитру поиска. Раньше она жила внутри шапки, но в новом макете
+   * поиск есть и в сайдбаре: два владельца одного диалога означали бы два
+   * обработчика ⌘K и два наложенных окна по одному нажатию.
+   */
+  openSearch: () => void
 }
 
 /**
@@ -60,11 +68,42 @@ export function useProjectCrumb(section: string): string {
   return shell ? `Проект «${shell.project}» / ${section}` : section
 }
 
+/**
+ * Палитра поиска каркаса: состояние, горячая клавиша и сам диалог.
+ *
+ * Отдельным хуком — потому что каркасов два: обычный кабинет и каталог,
+ * открытый гостю. Дублировать в них ⌘K означало бы однажды разойтись.
+ */
+export function useSearchPalette(): { openSearch: () => void; searchDialog: ReactNode } {
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setOpen(true)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+
+  return {
+    openSearch: () => setOpen(true),
+    searchDialog: open ? (
+      <Dialog title="Поиск по каталогу" onClose={() => setOpen(false)} width={640}>
+        <GlobalSearch onClose={() => setOpen(false)} />
+      </Dialog>
+    ) : null,
+  }
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter()
   const [me, setMe] = useState<Me | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const { openSearch, searchDialog } = useSearchPalette()
 
   async function load() {
     try {
@@ -115,16 +154,19 @@ export function AppShell({ children }: { children: ReactNode }) {
   const project = me.sandboxes[0]?.project ?? 'Без названия'
 
   return (
-    <ShellContext.Provider value={{ me, sandboxId, project, refresh: load, openMenu: () => setMenuOpen(true) }}>
+    <ShellContext.Provider
+      value={{ me, sandboxId, project, refresh: load, openMenu: () => setMenuOpen(true), openSearch }}
+    >
       <div className="flex h-screen overflow-hidden bg-bg">
         <Sidebar
           me={me}
-          requestsThisMonth={me.usage.requestsThisMonth}
           open={menuOpen}
           onClose={() => setMenuOpen(false)}
+          onSearch={openSearch}
         />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
       </div>
+      {searchDialog}
     </ShellContext.Provider>
   )
 }
