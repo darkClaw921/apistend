@@ -18,8 +18,8 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
-permissions:
-  contents: read
+# Джобе не нужен ни репозиторий, ни токен: она только называет коммит.
+permissions: {}
 
 jobs:
   deploy:
@@ -34,71 +34,20 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Код
-        uses: actions/checkout@v6
-        with:
-          # Именно тот коммит, который проверил CI, а не текущая голова main.
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-          # Без этого checkout делает git clean -ffdx и сносит node_modules:
-          # на одном ядре это добавляет к каждому деплою десяток минут.
-          clean: false
-          fetch-depth: 1
-
-      - name: Зависимости
-        # DATABASE_URL нужна уже здесь: postinstall у apps/api вызывает
-        # prisma generate, а тот читает конфиг и падает без переменной.
-        # --prod=false обязателен при NODE_ENV=production: prisma CLI
-        # и dotenv лежат в devDependencies, а dotenv нужен в рантайме.
-        run: |
-          set -a; . /etc/apistend/app.env; set +a
-          pnpm install --frozen-lockfile --prod=false
-
-      - name: Клиент Prisma
-        run: |
-          set -a; . /etc/apistend/app.env; set +a
-          pnpm --filter @apistend/api exec prisma generate
-
-      - name: Миграции
-        run: |
-          set -a; . /etc/apistend/app.env; set +a
-          pnpm --filter @apistend/api exec prisma migrate deploy
-
-      - name: Останов кабинета на время сборки
-        # next build перезаписывает .next под работающим процессом, а на 1 vCPU
-        # им ещё и тесно вдвоём. Мок-шлюз при этом продолжает отвечать.
-        run: sudo /usr/local/bin/apistend-web-stop
-
-      - name: Сборка кабинета
-        # Корневой `pnpm build` использовать нельзя: задача сборки apps/api
-        # падает на TS5096 и утягивает за собой параллельную сборку web.
-        run: |
-          set -a; . /etc/apistend/app.env; set +a
-          cd apps/web
-          NODE_OPTIONS=--max-old-space-size=1400 pnpm exec next build
-
-      - name: Запуск
-        if: always()
-        run: sudo /usr/local/bin/apistend-restart
-
-      - name: Проверка
-        run: |
-          for i in $(seq 1 30); do
-            api=$(curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health || true)
-            web=$(curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/ || true)
-            if [ "$api" = "200" ] && [ "$web" = "200" ]; then
-              echo "API и кабинет отвечают"
-              curl -fsS http://127.0.0.1:8080/health | head -c 400; echo
-              exit 0
-            fi
-            sleep 4
-          done
-          echo "Не поднялось: API=$api WEB=$web"
-          journalctl -u apistend-api -u apistend-web -n 60 --no-pager 2>/dev/null || true
-          exit 1
-
-      - name: Уборка
-        if: always()
-        run: |
-          rm -rf apps/web/.next/dev
-          pnpm store prune >/dev/null 2>&1 || true
-          df -h / | tail -1
+      # Здесь намеренно нет ни checkout, ни установки зависимостей, ни сборки.
+      #
+      # Всё это делает /usr/local/bin/apistend-deploy — скрипт, который лежит
+      # на самом сервере и в репозиторий не входит. Причина в том, что условия
+      # выше защищают только ЭТОТ файл: раннер обслуживает весь репозиторий, а
+      # в pull request из форка можно принести собственный workflow с
+      # `runs-on: self-hosted`, и его никакой `if` отсюда не остановит.
+      #
+      # Поэтому раннер работает от пользователя runner, который не читает
+      # /etc/apistend, не пишет в /srv/apistend/current и через sudo может
+      # запустить ровно один скрипт. Скрипт разворачивает только коммит,
+      # уже влитый в main (git merge-base --is-ancestor), — назвать чужой
+      # коммит бесполезно.
+      - name: Развернуть
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: sudo -n /usr/local/bin/apistend-deploy "$SHA"
