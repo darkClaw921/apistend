@@ -289,6 +289,12 @@ describe('адрес получателя', () => {
     for (const a of ['127.0.0.1', '10.1.2.3', '192.168.0.5', '172.16.0.1', '169.254.169.254', '::1', 'fd00::1']) {
       expect(isPrivateAddress(a), a).toBe(true)
     }
+    // IPv4 в обёртке IPv6 — в обеих записях. Вторую даёт new URL: адрес
+    // ::ffff:127.0.0.1 он приводит к ::ffff:7f00:1, и такая запись обходила
+    // проверку насквозь.
+    for (const a of ['::ffff:127.0.0.1', '::ffff:7f00:1', '::ffff:10.0.0.1', '::ffff:a00:1']) {
+      expect(isPrivateAddress(a), a).toBe(true)
+    }
     for (const a of ['8.8.8.8', '1.1.1.1', '2606:4700::1111']) {
       expect(isPrivateAddress(a), a).toBe(false)
     }

@@ -38,9 +38,20 @@ export function isPrivateAddress(address: string): boolean {
     if (s === '::1' || s === '::') return true
     if (s.startsWith('fc') || s.startsWith('fd')) return true // уникальные локальные
     if (s.startsWith('fe80')) return true // link-local
-    // IPv4, завёрнутый в IPv6: ::ffff:127.0.0.1
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(s)
-    if (mapped) return isPrivateAddress(mapped[1]!)
+    // IPv4, завёрнутый в IPv6. Записывается двумя способами, и адресную строку
+    // браузер с new URL приводит ко второму: ::ffff:127.0.0.1 превращается
+    // в ::ffff:7f00:1. Пока разбиралась только десятичная форма, обёрнутый
+    // localhost проходил проверку насквозь.
+    const decimal = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(s)
+    if (decimal) return isPrivateAddress(decimal[1]!)
+
+    const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(s)
+    if (hex) {
+      const high = parseInt(hex[1]!, 16)
+      const low = parseInt(hex[2]!, 16)
+      const v4 = [high >> 8, high & 0xff, low >> 8, low & 0xff].join('.')
+      return isPrivateAddress(v4)
+    }
     return false
   }
   return false

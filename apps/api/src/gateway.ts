@@ -7,6 +7,7 @@ import { extractRawKey, resolveApiKey } from './lib/api-key.ts'
 import { checkRateLimit } from './lib/rate-limit.ts'
 import { enqueueRequestLog } from './lib/log-buffer.ts'
 import { recordKeyUsage } from './lib/key-usage.ts'
+import { maskSecretsInText } from './lib/keys.ts'
 import { requestId as newRequestId } from './lib/ids.ts'
 import { unauthorizedError } from '@apistend/shared'
 import { appTokenExpired, resolveAppToken, type AppContext } from './b24/tokens.ts'
@@ -186,7 +187,7 @@ async function handle(
         scenario,
         responseSource: 'app-context',
         requestHeaders: sanitizeHeaders(req.headers as Record<string, unknown>),
-        requestBody: parsedBody ? JSON.stringify(parsedBody).slice(0, 8_000) : null,
+        requestBody: parsedBody ? maskSecretsInText(JSON.stringify(parsedBody)).slice(0, 8_000) : null,
         responseHeaders: {},
         // Ответ зависит от состояния портала и движком не восстанавливается — храним.
         responseBody: payload.slice(0, 8_000),
@@ -244,7 +245,7 @@ async function handle(
     responseSource: result.responseSource,
     requestHeaders: sanitizeHeaders(req.headers as Record<string, unknown>),
     // Тело запроса — данные пользователя, восстановить их неоткуда, храним (усечённо).
-    requestBody: parsedBody ? JSON.stringify(parsedBody).slice(0, 8_000) : null,
+    requestBody: parsedBody ? maskSecretsInText(JSON.stringify(parsedBody)).slice(0, 8_000) : null,
     // Заголовки ответа генерирует сам шлюз — они выводятся из метода и сценария,
     // хранить их построчно незачем. Восстанавливаются вместе с телом.
     responseHeaders: {},

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../db.ts'
 import { hashPassword, verifyPassword, generateKey } from '../lib/keys.ts'
-import { clearSession, issueSession, readSession } from '../lib/auth.ts'
+import { clearSession, issueSession, readSession, revokeSession } from '../lib/auth.ts'
 
 /** Вход и регистрация по логину и паролю. Без подтверждения почты и OAuth. */
 
@@ -61,7 +61,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       },
     })
 
-    await issueSession(reply, { userId: user.id, email: user.email })
+    await issueSession(reply, { userId: user.id, email: user.email }, req)
     return reply.code(201).send({
       user: { id: user.id, email: user.email, name: user.name, initials: user.initials },
       sandbox: { id: sandbox.id, name: sandbox.name },
@@ -85,11 +85,14 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: 'Неверная почта или пароль' })
     }
 
-    await issueSession(reply, { userId: user.id, email: user.email })
+    await issueSession(reply, { userId: user.id, email: user.email }, req)
     return reply.send({ user: { id: user.id, email: user.email, name: user.name, initials: user.initials } })
   })
 
-  app.post('/api/auth/logout', async (_req, reply) => {
+  app.post('/api/auth/logout', async (req, reply) => {
+    // Гасим запись сессии, а не только cookie: иначе скопированный токен
+    // продолжал бы работать до конца своего срока.
+    await revokeSession(req)
     clearSession(reply)
     return reply.send({ ok: true })
   })
