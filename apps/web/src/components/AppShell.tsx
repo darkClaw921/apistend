@@ -19,7 +19,11 @@ interface ShellState {
   refresh: () => Promise<void>
 }
 
-const ShellContext = createContext<ShellState | null>(null)
+/**
+ * Экспортируется ради каркаса каталога: тот открыт и гостям, поэтому не может
+ * использовать AppShell целиком, но обязан дать вошедшему тот же контекст.
+ */
+export const ShellContext = createContext<ShellState | null>(null)
 
 export function useShell(): ShellState {
   const ctx = useContext(ShellContext)
