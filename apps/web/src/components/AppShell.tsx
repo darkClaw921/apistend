@@ -17,6 +17,12 @@ interface ShellState {
   me: Me
   sandboxId: string
   refresh: () => Promise<void>
+  /**
+   * Открыть сайдбар-шторку на узком экране. Живёт в контексте, а не в пропсах
+   * каждого экрана: шапку рисуют одиннадцать страниц, и протаскивать через все
+   * одно и то же значение незачем.
+   */
+  openMenu: () => void
 }
 
 /**
@@ -43,6 +49,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter()
   const [me, setMe] = useState<Me | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   async function load() {
     try {
@@ -92,9 +99,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   const sandboxId = me.sandboxes[0]?.id ?? ''
 
   return (
-    <ShellContext.Provider value={{ me, sandboxId, refresh: load }}>
+    <ShellContext.Provider value={{ me, sandboxId, refresh: load, openMenu: () => setMenuOpen(true) }}>
       <div className="flex h-screen overflow-hidden bg-bg">
-        <Sidebar me={me} requestsThisMonth={me.usage.requestsThisMonth} />
+        <Sidebar
+          me={me}
+          requestsThisMonth={me.usage.requestsThisMonth}
+          open={menuOpen}
+          onClose={() => setMenuOpen(false)}
+        />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
       </div>
     </ShellContext.Provider>

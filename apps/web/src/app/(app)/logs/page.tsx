@@ -6,7 +6,7 @@ import {
   ChevronLeft, ChevronRight, FileDown, Pause, Play, RefreshCw, RotateCcw, X,
 } from 'lucide-react'
 import {
-  ButtonSecondary, CounterChip, DataTable, ErrorState, MethodBadge, Panel, PanelFooter,
+  ButtonSecondary, CounterChip, DataTable, DetailPane, ErrorState, MethodBadge, Panel, PanelFooter,
   PanelHeader, SearchField, SkeletonRows, StatusChip, StatusCodeChip, EmptyState,
   ServiceDot, formatBytes, formatInt, formatMs, formatPercent, formatTime, formatTimeMs, meta,
 } from '@apistend/ui'
@@ -316,7 +316,11 @@ export default function LogsPage() {
             />
           </Panel>
 
-          <LogDetailPanel row={selected} onClose={() => setSelected(null)} />
+          {/* Деталка появляется только по выбору строки, поэтому здесь хватает
+              самого факта выбора — отдельное состояние шторке не нужно. */}
+          <DetailPane open={!!selected} onClose={() => setSelected(null)} className="w-[420px] shrink-0 max-xl:w-[min(460px,100vw)]">
+            <LogDetailPanel row={selected} onClose={() => setSelected(null)} />
+          </DetailPane>
         </div>
       </main>
     </>

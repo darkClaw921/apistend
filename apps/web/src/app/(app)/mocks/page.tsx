@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Braces, Check, Copy, Play, Plus, ArrowUpDown, ArrowRight } from 'lucide-react'
 import {
-  ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, EmptyState, ErrorState, MethodBadge,
+  ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, DetailPane, EmptyState, ErrorState, MethodBadge,
   Overline, Panel, PanelFooter, PanelHeader, PlaceholderChip, SearchField, SegmentControl,
   SkeletonRows, Slider, StatusChip, Tabs, Toggle, formatCalls, formatMs, formatRelative,
   formatRules, meta,
@@ -42,6 +42,8 @@ export default function MocksPage() {
   const [globalSearch, setGlobalSearch] = useState('')
   const [creating, setCreating] = useState(false)
   const [importing, setImporting] = useState(false)
+  // На узком экране редактор — шторка: открывается по выбору мока из списка.
+  const [editorOpen, setEditorOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tab, setTab] = useState('response')
 
@@ -181,7 +183,7 @@ export default function MocksPage() {
 
         <div className="flex min-h-0 flex-1 gap-[20px]">
           {/* Список моков */}
-          <Panel className="w-[420px] shrink-0">
+          <Panel className="w-[420px] shrink-0 max-xl:w-full">
             <PanelHeader
               title="Мои моки"
               count={<CounterChip>{data?.counts.all ?? '—'}</CounterChip>}
@@ -208,7 +210,7 @@ export default function MocksPage() {
                     <li key={m.id}>
                       <button
                         type="button"
-                        onClick={() => setSelectedId(m.id)}
+                        onClick={() => { setSelectedId(m.id); setEditorOpen(true) }}
                         className={`flex w-full flex-col gap-[5px] border-b border-border px-[16px] py-[12px] text-left transition-colors last:border-b-0 ${
                           m.id === selectedId ? 'bg-accent-soft' : 'hover:bg-surface-2'
                         }`}
@@ -258,8 +260,10 @@ export default function MocksPage() {
             />
           </Panel>
 
-          {/* Редактор */}
-          <Panel className="min-w-0 flex-1">
+          {/* Редактор. До 1280 px он и есть та самая «правая панель-деталка»,
+              которую макет каркаса требует сворачивать в шторку. */}
+          <DetailPane open={editorOpen} onClose={() => setEditorOpen(false)} className="min-w-0 flex-1">
+          <Panel className="min-h-0 min-w-0 flex-1">
             {!draft ? (
               <EmptyState title="Мок не выбран" description="Выберите мок в списке слева" />
             ) : (
@@ -431,6 +435,7 @@ export default function MocksPage() {
               </>
             )}
           </Panel>
+          </DetailPane>
         </div>
       </main>
 
