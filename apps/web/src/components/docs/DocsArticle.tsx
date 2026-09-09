@@ -30,14 +30,26 @@ export function DocsArticle({ page }: { page: DocPage }) {
             <p className="mt-[10px] text-[15px] leading-[1.6] text-text-secondary">{page.description}</p>
           ) : null}
 
+          {/*
+            Оглавление на узком экране — НАД текстом, а не под ним.
+            Справа для него места нет (колонка появляется только с 1280 px),
+            а внизу страницы карта бесполезна: её видит лишь тот, кто уже всё
+            пролистал. Свёрнуто, чтобы на телефоне не отодвигать сам текст:
+            строка «На этой странице» занимает ровно строку.
+          */}
+          {page.headings.length > 1 ? (
+            <details className="mt-[18px] rounded-[10px] border border-border bg-surface px-[14px] py-[10px] xl:hidden">
+              <summary className="cursor-pointer list-none text-[12px] font-semibold tracking-[0.4px] text-text-secondary uppercase marker:content-none [&::-webkit-details-marker]:hidden">
+                На этой странице · {page.headings.length}
+              </summary>
+              <div className="mt-[10px]">
+                <DocsToc headings={page.headings} hideLabel />
+              </div>
+            </details>
+          ) : null}
+
           <div className="mt-[8px]">
             <DocMarkdown nodes={page.nodes} headings={page.headings} />
-          </div>
-
-          {/* Оглавление на узком экране — под текстом: справа для него места нет,
-              а выбрасывать его совсем значит оставить длинную страницу без карты. */}
-          <div className="mt-[36px] border-t border-border pt-[20px] xl:hidden">
-            <DocsToc headings={page.headings} />
           </div>
 
           <footer className="mt-[36px] flex flex-col gap-[16px] border-t border-border pt-[20px]">

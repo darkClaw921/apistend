@@ -13,7 +13,7 @@ import type { DocHeading } from '@/lib/docs/source'
  * Полоса наблюдения сдвинута вниз от шапки (64 px) и обрезана снизу, чтобы
  * «текущим» считался заголовок у верхнего края экрана, а не любой видимый.
  */
-export function DocsToc({ headings }: { headings: DocHeading[] }) {
+export function DocsToc({ headings, hideLabel = false }: { headings: DocHeading[]; hideLabel?: boolean }) {
   const [active, setActive] = useState<string | null>(headings[0]?.id ?? null)
 
   useEffect(() => {
@@ -57,7 +57,10 @@ export function DocsToc({ headings }: { headings: DocHeading[] }) {
 
   return (
     <nav aria-label="Содержание страницы" className="flex flex-col gap-[8px]">
-      <p className="text-[10px] font-semibold tracking-[0.6px] text-text-tertiary uppercase">На этой странице</p>
+      {/* На узком экране заголовок уже есть в самой сворачивающейся строке. */}
+      {hideLabel ? null : (
+        <p className="text-[10px] font-semibold tracking-[0.6px] text-text-tertiary uppercase">На этой странице</p>
+      )}
       <ul className="flex flex-col gap-[1px] border-l border-border">
         {headings.map((h) => (
           <li key={h.id}>
