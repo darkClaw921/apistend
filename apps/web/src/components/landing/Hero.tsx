@@ -6,7 +6,8 @@ import { useRouter } from 'next/navigation'
 import { ArrowRight, Search, Terminal } from 'lucide-react'
 import { ServiceSquare, cn, formatMethods } from '@apistend/ui'
 import { SERVICE_PROFILES, type Readiness } from '@apistend/shared'
-import type { CatalogListItem } from '@/lib/types'
+import type { ServiceSummary } from '@/lib/types'
+import { ServiceUsageCards } from './ServiceUsageCards'
 import { READINESS_LABEL } from '@/lib/readiness'
 
 /**
@@ -39,15 +40,19 @@ const READINESS_DOT: Record<Readiness, string> = {
 
 export function Hero({
   totalMethods,
-  featured,
+  services,
 }: {
   /** Всего методов в каталоге. null — API недоступен, число в тексте не показываем. */
   totalMethods: number | null
-  /** Витрина каталога. Пустой массив — API недоступен, сетку карточек не рисуем. */
-  featured: CatalogListItem[]
+  /**
+   * Сервисы с живыми счётчиками. Пустой массив — API недоступен, витрину не рисуем.
+   *
+   * Раньше здесь была витрина из шести отдельных методов. На первом экране человек
+   * ещё выбирает сервис, а не метод, и три карточки сервиса с настоящими числами
+   * отвечают на его вопрос точнее, чем шесть случайных методов из каталога.
+   */
+  services: ServiceSummary[]
 }) {
-  // Шесть карточек 3×2 из макета. Придёт больше — лишнее в hero не помещается.
-  const cards = featured.slice(0, 6)
 
   return (
     <section className="bg-night px-[20px] pt-[56px] pb-[72px] md:px-[80px]">
@@ -101,64 +106,7 @@ export function Hero({
           Или создайте свою песочницу
         </Link>
 
-        {cards.length > 0 && (
-          <div className="mt-[40px] grid w-full gap-[16px] sm:grid-cols-2 lg:grid-cols-3">
-            {cards.map((m) => {
-              const service = SERVICE_PROFILES[m.serviceCode]
-              const http = m.httpMethod.toUpperCase()
-              return (
-                <article
-                  key={m.id}
-                  /* min-w-0: карточка — элемент сетки, а у него min-width: auto, поэтому
-                     нерушимый путь в моноширинном шрифте задавал ей минимальную ширину
-                     и на 320 px страница получала горизонтальный скролл. */
-                  className="flex h-full min-w-0 flex-col gap-[10px] rounded-[10px] border border-night-line bg-night-2 p-[16px] text-left"
-                >
-                  <div className="flex items-center gap-[10px]">
-                    <ServiceSquare service={m.serviceCode} size={26} />
-                    {/* В макете здесь техническое имя вида crm.deal.list. В каталоге такого поля
-                        нет: у Ozon и Wildberries имён-методов не существует, есть путь. Поэтому
-                        имя — человекочитаемое название метода, а моноширинным идёт путь под ним. */}
-                    <h2 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-white">
-                      {m.title}
-                    </h2>
-                    <span
-                      className={cn(
-                        'shrink-0 rounded-[4px] px-[7px] py-[3px] font-mono text-[11px] font-bold tracking-[0.4px]',
-                        HTTP_TONE[http] ?? HTTP_TONE_FALLBACK,
-                      )}
-                    >
-                      {http}
-                    </span>
-                  </div>
-
-                  {/* Путь длиннее карточки обрезаем: перенос пути ломает сетку из шести карточек,
-                      полный путь виден в каталоге. */}
-                  <p className="truncate font-mono text-[11px] text-code-muted" title={m.path}>
-                    {m.path}
-                  </p>
-
-                  <p className="line-clamp-2 text-[12px] leading-[17px] text-night-dim">
-                    {m.description}
-                  </p>
-
-                  <div className="mt-auto flex items-center justify-between gap-[8px] border-t border-night-line pt-[10px]">
-                    <span className="truncate text-[11px] text-code-muted">{service.title}</span>
-                    <span className="flex shrink-0 items-center gap-[5px]">
-                      <span
-                        className={cn('h-[5px] w-[5px] rounded-full', READINESS_DOT[m.readiness])}
-                        aria-hidden
-                      />
-                      <span className="text-[11px] text-night-dim">
-                        {READINESS_LABEL[m.readiness]}
-                      </span>
-                    </span>
-                  </div>
-                </article>
-              )
-            })}
-          </div>
-        )}
+        <ServiceUsageCards initial={services} />
 
         <Link
           href="/catalog"
