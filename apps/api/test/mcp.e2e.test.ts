@@ -254,6 +254,43 @@ describe('мок mcp.apify.com', () => {
     expect(Date.parse(a.run.finishedAt)).toBeGreaterThan(Date.parse(a.run.startedAt))
   })
 
+  it('instructions несут и боевой текст, и предупреждение песочницы', async () => {
+    const res = await rpc('/apify/mcp', 'initialize', { protocolVersion: '2025-06-18' })
+    const instructions = (res.frame as { result: { instructions: string } }).result.instructions
+    // Боевой текст на месте дословно — по нему модель выбирает и запускает акторов.
+    expect(instructions).toContain('Apify is the world')
+    // И следом — то, чего в боевом тексте быть не может: это песочница.
+    expect(instructions).toContain('APIStend sandbox (not Apify)')
+    expect(instructions).toContain('_apistend.outputSource')
+    expect(instructions).toContain('/v2/acts/')
+  })
+
+  it('запуск сообщает, откуда взялись строки', async () => {
+    const fromReadme = await rpc('/apify/mcp', 'tools/call', {
+      name: 'call-actor',
+      arguments: { actor: 'memo23/wildberries-scraper', input: { queries: ['кроссовки'] } },
+    })
+    const structured = (fromReadme.frame as {
+      result: {
+        content: Array<{ text: string }>
+        structuredContent: { _apistend: { sandbox: boolean; outputSource: string } }
+      }
+    }).result
+    expect(structured.structuredContent._apistend).toEqual({ sandbox: true, outputSource: 'readme-examples' })
+    // Модель читает текст, а не структуру, — предупреждение обязано быть и там.
+    expect(structured.content[0]!.text).toContain('APIStend')
+    expect(structured.content[0]!.text).toContain('readme')
+
+    const fromSchema = await rpc('/apify/mcp', 'tools/call', {
+      name: 'call-actor',
+      arguments: { actor: 'apify/instagram-scraper', input: { resultsLimit: 1 } },
+    })
+    expect(
+      (fromSchema.frame as { result: { structuredContent: { _apistend: { outputSource: string } } } })
+        .result.structuredContent._apistend.outputSource,
+    ).toBe('dataset-schema')
+  })
+
   it('актор без схемы датасета отдаёт строки, показанные автором в readme', async () => {
     // У memo23/wildberries-scraper storages.dataset пуст, зато в readme автор
     // показал строки результата — ради них readme и снимается.
@@ -335,6 +372,23 @@ describe('мок mcp.apify.com', () => {
 })
 
 describe('собственный MCP-сервер APIStend', () => {
+  it('instructions предупреждают, что данные демонстрационные, и называют мок MCP Apify', async () => {
+    const res = await rpc('/mcp', 'initialize', { protocolVersion: '2025-06-18' })
+    const instructions = (res.frame as { result: { instructions: string } }).result.instructions
+    expect(instructions).toContain('Данные демонстрационные')
+    expect(instructions).toContain('/apify/mcp')
+    expect(instructions).toContain('_apistend.outputSource')
+  })
+
+  it('list_services называет адрес мока MCP у Apify и молчит о нём у остальных', async () => {
+    const res = await rpc('/mcp', 'tools/call', { name: 'list_services', arguments: {} })
+    const services = (res.frame as {
+      result: { structuredContent: { services: Array<{ code: string; mcpPath: string | null }> } }
+    }).result.structuredContent.services
+    expect(services.find((s) => s.code === 'apify')?.mcpPath).toBe('/apify/mcp')
+    expect(services.find((s) => s.code === 'ozon')?.mcpPath).toBeNull()
+  })
+
   it('представляется своим именем, а не именем сервиса', async () => {
     const res = await rpc('/mcp', 'initialize', { protocolVersion: '2025-06-18' })
     const result = (res.frame as { result: { serverInfo: { name: string } } }).result

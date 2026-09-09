@@ -130,6 +130,16 @@ function requestedCount(input: Record<string, unknown>): number {
  * ровно то, чего проект не делает: по такому полю пишут разбор ответа, и
  * несуществующее поле обошлось бы дороже отсутствующего.
  */
+/** Откуда взята форма выхода актора. Уходит в ответ инструмента: агенту важно, чему верить. */
+export type ActorOutputSource = 'dataset-schema' | 'readme-examples' | 'none'
+
+export function actorOutputSource(actor: ActorSnapshotEntry): ActorOutputSource {
+  if (actor.hasNoDataset) return 'none'
+  const fields = (actor.datasetFields as { fields?: JsonSchema } | null)?.fields
+  if (fields?.properties) return 'dataset-schema'
+  return (actor.outputExamples?.length ?? 0) > 0 ? 'readme-examples' : 'none'
+}
+
 export function sampleFromActorOutput(
   actor: ActorSnapshotEntry,
   input: Record<string, unknown>,

@@ -186,7 +186,16 @@ export const apistendMcpServer: McpServerDefinition = {
     'Ответы моков детерминированы: один и тот же вызов всегда даёт одно и то же тело. ' +
     'Поле responseSource говорит, чему верить: example — значения из документации сервиса, ' +
     'schema — форма из спецификации при выдуманных значениях, generic — только то, ' +
-    'что клиент не упадёт на разборе.',
+    'что клиент не упадёт на разборе.\n\n' +
+    'Данные демонстрационные: настоящих заказов, товаров и сделок за ними нет. ' +
+    'Форма ответа настоящая, значения — нет; выводов о рынке или об аккаунте ' +
+    'по ним делать нельзя.\n\n' +
+    'У Apify, кроме REST, замокан и его MCP-сервер: адрес /apify/mcp отвечает вместо ' +
+    'mcp.apify.com тем же набором инструментов, с настоящими схемами входа акторов. ' +
+    'Запуск актора там не выполняется: строки результата берутся из схемы полей ' +
+    'датасета или из примеров, которые автор актора показал в readme, а если он ' +
+    'не описал результат никак — список пуст, и менять вход бессмысленно. ' +
+    'Каждый запуск сообщает источник в поле _apistend.outputSource.',
 
   tools: () => TOOLS,
 
@@ -203,10 +212,17 @@ export const apistendMcpServer: McpServerDefinition = {
           rateLimit: p.rateLimit.description,
           methodsInCatalog: engine.catalog(p.code).length,
           webhookNotes: p.webhook.notes,
+          // Мок MCP есть пока только у Apify — единственного из четырёх, у кого
+          // MCP-сервер есть и в бою.
+          mcpPath: p.code === 'apify' ? '/apify/mcp' : null,
         }))
         return text(
           services
-            .map((s) => `${s.code} — ${s.title}\n  вместо ${s.replaces}, путь ${s.mountPath}, методов ${s.methodsInCatalog}\n  авторизация: ${s.auth}\n  лимит: ${s.rateLimit}`)
+            .map((s) =>
+              `${s.code} — ${s.title}\n  вместо ${s.replaces}, путь ${s.mountPath}, методов ${s.methodsInCatalog}\n` +
+              `  авторизация: ${s.auth}\n  лимит: ${s.rateLimit}` +
+              (s.mcpPath ? `\n  MCP: ${s.mcpPath} — вместо mcp.apify.com, тем же ключом` : ''),
+            )
             .join('\n\n'),
           { services },
         )
