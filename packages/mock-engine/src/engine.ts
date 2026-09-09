@@ -11,6 +11,7 @@ import { projectExample } from './project.ts'
 import { productPool } from './dataset.ts'
 import { isDefaultPage, readPage } from './page.ts'
 import { LruCache } from './cache.ts'
+import { dayBucket, shiftDatesToToday } from './dates.ts'
 
 /**
  * Движок моков.
@@ -166,7 +167,10 @@ export class MockEngine {
 
     // Страница входит в ключ: ответ зависит от неё так же, как от метода и объёма.
     const page = readPage(req.query, req.body)
-    const cacheKey = `${method.id}|${req.salt}|${page.offset}:${page.limit}`
+    // Сутки — тоже часть ключа: даты фикстур сдвигаются к сегодняшнему дню, и вчерашнее
+    // тело завтра стало бы неправдой. Определённость остаётся в тех границах, в которых
+    // она возможна: один и тот же вызов в пределах дня даёт один и тот же ответ.
+    const cacheKey = `${method.id}|${req.salt}|${page.offset}:${page.limit}|${dayBucket(req.now)}`
     // Кешируем только страницу по умолчанию. Ключей у произвольной пагинации столько,
     // сколько клиент придумает смещений, и кеш из полезного превращается в способ
     // занять память: собрать страницу заново стоит доли миллисекунды.
@@ -189,13 +193,17 @@ export class MockEngine {
     // методах снова оказался бы разными товарами.
     const ctx = { det, now: req.now, pool: productPool(req.salt), page }
     const built = this.buildBody(index, method, ctx)
+    // Даты — последним шагом, поверх любого яруса: и пример из документации,
+    // и сгенерированное по схеме тело одинаково датированы днём, когда писали
+    // спецификацию, а клиент считает витрину за последние 7–90 дней.
+    const body = shiftDatesToToday(built.body, req.now)
 
-    const serialized = JSON.stringify(built.body ?? null)
-    if (cacheable) this.bodyCache.set(cacheKey, { body: built.body, serialized })
+    const serialized = JSON.stringify(body ?? null)
+    if (cacheable) this.bodyCache.set(cacheKey, { body, serialized })
 
     return {
       status: method.successStatus,
-      body: built.body,
+      body,
       serialized,
       headers: this.successHeaders(req, method, built.source),
       method,

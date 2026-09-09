@@ -374,3 +374,138 @@ describe('общий каталог товаров', () => {
     expect(productPool('medium')).toBe(productPool('medium'))
   })
 })
+
+describe('даты фикстур живут относительно сегодняшнего дня', () => {
+  const DATE = /\b(19|20)\d\d-\d\d-\d\d/g
+  const datesOf = (body: string): string[] => [...new Set(body.match(DATE) ?? [])].sort()
+  const today = (now: Date) => now.toISOString().slice(0, 10)
+
+  const call = (path: string, httpMethod = 'GET', now = new Date()) =>
+    engine.handle({
+      service: 'wildberries', httpMethod, path, query: {}, headers: {}, body: null,
+      requestId: 'r', scenario: 'success', now, salt: 'medium',
+    })
+
+  it('самая свежая дата ответа — сегодняшняя, а не из документации', () => {
+    const now = new Date()
+    const res = call('/api/v1/supplier/orders', 'GET', now)
+    const dates = datesOf(res.serialized)
+    expect(dates.length).toBeGreaterThan(0)
+    // В документации Wildberries эти заказы датированы 4 марта 2022 года.
+    // Клиент считает витрину за последние 30 дней и не нашёл бы в ней ничего.
+    expect(dates.some((d) => d.startsWith('2022'))).toBe(false)
+    expect(dates[dates.length - 1]).toBe(today(now))
+  })
+
+  it('расстояния между датами сохраняются', () => {
+    // В примере заказы стоят 4, 6 и 9 марта: разрыв в двое и в пятеро суток.
+    // Сдвиг общий, поэтому разрывы обязаны остаться теми же.
+    const dates = datesOf(call('/api/v1/supplier/orders').serialized).map((d) => Date.parse(d))
+    const gaps = dates.slice(1).map((d, i) => Math.round((d - dates[i]!) / 86_400_000))
+    expect(gaps).toEqual([2, 3])
+  })
+
+  it('срок действия уезжает в будущее, а не схлопывается в сегодня', () => {
+    // Подписка отвечала state: active при till в прошлом — то есть была
+    // активной и одновременно просроченной. Опору выбираем среди дат прошлого,
+    // поэтому till остаётся позже неё.
+    const now = new Date()
+    const res = call('/api/common/v1/subscriptions', 'GET', now)
+    const body = JSON.parse(res.serialized) as Record<string, unknown>
+    const till = JSON.stringify(body).match(/"till":"([^"]+)"/)?.[1]
+    expect(till).toBeDefined()
+    expect(Date.parse(till!)).toBeGreaterThan(now.getTime())
+  })
+
+  it('ответ остаётся определённым в пределах суток', () => {
+    const now = new Date('2026-05-05T10:00:00Z')
+    const a = call('/api/v1/supplier/orders', 'GET', now)
+    const b = call('/api/v1/supplier/orders', 'GET', new Date('2026-05-05T23:59:00Z'))
+    expect(a.serialized).toBe(b.serialized)
+  })
+
+  it('назавтра даты уезжают ровно на сутки', () => {
+    const a = call('/api/v1/supplier/orders', 'GET', new Date('2026-05-05T10:00:00Z'))
+    const b = call('/api/v1/supplier/orders', 'GET', new Date('2026-05-06T10:00:00Z'))
+    expect(a.serialized).not.toBe(b.serialized)
+    const last = (s: string) => datesOf(s)[datesOf(s).length - 1]!
+    expect(Date.parse(last(b.serialized)) - Date.parse(last(a.serialized))).toBe(86_400_000)
+  })
+
+  it('формат даты сохраняется дословно', () => {
+    // Клиент разбирает ответ строгим парсером: подмена «даты без времени»
+    // на дату со временем ломает его так же надёжно, как неверное значение.
+    const res = call('/api/v1/supplier/orders')
+    const withTime = res.serialized.match(/"date":"([^"]+)"/)?.[1]
+    expect(withTime).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+  })
+})
+
+describe('справочники и постраничный обход', () => {
+  const wb = (path: string, httpMethod: string, body: unknown = null) => JSON.parse(
+    engine.handle({
+      service: 'wildberries', httpMethod, path, query: {}, headers: {}, body,
+      requestId: 'r', scenario: 'success', now: new Date(), salt: 'medium',
+    }).serialized,
+  ) as Record<string, any>
+
+  it('комиссии приходят по предметам каталога, а не по предмету из документации', () => {
+    const report = wb('/api/v1/tariffs/commission', 'GET').report as Array<Record<string, unknown>>
+    const cards = wb('/content/v2/get/cards/list', 'POST').cards as Array<Record<string, unknown>>
+
+    const subjects = new Set(report.map((r) => r.subjectID))
+    // Пустое пересечение означало, что ставку не к чему подобрать и юнит-экономика
+    // не считается — ровно это и было, пока в справочнике стоял единственный предмет.
+    expect(cards.every((c) => subjects.has(c.subjectID))).toBe(true)
+    expect(report.length).toBeGreaterThan(1)
+  })
+
+  it('широкая категория в справочнике — из каталога, а не из примера', () => {
+    const report = wb('/api/v1/tariffs/commission', 'GET').report as Array<Record<string, unknown>>
+    // Пара parentID/parentName обязана быть согласованной: имя из каталога
+    // рядом с номером из документации — это разные категории в одной строке.
+    const pairs = new Map<unknown, unknown>()
+    for (const row of report) pairs.set(row.parentID, row.parentName)
+    expect(pairs.size).toBeGreaterThan(1)
+    expect([...pairs.values()].every((v) => typeof v === 'string' && v.length > 0)).toBe(true)
+  })
+
+  it('курсор Wildberries ведёт по каталогу, а не возвращает ту же страницу', () => {
+    let body = wb('/content/v2/get/cards/list', 'POST', { settings: { cursor: { limit: 5 } } })
+    const seen: number[] = []
+    for (let i = 0; i < 4; i++) {
+      const page = (body.cards as Array<Record<string, number>>).map((c) => c.nmID!)
+      if (page.length === 0) break
+      seen.push(...page)
+      body = wb('/content/v2/get/cards/list', 'POST', {
+        settings: { cursor: { limit: 5, updatedAt: body.cursor.updatedAt, nmID: body.cursor.nmID } },
+      })
+    }
+    expect(seen).toHaveLength(20)
+    // Повтор означал бы, что курсор стоит на месте: обход каталога не закончится,
+    // и клиенту придётся выдумывать себе страховку от петли.
+    expect(new Set(seen).size).toBe(20)
+  })
+
+  it('курсор указывает на последнюю запись страницы', () => {
+    const body = wb('/content/v2/get/cards/list', 'POST', { settings: { cursor: { limit: 5 } } })
+    const cards = body.cards as Array<Record<string, number>>
+    // На первой записи шаг был бы в одну карточку на запрос.
+    expect(body.cursor.nmID).toBe(cards[cards.length - 1]!.nmID)
+  })
+
+  it('описание карточки различается и говорит о товаре', () => {
+    const cards = wb('/content/v2/get/cards/list', 'POST').cards as Array<Record<string, string>>
+    const descriptions = new Set(cards.map((c) => c.description))
+    expect(descriptions.size).toBeGreaterThan(1)
+    expect(cards[0]!.description).not.toBe('Тестовое описание')
+  })
+
+  it('имя характеристики принадлежит характеристике, а не товару', () => {
+    const cards = wb('/content/v2/get/cards/list', 'POST').cards as Array<Record<string, any>>
+    const characteristic = cards[0]!.characteristics?.[0]
+    expect(characteristic).toBeDefined()
+    // Проекция каталога подменяла имя характеристики названием карточки.
+    expect(characteristic.name).not.toBe(cards[0]!.title)
+  })
+})
