@@ -220,5 +220,5 @@ form-urlencoded с PHP-скобками, у Wildberries — JSON со списк
 
 :::next
 - [Вебхуки и доставки](/docs/api-upravleniya/resursy-vebhuki) — подписка на событие из этого справочника
-- [Заголовки честности](/docs/mok-api/zagolovki-chestnosti) — то же происхождение в ответах шлюза
+- [Заголовки ответа](/docs/mok-api/zagolovki-chestnosti) — то же происхождение в ответах шлюза
 :::

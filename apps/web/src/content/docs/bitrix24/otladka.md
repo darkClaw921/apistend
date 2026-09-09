@@ -148,5 +148,5 @@ APIStend не сверяет `redirect_uri` с карточкой приложе
 
 :::next
 - [Цикл OAuth](/docs/bitrix24/oauth) — сроки токенов, коды ошибок сервера авторизации
-- [Заголовки честности](/docs/mok-api/zagolovki-chestnosti) — как прочитать происхождение ответа
+- [Заголовки ответа](/docs/mok-api/zagolovki-chestnosti) — как прочитать происхождение ответа
 :::

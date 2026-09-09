@@ -178,30 +178,39 @@ curl -si localhost:8080/b24/rest/crm.deal.list -H "X-Mock-Key: $KEY"
 ```
 HTTP/1.1 200 OK
 access-control-allow-origin: *
-x-apistend-cors: added-by-sandbox
+content-type: application/json
+x-request-id: fd92ca05545b4fe9edcf61a7c1189c58
 x-ratelimit-limit: 300
 x-ratelimit-remaining: 299
-content-type: application/json; charset=utf-8
-x-request-id: req_69648fb5ad
+x-ratelimit-reset: 1
+x-apistend-request-id: fd92ca05545b4fe9edcf61a7c1189c58
 x-apistend-source: schema
 x-apistend-readiness: updating
 x-apistend-scenario: success
 x-apistend-upstream: https://marketplace-api.wildberries.ru
 x-apistend-snapshot: 2026-09-07
+x-apistend-cors: added-by-sandbox
 
 [{"name":"ул. Троицкая, Подольск, Московская обл.","officeId":90414,"id":68574,
   "cargoType":1,"deliveryType":1,"isDeleting":false,"isProcessing":true}, …]
 ```
 
-Заголовки `X-APIStend-*` говорят, откуда взялось тело и насколько готов мок этого
-метода: здесь ответ собран по схеме, а не взят готовым примером из спецификации.
-Разбор всех заголовков — в разделе [Заголовки честности](/docs/mok-api/zagolovki-chestnosti).
+Верхняя половина — заголовки самого Wildberries: `Content-Type` без `charset`,
+`X-Request-Id` из 32 знаков, счётчик лимита. Ровно это увидела бы ваша библиотека
+в бою, и ровно поэтому подмена адреса её не ломает. У Ozon набор другой,
+у Битрикс24 — третий.
+
+Нижняя половина — `X-APIStend-*`: их в бою нет, они говорят, откуда взялось тело
+и насколько готов мок этого метода. Здесь ответ собран по схеме, а не взят готовым
+примером из спецификации.
+Разбор всех заголовков — в разделе [Заголовки ответа](/docs/mok-api/zagolovki-chestnosti).
 
 ## Шаг 5. Найдите вызов в журнале
 
 Журнал открывается на экране «Логи» кабинета — `localhost:3100/logs`.
-Искать удобно по `X-Request-Id` из ответа: это и есть публичный идентификатор
-записи. Из терминала — тот же журнал, что видит кабинет:
+Искать удобно по `X-APIStend-Request-Id` из ответа: это и есть публичный
+идентификатор записи, и у Wildberries с Ozon он совпадает с боевым заголовком
+(`X-Request-Id` и `x-o3-trace-id` соответственно). Из терминала — тот же журнал, что видит кабинет:
 
 ```bash
 curl -s -b cookies.txt 'localhost:8080/api/logs?limit=3'
@@ -212,7 +221,7 @@ curl -s -b cookies.txt 'localhost:8080/api/logs?limit=3'
   "summary": {"total":15,"errorRate":33.33,"avgLatencyMs":211,"p95LatencyMs":1502},
   "sampling": {"sampleRate":1,"sampledOut":0},
   "rows": [
-    {"publicId":"req_69648fb5ad","serviceCode":"wildberries","httpMethod":"GET",
+    {"publicId":"fd92ca05545b4fe9edcf61a7c1189c58","serviceCode":"wildberries","httpMethod":"GET",
      "endpoint":"/api/v3/warehouses","statusCode":200,"durationMs":5,"sizeBytes":721}
   ]
 }
@@ -246,15 +255,20 @@ curl -si localhost:8080/wb/api/v3/warehouses \
 
 ```
 HTTP/1.1 429 Too Many Requests
+content-type: application/json
+x-request-id: 36170ddaa809e86093bdbecb84fd2482
 x-ratelimit-limit: 300
 x-ratelimit-remaining: 0
-retry-after: 20
+x-ratelimit-reset: 20
+x-ratelimit-retry: 20
 x-apistend-scenario: rate_limit
 
 {"title":"Too Many Requests","detail":"rate limit exceeded","code":"TooManyRequests",
- "requestId":"req_4d3d702cf1","origin":"ag-api","status":429,
+ "requestId":"36170ddaa809e86093bdbecb84fd2482","origin":"ag-api","status":429,
  "statusText":"too_many_requests","timestamp":"2026-09-09T10:14:24.992Z"}
 ```
+
+Поле `requestId` в теле повторяет заголовок `X-Request-Id` — так же, как в бою.
 
 Тот же сценарий у Bitrix24 даёт не 429, а `503 QUERY_LIMIT_EXCEEDED`:
 
@@ -288,5 +302,5 @@ HTTP/1.1 503 Service Unavailable
 :::next
 - [Основные понятия](/docs/nachalo/osnovnye-ponyatiya) — песочница, ключи, объём данных, сценарии и сброс
 - [Совместимость и ограничения](/docs/nachalo/sovmestimost-i-ogranicheniya) — что мок повторяет точно, а что нет
-- [Заголовки честности](/docs/mok-api/zagolovki-chestnosti) — происхождение ответа в метаданных
+- [Заголовки ответа](/docs/mok-api/zagolovki-chestnosti) — происхождение ответа в метаданных
 :::

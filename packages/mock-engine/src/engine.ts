@@ -200,7 +200,7 @@ export class MockEngine {
   ): { body: unknown; source: 'example' | 'schema' | 'generic' } {
     // Ярус 1: пример из спецификации.
     if (method.responseExample !== null && method.responseExample !== undefined) {
-      return { body: method.responseExample, source: 'example' }
+      return { body: stripStaticTime(index.bundle.serviceCode, method.responseExample), source: 'example' }
     }
 
     // Ярус 2: схема + детерминированный филлер.
@@ -231,8 +231,13 @@ export class MockEngine {
     source: 'example' | 'schema' | 'generic',
   ): Record<string, string> {
     return {
-      'content-type': 'application/json; charset=utf-8',
-      'x-request-id': req.requestId,
+      // Content-Type — тоже боевой заголовок: у Битрикс24 он с charset, у Ozon и WB
+      // без него. Берём из профиля сервиса, а не подставляем один на всех.
+      'content-type': SERVICE_PROFILES[req.service].native.contentType,
+      // Собственный идентификатор APIStend. Боевое имя заголовка (x-request-id у WB,
+      // x-o3-trace-id у Ozon) ставит шлюз: только он знает, есть ли такой заголовок
+      // у сервиса вообще, — у Битрикс24 его нет.
+      'x-apistend-request-id': req.requestId,
       'x-apistend-source': source,
       'x-apistend-readiness': method.readiness,
       'x-apistend-scenario': req.scenario,
@@ -252,6 +257,23 @@ function inlineSchema(spec: object | undefined, method: CatalogMethod): unknown 
     | { responses?: Record<string, { content?: Record<string, { schema?: unknown }> }> }
     | undefined
   return op?.responses?.[String(method.successStatus)]?.content?.['application/json']?.schema ?? null
+}
+
+/**
+ * Убирает из примера Битрикс24 статичный конверт `time`.
+ *
+ * В документации он записан датами того дня, когда писали пример, и отдавать его
+ * как есть — то же самое, что показывать вчерашние часы. Живой конверт приписывает
+ * шлюз: он один знает, сколько запрос выполнялся на самом деле. Здесь же выгодно
+ * и по стоимости: тело кешируется без time, и шлюзу остаётся приклеить готовую
+ * строку, а не пересобирать объект на каждый вызов.
+ */
+function stripStaticTime(service: ServiceCode, example: unknown): unknown {
+  if (service !== 'bitrix24') return example
+  if (example === null || typeof example !== 'object' || Array.isArray(example)) return example
+  if (!('time' in example)) return example
+  const { time: _static, ...rest } = example as Record<string, unknown>
+  return rest
 }
 
 /** Пустой, но валидный для сервиса конверт: клиент не должен падать на разборе. */

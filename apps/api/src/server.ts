@@ -3,7 +3,7 @@ import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
 import { z } from 'zod'
 import { ru } from 'zod/locales'
-import { SERVICE_LIST } from '@apistend/shared'
+import { SERVICE_LIST, allGatewayResponseHeaders } from '@apistend/shared'
 import { env } from './env.ts'
 import { prisma } from './db.ts'
 import { engine, registerGateway } from './gateway.ts'
@@ -90,12 +90,11 @@ export async function buildServer() {
           credentials: false,
           methods: 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS',
           allowedHeaders: '*',
-          exposedHeaders: [
-            'x-request-id', 'x-apistend-source', 'x-apistend-readiness',
-            'x-apistend-scenario', 'x-apistend-upstream', 'x-apistend-snapshot',
-            'x-apistend-did-you-mean', 'x-apistend-error', 'x-apistend-cors',
-            'x-ratelimit-limit', 'x-ratelimit-remaining', 'retry-after',
-          ],
+          // Список собирается из профилей сервисов: браузер показывает коду
+          // страницы только перечисленные здесь заголовки, и забытый в списке
+          // X-Ratelimit-Reset выглядел бы для клиентской библиотеки так же,
+          // как отсутствующий, — то есть подмена адреса ломала бы рабочий код.
+          exposedHeaders: [...allGatewayResponseHeaders()],
           // Предполёт без заголовков предполёта — обычный OPTIONS, и отвечать
           // на него четырёхсотым нельзя: этим спрашивают, что умеет адрес.
           strictPreflight: false,

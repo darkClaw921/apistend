@@ -188,7 +188,7 @@ pnpm dev
 :::
 
 :::next
-- [Заголовки честности](/docs/mok-api/zagolovki-chestnosti) — происхождение ответа
+- [Заголовки ответа](/docs/mok-api/zagolovki-chestnosti) — происхождение ответа
 :::
 ~~~
 

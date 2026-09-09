@@ -68,13 +68,13 @@ curl -s "$STEND/api/v1/logs?limit=2&status=5xx" -H "Authorization: Bearer $STEND
 из списка, и публичный `publicId` (`req_…`) из заголовка `X-Request-Id`.
 
 ```bash
-curl -s "$STEND/api/v1/logs/req_d21aff7bf1" -H "Authorization: Bearer $STEND_KEY"
+curl -s "$STEND/api/v1/logs/f0c9ea91aae8abf9" -H "Authorization: Bearer $STEND_KEY"
 ```
 
 ```json
 {
   "id": "cmtty0oo8001g7am3to5x7fvq",
-  "publicId": "req_d21aff7bf1",
+  "publicId": "f0c9ea91aae8abf9",
   "serviceCode": "ozon",
   "httpMethod": "POST",
   "endpoint": "/v3/posting/fbs/list",
@@ -90,8 +90,8 @@ curl -s "$STEND/api/v1/logs/req_d21aff7bf1" -H "Authorization: Bearer $STEND_KEY
   "requestHeaders": {},
   "requestBody": "{\"limit\":2}",
   "responseHeaders": {
-    "content-type": "application/json; charset=utf-8",
-    "x-request-id": "req_31b01b94e5",
+    "content-type": "application/json",
+    "x-o3-trace-id": "f0c9ea91aae8abf9",
     "x-apistend-source": "example",
     "x-apistend-readiness": "ready",
     "x-apistend-scenario": "success",
@@ -165,7 +165,7 @@ content-disposition: attachment; filename="apistend-logs-2026-09-09.csv"
 
 ```
 Время;Сервис;Метод;Эндпоинт;Код;Задержка, мс;Размер, байт;Сценарий;Ключ;ID запроса
-2026-09-08T02:10:48.257Z;ozon;POST;/v3/posting/fbs/list;200;218;66386;success;CI / автотесты;req_b50148ed000
+2026-09-08T02:10:48.257Z;ozon;POST;/v3/posting/fbs/list;200;218;66386;success;CI / автотесты;f0c9ea91aae8abf9
 ```
 :::
 
@@ -299,13 +299,13 @@ curl -s -X POST "$STEND/api/v1/console/execute" \
 
 ```json
 {
-  "requestId": "req_b2bc39e1b8",
+  "requestId": "f0c9ea91aae8abf9",
   "status": 200,
   "durationMs": 180,
   "sizeBytes": 4218,
   "headers": {
-    "content-type": "application/json; charset=utf-8",
-    "x-request-id": "req_b2bc39e1b8",
+    "content-type": "application/json",
+    "x-o3-trace-id": "f0c9ea91aae8abf9",
     "x-apistend-source": "example",
     "x-apistend-readiness": "ready",
     "x-apistend-scenario": "success",

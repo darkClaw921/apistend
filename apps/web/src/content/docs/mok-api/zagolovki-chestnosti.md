@@ -1,16 +1,84 @@
 ---
-title: Заголовки честности
-description: X-APIStend-Source, Readiness, Snapshot, Upstream и остальные метаданные ответа — что означает каждый и зачем читать их в тестах.
+title: Заголовки ответа
+description: Боевые заголовки каждого сервиса плюс собственные X-APIStend-* — что приходит, у кого чего нет и почему набор разный.
 order: 230
 group: Мок-API
 ---
 
-Мок обязан быть неотличим от боевого сервиса по телу и коду ответа — и обязан
-быть отличим по метаданным. Иначе им нельзя пользоваться осознанно: непонятно,
-взято тело из документации или собрано по схеме, готов ли мок метода и на какую
-дату снята спецификация. Всё это шлюз пишет в заголовки.
+Заголовки ответа делятся на две части, и это не формальность, а правило,
+по которому здесь всё устроено.
 
-## Успешный ответ
+**Боевые заголовки сервиса** — те, что отдал бы настоящий Wildberries, Ozon
+или Битрикс24. Их набор у каждого свой, и APIStend повторяет его буквально:
+ничего не добавляет и ничего не убирает. Именно поэтому подмена базового адреса
+не ломает клиентскую библиотеку — она читает то же, что читала в бою.
+
+**Заголовки APIStend** — всё, что начинается с `X-APIStend-`. Их в бою нет
+и быть не может; они отвечают на вопрос «откуда взялось это тело и насколько
+ему верить». Ни одна боевая библиотека их не читает, поэтому они ничего
+не ломают, а вам позволяют пользоваться моком осознанно.
+
+## Боевые заголовки: у каждого сервиса свои
+
+:::params
+| | Bitrix24 | Ozon Seller API | Wildberries |
+| --- | --- | --- | --- |
+| `Content-Type` | `application/json; charset=utf-8` | `application/json` | `application/json` |
+| Идентификатор запроса | нет | `x-o3-trace-id`, 16 знаков | `X-Request-Id`, 32 знака |
+| Заголовки лимита | нет | нет | `X-Ratelimit-Limit`, `-Remaining`, `-Reset`, `-Retry` |
+| Остаток лимита | в теле: `time.operating_reset_at` | нигде | в заголовках |
+:::
+
+Разница в `Content-Type` не косметическая: у Битрикс24 он приходит с `charset`,
+у двух других — без него. Строгие клиенты это сравнивают.
+
+Идентификатор запроса у Wildberries продублирован в теле ошибки — поле
+`requestId` спецификация прямо называет копией заголовка `X-Request-Id`.
+У APIStend это одно и то же значение, и оно же лежит в журнале кабинета:
+разработчик приносит в поддержку то число, которое увидела его библиотека.
+
+Живой ответ Wildberries:
+
+```
+HTTP/1.1 200 OK
+content-type: application/json
+x-request-id: fd92ca05545b4fe9edcf61a7c1189c58
+x-ratelimit-limit: 300
+x-ratelimit-remaining: 299
+x-ratelimit-reset: 1
+x-apistend-request-id: fd92ca05545b4fe9edcf61a7c1189c58
+x-apistend-source: schema
+x-apistend-readiness: updating
+x-apistend-scenario: success
+x-apistend-upstream: https://marketplace-api.wildberries.ru
+x-apistend-snapshot: 2026-09-07
+x-apistend-cors: added-by-sandbox
+```
+
+Тот же вызов у Ozon — ни одного заголовка лимита, вместо `x-request-id`
+сквозной идентификатор платформы:
+
+```
+HTTP/1.1 200 OK
+content-type: application/json
+x-o3-trace-id: f0c9ea91aae8abf9
+x-apistend-request-id: f0c9ea91aae8abf9
+x-apistend-source: example
+x-apistend-readiness: ready
+```
+
+А у Битрикс24 нет и его: портал не отдаёт идентификатора запроса вовсе, зато
+к каждому ответу прикладывает конверт `time` — с длительностью вызова
+и с `operating_reset_at`, по которому клиент судит об остатке ресурса.
+
+:::note Конверт time приходит всегда
+Даже там, где в документации Битрикс24 его в примере нет. Библиотеки вроде
+`bitrix24-php-sdk` разбирают `time` как обязательное поле, и ответ без него
+уронил бы рабочую интеграцию на разборе. Значения в нём — настоящие: сколько
+шёл именно ваш вызов, а не переписанные из примера документации.
+:::
+
+## Заголовки APIStend
 
 :::params
 | Заголовок | Значения | Что означает |
@@ -20,26 +88,13 @@ group: Мок-API
 | `X-APIStend-Scenario` | значение `X-Mock-Scenario` | какой сценарий отработал |
 | `X-APIStend-Upstream` | хост боевого сервиса | что подменяет этот адрес |
 | `X-APIStend-Snapshot` | дата вида `2026-09-07` | на какую дату снята спецификация метода |
-| `X-Request-Id` | `req_a50c51dbe8` | тот же идентификатор виден в журнале кабинета |
+| `X-APIStend-Request-Id` | `req_a50c51dbe8` или боевой идентификатор | по нему запрос ищется в журнале кабинета |
 | `X-APIStend-Cors` | `added-by-sandbox` | CORS добавлен песочницей, в бою его не будет |
-| `X-RateLimit-Limit`, `X-RateLimit-Remaining` | числа | ёмкость ведра и остаток |
+| `X-APIStend-Retry-After` | секунды | рекомендуемая пауза там, где сервис её не сообщает |
 :::
 
-Живой ответ выглядит так:
-
-```
-HTTP/1.1 200 OK
-x-apistend-cors: added-by-sandbox
-x-ratelimit-limit: 300
-x-ratelimit-remaining: 299
-content-type: application/json; charset=utf-8
-x-request-id: req_a50c51dbe8
-x-apistend-source: schema
-x-apistend-readiness: updating
-x-apistend-scenario: success
-x-apistend-upstream: https://marketplace-api.wildberries.ru
-x-apistend-snapshot: 2026-09-07
-```
+`X-APIStend-Request-Id` есть всегда — в том числе у Битрикс24, где боевого
+заголовка не существует. У Wildberries и Ozon он повторяет боевой.
 
 ## Три яруса ответа
 
@@ -56,7 +111,8 @@ x-apistend-snapshot: 2026-09-07
 Ярус связан с готовностью: `example` — `ready`, `schema` — `updating`,
 `generic` — `planned`. Так метод и помечен в каталоге.
 
-Ответ метода без примера и без схемы у Bitrix24 выглядит буквально так:
+Ответ метода без примера и без схемы у Bitrix24 выглядит буквально так
+(плюс конверт `time`, который портал добавляет всегда):
 
 ```json
 {"result":[],"total":0}
@@ -93,31 +149,36 @@ x-apistend-snapshot: 2026-09-07
 | `X-APIStend-Key-Services` | вместе с `key-scope`: список сервисов ключа |
 | `X-APIStend-Did-You-Mean` | путь не найден: до трёх похожих путей каталога |
 | `X-APIStend-Scenario` | сработал сценарий ошибки, в том числе `timeout` |
-| `Retry-After`, `X-RateLimit-Retry` | превышение лимита у Ozon и Wildberries |
+| `X-APIStend-Retry-After` | превышение лимита у Bitrix24 и Ozon — у них своего заголовка нет |
+| `X-Ratelimit-Retry` | превышение лимита у Wildberries — это его боевой заголовок |
 :::
 
+Тело ошибки всегда остаётся родным конвертом сервиса, а причина отказа уходит
+в `X-APIStend-Error`: в бою такого поля нет, и подмешивать его в тело нельзя.
+
 На ответе с ошибкой авторизации заголовков `X-APIStend-Source`, `Readiness`
-и `Snapshot` нет: метод до каталога не дошёл.
+и `Snapshot` нет: метод до каталога не дошёл. Заголовков лимита там тоже нет —
+считать его не на чем, ключ не опознан.
 
 ## Подводные камни
 
 :::warning Браузер видит не все заголовки
-В `Access-Control-Expose-Headers` перечислены `x-request-id`,
-`x-apistend-source`, `x-apistend-readiness`, `x-apistend-scenario`,
-`x-apistend-upstream`, `x-apistend-snapshot`, `x-apistend-did-you-mean`,
-`x-apistend-error`, `x-apistend-cors`, `x-ratelimit-limit`,
-`x-ratelimit-remaining`, `retry-after`. Всё остальное — включая
-`x-apistend-key-services`, `x-apistend-app` и `x-ratelimit-retry` —
-из кода страницы не читается.
+Из кода страницы читаются только заголовки, перечисленные в
+`Access-Control-Expose-Headers`. Шлюз перечисляет там весь свой набор — боевые
+заголовки всех трёх сервисов и все `x-apistend-*`, — но это касается только
+запросов из браузера к песочнице. Боевые Ozon и Wildberries из браузера
+вызывать нельзя вовсе, так что код, который так делает, в бою не поедет.
 :::
 
 - Имена заголовков приходят в нижнем регистре; сравнивайте без учёта регистра.
+- Не пишите обработку лимита по заголовкам Wildberries для всех трёх сервисов:
+  у Ozon и Битрикс24 их нет — см. [Лимиты](/docs/mok-api/limity).
 - `X-APIStend-Snapshot` — дата снимка спецификации, а не дата ответа.
   У методов одного сервиса она общая.
 - `X-APIStend-Upstream` показывает реальный хост метода. У Wildberries это
   не один адрес: `marketplace-api`, `content-api`, `advert-api` и другие.
 
 :::next
-- [Лимиты](/docs/mok-api/limity) — откуда берутся числа в `X-RateLimit-*`
+- [Лимиты](/docs/mok-api/limity) — откуда берутся числа в `X-Ratelimit-*`
 - [Каталог методов](/catalog) — готовность и снимок по каждому методу
 :::

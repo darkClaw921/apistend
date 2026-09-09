@@ -62,7 +62,7 @@ group: Кабинет
 
 ```json
 {
-  "requestId": "req_d21aff7bf1",
+  "requestId": "f0c9ea91aae8abf9",
   "status": 200,
   "durationMs": 181,
   "sizeBytes": 4218,
@@ -78,13 +78,20 @@ group: Кабинет
 те же самые, что получил бы ваш код:
 
 ```text
-x-request-id: req_d21aff7bf1
+content-type: application/json
+x-o3-trace-id: f0c9ea91aae8abf9
+x-apistend-request-id: f0c9ea91aae8abf9
 x-apistend-source: example
 x-apistend-readiness: ready
 x-apistend-scenario: success
 x-apistend-upstream: https://api-seller.ozon.ru
 x-apistend-snapshot: 2026-04-16
 ```
+
+Набор зависит от сервиса: у Wildberries вместо `x-o3-trace-id` придут
+`x-request-id` и счётчики `x-ratelimit-*`, у Битрикс24 — ни того ни другого,
+зато в теле будет конверт `time`. Консоль показывает ровно то же, что получил бы
+ваш код по curl.
 
 Сценарий «Таймаут» — единственный, который не исполняется по-настоящему: консоль
 сразу отдаёт `504`, `durationMs: 30000` и признак `simulated: true`, не занимая
@@ -141,5 +148,5 @@ curl -X POST \
 
 :::next
 - [Журнал запросов](/docs/kabinet/zhurnal-zaprosov) — фильтры, экспорт и срок хранения
-- [Заголовки честности](/docs/mok-api/zagolovki-chestnosti) — что означают `x-apistend-*`
+- [Заголовки ответа](/docs/mok-api/zagolovki-chestnosti) — что означают `x-apistend-*`
 :::

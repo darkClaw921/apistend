@@ -58,7 +58,7 @@ curl -s "$STEND/api/v1/logs?limit=2" -H "Authorization: Bearer $STEND_KEY"
 {
   "items": [
     { "id": "cmtty0oo8001h7am3cac6d6jj", "publicId": "req_890aa03867", "serviceCode": "bitrix24", "endpoint": "/crm.deal.list", "statusCode": 404 },
-    { "id": "cmtty0oo8001g7am3to5x7fvq", "publicId": "req_d21aff7bf1", "serviceCode": "ozon", "endpoint": "/v3/posting/fbs/list", "statusCode": 200 }
+    { "id": "cmtty0oo8001g7am3to5x7fvq", "publicId": "f0c9ea91aae8abf9", "serviceCode": "ozon", "endpoint": "/v3/posting/fbs/list", "statusCode": 200 }
   ],
   "nextCursor": "cmtty0oo8001g7am3to5x7fvq"
 }

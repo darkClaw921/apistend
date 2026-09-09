@@ -52,7 +52,7 @@ group: Кабинет
 
 ```text
 Время;Сервис;Метод;Эндпоинт;Код;Задержка, мс;Размер, байт;Ключ;ID запроса
-2026-09-09T10:15:55.880Z;ozon;POST;/v3/posting/fbs/list;200;181;4218;Мобильное приложение;req_d21aff7bf1
+2026-09-09T10:15:55.880Z;ozon;POST;/v3/posting/fbs/list;200;181;4218;Мобильное приложение;f0c9ea91aae8abf9
 ```
 
 Тел запросов и ответов в выгрузке нет — только то, что видно в таблице.
@@ -118,7 +118,7 @@ group: Кабинет
 
 ```json
 {
-  "publicId": "req_d21aff7bf1",
+  "publicId": "f0c9ea91aae8abf9",
   "serviceCode": "ozon",
   "endpoint": "/v3/posting/fbs/list",
   "statusCode": 200,

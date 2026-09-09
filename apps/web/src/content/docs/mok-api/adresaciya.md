@@ -104,5 +104,5 @@ CORS шлюз отдаёт всегда — `Access-Control-Allow-Origin: *` —
 
 :::next
 - [Авторизация](/docs/mok-api/avtorizaciya) — где шлюз ищет ключ
-- [Заголовки честности](/docs/mok-api/zagolovki-chestnosti) — что несёт каждый ответ
+- [Заголовки ответа](/docs/mok-api/zagolovki-chestnosti) — что несёт каждый ответ
 :::
