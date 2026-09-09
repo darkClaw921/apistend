@@ -59,12 +59,13 @@ export async function listen(options: ListenOptions): Promise<ListenStats> {
   const deviceId = config.deviceId ?? randomBytes(8).toString('hex')
   if (!config.deviceId) writeConfig({ ...config, deviceId })
 
-  const session = await apiClient.createSession(options.apiKey, options.apiBase, {
+  const sessionRequest = {
     deviceId,
     deviceName: hostname(),
     agentVersion: `apistend-cli ${options.version}`,
     forward: forwardBase,
-  })
+  }
+  let session = await apiClient.createSession(options.apiKey, options.apiBase, sessionRequest)
 
   if (!options.json) {
     out.banner(options.version, session.account ?? session.sandbox, session.sandbox)
@@ -145,10 +146,39 @@ export async function listen(options: ListenOptions): Promise<ListenStats> {
         attempt++
         const delay = Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 1), RECONNECT_MAX_MS)
         if (!options.json) out.reconnecting(attempt)
-        setTimeout(connect, delay).unref?.()
+        setTimeout(reconnect, delay).unref?.()
       })
 
       socket.on('error', () => { /* обработается в close */ })
+    }
+
+    /**
+     * Переподключение начинается с НОВОЙ сессии, а не с повтора старого токена.
+     *
+     * Токен подключения одноразовый: сервер гасит его в момент первого upgrade
+     * (tunnel/server.ts, условие usedAt: null) и живёт он всего десять минут.
+     * Повторное подключение тем же токеном не могло завершиться успехом никогда —
+     * агент после первого же обрыва связи молчал до перезапуска руками, продолжая
+     * печатать «переподключаюсь». Худший вид отказа для инструмента, у которого
+     * человек сидит и ждёт событие.
+     */
+    const reconnect = () => {
+      if (stopped) { resolve(); return }
+      apiClient
+        .createSession(options.apiKey, options.apiBase, sessionRequest)
+        .then((fresh) => {
+          session = fresh
+          connect()
+        })
+        .catch(() => {
+          // Сервис недоступен или ключ отозван: пробуем снова по той же лестнице.
+          // Отзыв ключа отдельно разбирается в обработчике close, когда соединение
+          // всё-таки поднимется.
+          attempt++
+          const delay = Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 1), RECONNECT_MAX_MS)
+          if (!options.json) out.reconnecting(attempt)
+          setTimeout(reconnect, delay).unref?.()
+        })
     }
 
     const onReady = (frame: ReadyFrame) => {

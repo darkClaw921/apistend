@@ -51,10 +51,42 @@ export default function KeysPage() {
   const sandbox = shell.me.sandboxes[0]
   const [latency, setLatency] = useState(sandbox?.latencyMs ?? 250)
   const [errorRate, setErrorRate] = useState(sandbox?.errorRate ?? 5)
+  const [behaviourSaved, setBehaviourSaved] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
 
   const [revokeTarget, setRevokeTarget] = useState<ApiKeyItem | null>(null)
   const [confirmText, setConfirmText] = useState('')
   const [revoking, setRevoking] = useState(false)
+
+  /**
+   * Задержка и доля ошибок сохраняются на сервере, а не живут в состоянии страницы.
+   *
+   * Раньше ползунки двигались, число менялось, а песочница отвечала по-старому:
+   * значение никуда не уходило, и после перезагрузки страницы возвращалось прежнее.
+   * Настройка, которая выглядит применённой, но не применена, хуже отсутствующей —
+   * по ней делают вывод о поведении мока.
+   *
+   * Отправка отложенная: пока ползунок тянут, запрос на каждый шаг — это сотня
+   * запросов на одно движение мыши.
+   */
+  useEffect(() => {
+    if (!sandbox) return
+    if (latency === sandbox.latencyMs && errorRate === sandbox.errorRate) return
+
+    const timer = setTimeout(() => {
+      setBehaviourSaved('saving')
+      api
+        .patch(`/api/v1/sandboxes/${sandbox.id}`, { latencyMs: latency, errorRate })
+        .then(() => {
+          setBehaviourSaved('saved')
+          // Обновляем то, что кабинет считает текущим состоянием песочницы:
+          // иначе следующее сравнение снова сочтёт значение несохранённым.
+          sandbox.latencyMs = latency
+          sandbox.errorRate = errorRate
+        })
+        .catch(() => setBehaviourSaved('failed'))
+    }, 600)
+    return () => clearTimeout(timer)
+  }, [latency, errorRate, sandbox])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -303,7 +335,14 @@ export default function KeysPage() {
                 />
                 <p className="mt-[6px] text-[11px] leading-[1.4] text-text-tertiary">
                   Возвращаются 429, 500 и таймауты по схемам сервисов.
+                  {behaviourSaved === 'saving' ? ' Сохраняю…' : null}
+                  {behaviourSaved === 'saved' ? ' Сохранено.' : null}
                 </p>
+                {behaviourSaved === 'failed' ? (
+                  <p className="mt-[6px] text-[11px] leading-[1.4] text-danger">
+                    Не удалось сохранить настройки песочницы. Проверьте связь и подвиньте ползунок ещё раз.
+                  </p>
+                ) : null}
               </div>
               <div className="flex items-center justify-between gap-[12px] border-t border-border pt-[14px]">
                 <div className="flex flex-col">

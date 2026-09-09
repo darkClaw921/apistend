@@ -254,7 +254,7 @@ async function authenticate(req: FastifyRequest): Promise<AuthOutcome> {
         message:
           'Ключ песочницы (stend_sbx_…) в Management API не принимается: им ходит код интеграции, ' +
           'и утечь он может вместе с любым конфигом. Нужен серверный ключ stend_sk_… — ' +
-          'создайте его на экране «Ключи и токены» или командой apistend keys create --kind server',
+          'создайте его на экране «Ключи и токены» или запросом POST /api/v1/keys с kind: "server"',
       }
     }
     if (kind !== 'server') {
