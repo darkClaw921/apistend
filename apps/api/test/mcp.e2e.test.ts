@@ -337,36 +337,4 @@ describe('собственный MCP-сервер APIStend', () => {
     const mcpText = (viaMcp.frame as { result: { content: Array<{ text: string }> } }).result.content[0]!.text
     expect(JSON.parse(mcpText)).toEqual(JSON.parse(viaGateway.body))
   })
-
-  it('call_mock уважает область действия ключа', async () => {
-    const limited = generateKey('server')
-    const sandbox = await prisma.sandbox.findFirstOrThrow({ where: { user: { id: userId } } })
-    await prisma.apiKey.create({
-      data: {
-        sandboxId: sandbox.id,
-        name: 'только Ozon',
-        kind: 'server',
-        prefix: limited.prefix,
-        suffix: limited.suffix,
-        keyHash: limited.hash,
-        services: ['ozon'],
-        scopes: [],
-        status: 'active',
-      },
-    })
-    invalidateKeyCache()
-
-    const response = await api.inject({
-      method: 'POST',
-      url: '/mcp',
-      headers: { 'content-type': 'application/json', accept: ACCEPT, authorization: `Bearer ${limited.full}` },
-      payload: {
-        jsonrpc: '2.0', id: 1, method: 'tools/call',
-        params: { name: 'call_mock', arguments: { service: 'wildberries', path: '/api/v3/warehouses' } },
-      },
-    })
-    const frame = parseFrame(response.body) as { result: { isError?: boolean; content: Array<{ text: string }> } }
-    expect(frame.result.isError).toBe(true)
-    expect(frame.result.content[0]!.text).toContain('не разрешает сервис')
-  })
 })

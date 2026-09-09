@@ -147,6 +147,22 @@ describe('нативная авторизация', () => {
   })
 })
 
+describe('ключ открывает все сервисы стенда', () => {
+  it('ключ с урезанным набором в базе всё равно работает на чужом сервисе', async () => {
+    // Ключ этого теста заведён с services: ['apify'] — ровно так выглядит ключ,
+    // выданный до появления нового сервиса. Проверка по набору снята, поэтому
+    // он обязан работать и на Wildberries: иначе каждый новый сервис снова
+    // оставлял бы без себя все ранее выданные ключи.
+    const res = await api.inject({
+      method: 'GET',
+      url: '/wb/api/v3/warehouses',
+      headers: { 'x-mock-key': key },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['x-apistend-error']).toBeUndefined()
+  })
+})
+
 describe('набор заголовков совпадает с живым ответом api.apify.com', () => {
   it('Content-Type приходит с charset', async () => {
     const res = await call('/apify/v2/actors')

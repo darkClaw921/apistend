@@ -286,13 +286,6 @@ export const apistendMcpServer: McpServerDefinition = {
       case 'call_mock': {
         const resolved = await sandboxOf(req)
         const service = requireService(args)
-        if (!resolved.apiKey.services.includes(service)) {
-          return text(
-            `Ключ не разрешает сервис ${service}. Разрешены: ${resolved.apiKey.services.join(', ')}.`,
-            { error: 'key-scope', allowed: resolved.apiKey.services },
-            true,
-          )
-        }
         const path = String(args.path ?? '')
         const httpMethod = String(args.httpMethod ?? 'GET').toUpperCase()
         const scenario = typeof args.scenario === 'string' ? args.scenario : 'success'

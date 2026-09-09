@@ -20,18 +20,28 @@
  * описания достаточно.
  *
  * Все 57 тысяч акторов магазина не снимаются намеренно: это 114 тысяч запросов
- * и сотни мегабайт, из которых для отладки нужны единицы. Берём верхушку по
- * популярности — именно с ней и пишут интеграции. Количество задаётся первым
- * аргументом.
+ * и сотни мегабайт, из которых для отладки нужны единицы.
+ *
+ * Выборка складывается из двух частей:
+ *   1) верхушка магазина по популярности — с ней пишут интеграции чаще всего;
+ *   2) адресный поиск по площадкам, ради которых существует APIStend, — Ozon,
+ *      Wildberries, Яндекс Маркет и остальной русский рынок. Без второй части
+ *      верхушка отдаёт мировой топ (Instagram, TikTok, Google Maps), и ни одного
+ *      актора под задачу российского продавца в снимок бы не попало.
  *
  * Токен читается ТОЛЬКО из переменной окружения APIFY_TOKEN и никуда не пишется:
  * ни в снимок, ни в манифест, ни в лог.
  *
  *   APIFY_TOKEN=… node scripts/vendor-apify-actors.mjs [сколько]
+ *
+ * Снимок сохраняется сжатым (actors.json.gz): в разжатом виде тысяча акторов —
+ * это десятки мегабайт почти целиком из схем входа, а gzip сжимает их в разы.
+ * Читает его apps/api/src/mcp/apify-actors.ts, распаковывая при первом обращении.
  */
 
 import { createHash } from 'node:crypto'
-import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs'
+import { gzipSync } from 'node:zlib'
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -41,7 +51,24 @@ if (!token) {
   process.exit(1)
 }
 
-const WANTED = Number(process.argv[2] ?? 150)
+const WANTED = Number(process.argv[2] ?? 1000)
+
+/**
+ * Адресный поиск: площадки, ради которых APIStend и существует.
+ *
+ * Мировой топ по популярности до них не доходит — там социальные сети и карты.
+ * Список неупорядочен: каждый запрос добирает столько, сколько магазин отдаёт
+ * по этому слову, а дубли отсеиваются по идентификатору актора.
+ */
+const RU_QUERIES = [
+  'ozon', 'wildberries', 'yandex market', 'yandex', 'avito', 'russia', 'russian',
+  'aliexpress russia', 'lamoda', 'dns shop', 'mvideo', 'citilink', 'sbermegamarket',
+  'megamarket', 'kazanexpress', 'detmir', 'eldorado', 'vkontakte', 'vk.com',
+  'telegram', 'hh.ru', 'headhunter', 'cian', 'domclick', 'auto.ru', 'drom',
+  '2gis', 'yandex maps', 'yandex eda', 'delivery club', 'sbermarket', 'ozon seller',
+  'wildberries seller', 'marketplace russia', 'rutube', 'kinopoisk', 'ivi',
+  'sberbank', 'tinkoff', 'gosuslugi', 'rbc', 'ria', 'moex',
+]
 const API = 'https://api.apify.com/v2'
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const outDir = join(repoRoot, 'specs/apify')
@@ -58,18 +85,75 @@ async function api(path) {
   return json.data
 }
 
-/** Обход списка порциями: /v2/store отдаёт максимум 1000 за раз. */
-async function fetchStore(limit) {
+/** Обход одной выдачи магазина порциями по сто. */
+async function fetchStorePage(limit, query) {
   const items = []
   let offset = 0
+  const search = query ? `&search=${encodeURIComponent(query)}&sortBy=relevance` : '&sortBy=popularity'
   while (items.length < limit) {
-    const page = await api(`/store?limit=${Math.min(100, limit - items.length)}&offset=${offset}&sortBy=popularity`)
+    const page = await api(`/store?limit=${Math.min(100, limit - items.length)}&offset=${offset}${search}`)
     if (!page.items?.length) break
     items.push(...page.items)
     offset += page.items.length
     if (offset >= page.total) break
   }
   return items.slice(0, limit)
+}
+
+/**
+ * Доля выборки, отданная мировому топу по популярности.
+ *
+ * Резерв, а не остаток. Первая версия брала сначала весь адресный поиск, а
+ * популярными добирала хвост, — и адресный поиск выбрал всю тысячу целиком,
+ * вытеснив даже apify/instagram-scraper, самого запускаемого актора магазина.
+ * Русские площадки — причина, по которой снимок собирают, но не единственное
+ * его содержимое.
+ */
+const POPULAR_SHARE = 0.4
+
+/**
+ * Итоговая выборка: мировой топ и адресный поиск, каждому своя доля.
+ *
+ * Сначала берётся топ в пределах своей доли, затем поиск заполняет остальное,
+ * и лишь потом, если поиск дал меньше ожидаемого, топ добирает свободное место.
+ */
+async function fetchSelection(limit) {
+  const byId = new Map()
+
+  const popularQuota = Math.round(limit * POPULAR_SHARE)
+  const popular = await fetchStorePage(popularQuota, null)
+  for (const item of popular) byId.set(item.id, item)
+  console.log(`  по популярности: ${byId.size}`)
+
+  const afterPopular = byId.size
+  for (const query of RU_QUERIES) {
+    if (byId.size >= limit) break
+    let found = []
+    try {
+      found = await fetchStorePage(60, query)
+    } catch (error) {
+      console.log(`  ! поиск «${query}»: ${error.message}`)
+      continue
+    }
+    for (const item of found) {
+      if (byId.size >= limit) break
+      if (!byId.has(item.id)) byId.set(item.id, item)
+    }
+  }
+  console.log(`  адресным поиском: ${byId.size - afterPopular}`)
+
+  // Поиск дал меньше своей доли — свободное место отдаём топу, а не теряем.
+  if (byId.size < limit) {
+    const more = await fetchStorePage(limit - byId.size + popularQuota, null)
+    const before = byId.size
+    for (const item of more) {
+      if (byId.size >= limit) break
+      if (!byId.has(item.id)) byId.set(item.id, item)
+    }
+    if (byId.size > before) console.log(`  добрано популярными: ${byId.size - before}`)
+  }
+
+  return [...byId.values()].slice(0, limit)
 }
 
 /**
@@ -111,8 +195,8 @@ async function mapPool(items, worker) {
   return out
 }
 
-console.log(`Снимаю верхние ${WANTED} акторов по популярности…`)
-const store = await fetchStore(WANTED)
+console.log(`Собираю выборку до ${WANTED} акторов…`)
+const store = await fetchSelection(WANTED)
 console.log(`  список получен: ${store.length}`)
 
 let done = 0
@@ -174,10 +258,12 @@ const snapshot = {
   sourceUrl: 'https://api.apify.com/v2/store',
   sortedBy: 'popularity',
   note:
-    'Верхушка магазина по популярности, не весь магазин: в нём 57 тысяч акторов, ' +
-    'и снимать их целиком — сотни мегабайт ради единиц, с которыми реально пишут ' +
-    'интеграции. Схемы входа и выхода взяты из actorDefinition последней сборки. ' +
-    'Readme и исходники не снимаются.',
+    'Адресный поиск по русским площадкам плюс добор верхушкой магазина по ' +
+    'популярности. Весь магазин (57 тысяч акторов) не снимается: это сотни ' +
+    'мегабайт ради единиц, с которыми реально пишут интеграции. Схемы входа ' +
+    'и выхода взяты из actorDefinition последней сборки. Readme и исходники ' +
+    'не снимаются.',
+  searchQueries: RU_QUERIES,
   actorCount: actors.length,
   withInputSchema: withInput,
   withOutputSchema: withOutput,
@@ -185,16 +271,35 @@ const snapshot = {
 }
 
 mkdirSync(outDir, { recursive: true })
-const file = join(outDir, 'actors.json')
-const text = `${JSON.stringify(snapshot, null, 2)}\n`
-writeFileSync(file, text)
+const file = join(outDir, 'actors.json.gz')
+// Без отступов: файл читает программа, а не человек, а разница в объёме заметная.
+const text = JSON.stringify(snapshot)
+const packed = gzipSync(Buffer.from(text, 'utf8'), { level: 9 })
+writeFileSync(file, packed)
 
-const sha = createHash('sha256').update(text).digest('hex')
-appendFileSync(join(outDir, 'MANIFEST.tsv'), `actors.json\t${sha}\t${Buffer.byteLength(text)}\n`)
+const sha = createHash('sha256').update(packed).digest('hex')
+writeManifestRow(join(outDir, 'MANIFEST.tsv'), 'actors.json.gz', sha, packed.length)
 
 console.log(`Готово: ${actors.length} акторов, со схемой входа ${withInput}, с описанием выхода ${withOutput}`)
-console.log(`  ${file} — ${(Buffer.byteLength(text) / 1024 / 1024).toFixed(1)} МБ`)
+console.log(`  ${file} — ${(packed.length / 1024 / 1024).toFixed(1)} МБ сжато из ${(Buffer.byteLength(text) / 1024 / 1024).toFixed(1)} МБ`)
 if (failures.length > 0) {
   console.log(`  не удалось снять: ${failures.length}`)
   for (const f of failures.slice(0, 5)) console.log(`    ! ${f}`)
+}
+
+/**
+ * Строка манифеста для одного файла: заменяется, а не дописывается.
+ *
+ * Дописывание давало по строке на каждый запуск, и манифест переставал отвечать
+ * на единственный вопрос, ради которого существует, — какой sha256 у того файла,
+ * что лежит рядом прямо сейчас.
+ */
+function writeManifestRow(path, file, sha256, bytes) {
+  const header = 'file\tsha256\tbytes'
+  const rows = existsSync(path)
+    ? readFileSync(path, 'utf8').split('\n').filter((l) => l.trim() && l !== header && !l.startsWith(`${file}\t`))
+    : []
+  rows.push(`${file}\t${sha256}\t${bytes}`)
+  rows.sort()
+  writeFileSync(path, `${header}\n${rows.join('\n')}\n`)
 }

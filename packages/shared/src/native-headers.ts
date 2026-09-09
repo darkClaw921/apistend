@@ -87,7 +87,6 @@ export function allGatewayResponseHeaders(): readonly string[] {
     'x-apistend-did-you-mean',
     'x-apistend-error',
     'x-apistend-cors',
-    'x-apistend-key-services',
     'x-apistend-app',
     'x-apistend-retry-after',
   ])

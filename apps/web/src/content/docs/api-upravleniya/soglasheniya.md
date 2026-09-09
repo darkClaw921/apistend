@@ -121,7 +121,7 @@ curl -s "$STEND/api/v1/logs?limit=2" -H "Authorization: Bearer $STEND_KEY"
 `CONFIRM_MISMATCH`, `CONFLICT`, `UNPROCESSABLE`, `RATE_LIMITED`, `INTERNAL`.
 Отдельные маршруты добавляют свои: `TARGET_NOT_ALLOWED`, `EVENT_SERVICE_MISMATCH`,
 `UNKNOWN_EVENT`, `NO_WEBHOOK`, `NO_WEBHOOK_FOR_EVENT`, `WEBHOOK_PAUSED`,
-`NO_AGENT`, `TOO_MANY_BURSTS`, `NO_KEY`, `KEY_SCOPE`.
+`NO_AGENT`, `TOO_MANY_BURSTS`, `NO_KEY`.
 
 :::warning 422, а не 429, у потолков продукта
 Потолок одновременных серий событий отвечает 422, хотя в кабинете это 429.

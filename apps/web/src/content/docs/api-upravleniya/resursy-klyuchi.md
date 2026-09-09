@@ -26,7 +26,7 @@ curl -s "$STEND/api/v1/keys?limit=1&kind=server" -H "Authorization: Bearer $STEN
       "subtitle": null,
       "kind": "server",
       "mask": "stend_sk_13ee••••••51d8",
-      "services": ["bitrix24"],
+      "services": ["bitrix24", "ozon", "wildberries", "apify"],
       "scopes": ["logs:read", "sandboxes:read"],
       "fullAccess": false,
       "status": "active",
@@ -65,7 +65,7 @@ curl -s "$STEND/api/v1/keys?limit=1&kind=server" -H "Authorization: Bearer $STEN
 | Поле | Обязательное | Значение |
 | --- | --- | --- |
 | `name` | да | 2–80 символов |
-| `services` | да | минимум один из `bitrix24`, `ozon`, `wildberries` |
+| `services` | нет | принимается ради совместимости и игнорируется: ключ открывает все сервисы |
 | `subtitle` | нет | до 120 символов |
 | `kind` | нет | `sandbox` (по умолчанию) или `server` |
 | `rotationDays` | нет | 1–365, по умолчанию 90 |
@@ -75,7 +75,7 @@ curl -s "$STEND/api/v1/keys?limit=1&kind=server" -H "Authorization: Bearer $STEN
 ```bash
 curl -s -X POST "$STEND/api/v1/keys" \
   -H "Authorization: Bearer $STEND_KEY" -H 'Content-Type: application/json' \
-  -d '{"name":"Подрядчик: только логи","kind":"server","services":["bitrix24"],"scopes":["logs:read","sandboxes:read"]}'
+  -d '{"name":"Подрядчик: только логи","kind":"server","scopes":["logs:read","sandboxes:read"]}'
 ```
 
 ```json
@@ -84,7 +84,7 @@ curl -s -X POST "$STEND/api/v1/keys" \
   "name": "Подрядчик: только логи",
   "kind": "server",
   "mask": "stend_sk_13ee••••••51d8",
-  "services": ["bitrix24"],
+  "services": ["bitrix24", "ozon", "wildberries", "apify"],
   "scopes": ["logs:read", "sandboxes:read"],
   "fullAccess": false,
   "status": "active",
@@ -108,8 +108,8 @@ curl -s -X POST "$STEND/api/v1/keys" \
 только в текущей песочнице: ключ из соседней даёт 404, пока не указан
 её `?sandboxId=`.
 
-`PATCH` (область `keys:write`) меняет `name`, `subtitle`, `services`,
-`rotationDays`, `scopes`. Секрет остаётся прежним. Пустое тело отвергается:
+`PATCH` (область `keys:write`) меняет `name`, `subtitle`, `rotationDays`
+и `scopes`. Поле `services` принимается, но не применяется. Секрет остаётся прежним. Пустое тело отвергается:
 
 ```json
 { "error": "VALIDATION", "message": "Не указано ни одного поля для изменения" }
@@ -204,8 +204,10 @@ curl -s -X DELETE "$STEND/api/v1/keys/$KEY_ID" \
 
 - Секрет показывается один раз — при создании и при ротации. Забытый ключ
   заменяется ротацией, а не восстановлением.
-- `services` ключа песочницы ограничивают мок-шлюз, а не Management API:
-  области доступа и сервисы — разные вещи.
+- `services` ключа песочницы больше ничего не ограничивают: ключ открывает все
+  сервисы стенда. Поле осталось в ответах, чтобы не ломать клиентов, и всегда
+  содержит полный набор. Области доступа (`scopes`) — другое: они про Management
+  API и работают как прежде.
 - Отзыв, ротация и правка областей действуют мгновенно: кеш разбора ключей
   сбрасывается сразу, а не через полминуты.
 

@@ -837,40 +837,18 @@ export function registerV1LogsRoutes(app: FastifyInstance): void {
         ? await prisma.apiKey.findFirst({
             where: { id: body.apiKeyId, sandboxId: ctx.sandbox.id, status: { not: 'revoked' } },
           })
+        // Любой активный ключ песочницы: ключ открывает все сервисы стенда.
         : await prisma.apiKey.findFirst({
-            where: {
-              sandboxId: ctx.sandbox.id,
-              status: { not: 'revoked' },
-              kind: 'sandbox',
-              services: { has: body.serviceCode },
-            },
+            where: { sandboxId: ctx.sandbox.id, status: { not: 'revoked' }, kind: 'sandbox' },
             orderBy: { createdAt: 'asc' },
           })
-
-      const service = SERVICE_PROFILES[body.serviceCode].title
 
       if (!apiKey) {
         if (body.apiKeyId) {
           return notFound(reply, `Ключ «${body.apiKeyId}» не найден в этой песочнице или отозван`)
         }
         // Не 400: запрос составлен верно, выполнить его мешает состояние песочницы.
-        // Разделяем «ключей нет вовсе» и «ключи есть, но не для этого сервиса» —
-        // это разные действия пользователя, и коды разные, как в кабинете.
-        const anyKey = await prisma.apiKey.findFirst({
-          where: { sandboxId: ctx.sandbox.id, status: { not: 'revoked' }, kind: 'sandbox' },
-        })
-        return anyKey
-          ? sendError(
-              reply,
-              422,
-              'NO_KEY_FOR_SERVICE',
-              `Ни один ключ песочницы не открыт для сервиса ${service}. Добавьте сервис ключу или создайте новый.`,
-            )
-          : sendError(reply, 422, 'NO_KEY', 'В песочнице нет активного ключа. Создайте ключ через POST /api/v1/keys.')
-      }
-
-      if (!apiKey.services.includes(body.serviceCode)) {
-        return sendError(reply, 422, 'KEY_SCOPE', `Ключ «${apiKey.name}» не даёт доступ к сервису ${service}`)
+        return sendError(reply, 422, 'NO_KEY', 'В песочнице нет активного ключа. Создайте ключ через POST /api/v1/keys.')
       }
 
       const reqId = newRequestId()
@@ -956,7 +934,9 @@ export function registerV1LogsRoutes(app: FastifyInstance): void {
         readiness: result.method?.readiness ?? null,
         upstreamUrl,
         simulated: false,
-        note: rate.allowed ? null : `Лимит сервиса ${service} исчерпан, сценарий заменён на rate_limit`,
+        note: rate.allowed
+          ? null
+          : `Лимит сервиса ${SERVICE_PROFILES[body.serviceCode].title} исчерпан, сценарий заменён на rate_limit`,
         apiKey: keyCard,
         method: result.method
           ? { id: result.method.id, title: result.method.title, group: result.method.group }

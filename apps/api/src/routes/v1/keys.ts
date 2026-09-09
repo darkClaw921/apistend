@@ -192,7 +192,14 @@ export function registerKeysV1Routes(app: FastifyInstance): void {
         name: z.string().min(2, 'Название не короче 2 символов').max(80),
         subtitle: z.string().max(120).optional(),
         kind: keyKind.default('sandbox'),
-        services: z.array(serviceCode).min(1, 'Выберите хотя бы один сервис'),
+        /**
+         * Принимается ради совместимости и игнорируется: ключ песочницы
+         * открывает все сервисы стенда. Деление по сервисам убрано — оно ничего
+         * не защищало, а ключ, выданный до появления нового сервиса, оставался
+         * без него навсегда. Отвергать поле нельзя: сломались бы клиенты,
+         * написанные до этой правки.
+         */
+        services: z.array(serviceCode).optional(),
         rotationDays: z.number().int().min(1).max(365).default(90),
         scopes: z.array(scopeSchema).optional(),
       }),
@@ -238,7 +245,7 @@ export function registerKeysV1Routes(app: FastifyInstance): void {
           prefix: generated.prefix,
           suffix: generated.suffix,
           keyHash: generated.hash,
-          services: input.body.services,
+          services: [...SERVICE_CODES],
           rotationDays: input.body.rotationDays,
           scopes: wanted,
         },
@@ -273,7 +280,8 @@ export function registerKeysV1Routes(app: FastifyInstance): void {
         name: z.string().min(2, 'Название не короче 2 символов').max(80).optional(),
         /** null — снять подпись. */
         subtitle: z.string().max(120).nullable().optional(),
-        services: z.array(serviceCode).min(1, 'Выберите хотя бы один сервис').optional(),
+        /** Принимается ради совместимости и игнорируется — см. создание ключа. */
+        services: z.array(serviceCode).optional(),
         rotationDays: z.number().int().min(1).max(365).optional(),
         scopes: z.array(scopeSchema).optional(),
       }),
@@ -283,6 +291,7 @@ export function registerKeysV1Routes(app: FastifyInstance): void {
       const key = await prisma.apiKey.findFirst({ where: { id: input.params.id, sandboxId: ctx.sandbox.id } })
       if (!key) return notFound(reply, 'Ключ не найден')
 
+      // services разбирается, но не применяется: набор сервисов у ключа всегда полный.
       const { name, subtitle, services, rotationDays, scopes } = input.body
       if (name === undefined && subtitle === undefined && services === undefined && rotationDays === undefined && scopes === undefined) {
         return badRequest(reply, 'Не указано ни одного поля для изменения')
@@ -311,7 +320,6 @@ export function registerKeysV1Routes(app: FastifyInstance): void {
         data: {
           ...(name !== undefined ? { name } : {}),
           ...(subtitle !== undefined ? { subtitle } : {}),
-          ...(services !== undefined ? { services } : {}),
           ...(rotationDays !== undefined ? { rotationDays } : {}),
           ...(scopes !== undefined ? { scopes } : {}),
         },

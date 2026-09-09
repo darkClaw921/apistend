@@ -4,7 +4,6 @@ import { useState } from 'react'
 import { X } from 'lucide-react'
 import { ButtonPrimary, ButtonSecondary, CodeBlock, Panel, ServiceChip } from '@apistend/ui'
 import { SERVICE_LIST } from '@apistend/shared'
-import type { ServiceCode } from '@apistend/shared'
 import { api, ApiError } from '@/lib/api'
 import { Field, FormError } from './Field'
 
@@ -18,14 +17,9 @@ export function CreateKeyDialog({ onClose, onCreated }: { onClose: () => void; o
   const [name, setName] = useState('')
   const [subtitle, setSubtitle] = useState('')
   const [kind, setKind] = useState<'sandbox' | 'server'>('sandbox')
-  const [services, setServices] = useState<ServiceCode[]>(['bitrix24', 'ozon', 'wildberries', 'apify'])
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [secret, setSecret] = useState<string | null>(null)
-
-  function toggle(code: ServiceCode) {
-    setServices((s) => (s.includes(code) ? s.filter((x) => x !== code) : [...s, code]))
-  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -33,7 +27,7 @@ export function CreateKeyDialog({ onClose, onCreated }: { onClose: () => void; o
     setError(null)
     try {
       const res = await api.post<{ secret: string }>('/api/keys', {
-        name, subtitle: subtitle || undefined, kind, services, rotationDays: 90,
+        name, subtitle: subtitle || undefined, kind, rotationDays: 90,
       })
       setSecret(res.secret)
     } catch (err) {
@@ -96,27 +90,31 @@ export function CreateKeyDialog({ onClose, onCreated }: { onClose: () => void; o
               </div>
             </div>
 
+            {/* Выбора здесь нет и не должно быть: ключ открывает все сервисы стенда.
+                Пока выбор был, ключ, выданный до появления нового сервиса, оставался
+                без него навсегда — и консоль отвечала «Добавьте сервис ключу»,
+                хотя добавить его было нечем. */}
             <div className="flex flex-col gap-[6px]">
               <span className="text-[12px] font-medium text-text-secondary">Доступные сервисы</span>
               <div className="flex flex-wrap gap-[8px]">
                 {SERVICE_LIST.map((s) => (
-                  <button key={s.code} type="button" onClick={() => toggle(s.code)}
-                    aria-pressed={services.includes(s.code)}
-                    className={`inline-flex items-center gap-[6px] rounded-[6px] border px-[10px] py-[7px] text-[12px] ${
-                      services.includes(s.code) ? 'border-accent bg-accent-soft text-text-primary' : 'border-border bg-surface text-text-secondary'
-                    }`}>
+                  <span key={s.code}
+                    className="inline-flex items-center gap-[6px] rounded-[6px] border border-border bg-surface px-[10px] py-[7px] text-[12px] text-text-secondary">
                     <ServiceChip service={s.code} />
                     {s.title}
-                  </button>
+                  </span>
                 ))}
               </div>
+              <span className="text-[11px] text-text-tertiary">
+                Ключ открывает все сервисы стенда, включая те, что появятся позже.
+              </span>
             </div>
 
             {error ? <FormError>{error}</FormError> : null}
 
             <div className="flex gap-[8px]">
               <ButtonSecondary onClick={onClose} className="flex-1">Отмена</ButtonSecondary>
-              <ButtonPrimary type="submit" disabled={pending || services.length === 0 || name.length < 2} className="flex-1">
+              <ButtonPrimary type="submit" disabled={pending || name.length < 2} className="flex-1">
                 {pending ? 'Создаём…' : 'Создать ключ'}
               </ButtonPrimary>
             </div>

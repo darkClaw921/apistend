@@ -131,13 +131,12 @@ curl -s -X POST localhost:8080/api/keys \
 | `scopes` | нет | области доступа к Management API; имеют смысл только при `kind: server`. Пустой список — полный доступ |
 :::
 
-Ключ с ограниченным списком сервисов на чужом сервисе отвечает тем же 401,
-что и незнакомый ключ, а причину кладёт в служебный заголовок:
+Незнакомый или отозванный ключ отвечает 401 в родном конверте сервиса,
+а причину кладёт в служебный заголовок:
 
 ```
 HTTP/1.1 401 Unauthorized
-x-apistend-error: key-scope
-x-apistend-key-services: wildberries
+x-apistend-error: key-unknown-or-revoked
 
 {"error":"NO_AUTH_FOUND","error_description":"Wrong authorization data"}
 ```

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { gunzipSync } from 'node:zlib'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -11,13 +12,15 @@ import { fileURLToPath } from 'node:url'
  * Поэтому здесь лежат настоящие схемы настоящих акторов — без них мок проверял бы
  * только транспорт, а не то, ради чего агент написан.
  *
- * Снимок собирает scripts/vendor-apify-actors.mjs. Загружается лениво: файл
- * весит мегабайты, а нужен только тем, кто пришёл в MCP или дёрнул методы
- * магазина, — держать его в памяти обычного шлюза незачем.
+ * Снимок собирает scripts/vendor-apify-actors.mjs. Хранится сжатым: тысяча
+ * акторов — это около десяти мегабайт почти целиком из схем входа, а gzip
+ * сжимает их вчетверо. Распаковывается лениво, при первом обращении: нужен
+ * снимок только тем, кто пришёл в MCP, — держать его в памяти обычного шлюза
+ * незачем.
  */
 
 const here = dirname(fileURLToPath(import.meta.url))
-const SNAPSHOT = join(here, '../../../../specs/apify/actors.json')
+const SNAPSHOT = join(here, '../../../../specs/apify/actors.json.gz')
 
 export interface ActorPricing {
   readonly model: string | null
@@ -78,7 +81,7 @@ export function actorSnapshot(): ActorSnapshot | null {
   if (cached) return cached
   if (loadFailed) return null
   try {
-    cached = JSON.parse(readFileSync(SNAPSHOT, 'utf8')) as ActorSnapshot
+    cached = JSON.parse(gunzipSync(readFileSync(SNAPSHOT)).toString('utf8')) as ActorSnapshot
     return cached
   } catch {
     loadFailed = true

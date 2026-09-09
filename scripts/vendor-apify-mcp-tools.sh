@@ -84,7 +84,16 @@ process.stdout.write('  инструментов: ' + tools.length + ', прот
   ', сервер ' + init.serverInfo.name + ' ' + init.serverInfo.version + '\n')
 "
 
+# Строка манифеста заменяется, а не дописывается: иначе на каждый запуск
+# появлялась новая, и манифест переставал отвечать на единственный вопрос —
+# какой sha256 у файла, который лежит рядом прямо сейчас.
 sha=$(shasum -a 256 "$OUT/mcp-tools.json" | cut -d' ' -f1)
-printf 'mcp-tools.json\t%s\t%s\n' "$sha" "$(wc -c < "$OUT/mcp-tools.json" | tr -d ' ')" >> "$OUT/MANIFEST.tsv"
+bytes=$(wc -c < "$OUT/mcp-tools.json" | tr -d ' ')
+{
+  printf 'file\tsha256\tbytes\n'
+  grep -v $'^file\t' "$OUT/MANIFEST.tsv" 2>/dev/null | grep -v $'^mcp-tools.json\t' | grep -v '^$'
+  printf 'mcp-tools.json\t%s\t%s\n' "$sha" "$bytes"
+} | sort -u -k1,1 > "$OUT/MANIFEST.tsv.tmp"
+mv "$OUT/MANIFEST.tsv.tmp" "$OUT/MANIFEST.tsv"
 
 echo "Готово: $OUT/mcp-tools.json"

@@ -14,7 +14,14 @@ const createBody = z.object({
   name: z.string().min(2, 'Название не короче 2 символов').max(80),
   subtitle: z.string().max(120).optional(),
   kind: z.enum(['sandbox', 'server']).default('sandbox'),
-  services: z.array(z.enum(SERVICE_CODES)).min(1, 'Выберите хотя бы один сервис'),
+  /**
+   * Принимается ради совместимости со старыми клиентами и игнорируется.
+   *
+   * Ключ песочницы открывает ВСЕ сервисы стенда — см. комментарий у SERVICE_CODES
+   * ниже. Отвергать запрос с этим полем было бы хуже: интеграция, написанная
+   * вчера, перестала бы создавать ключи.
+   */
+  services: z.array(z.enum(SERVICE_CODES)).optional(),
   rotationDays: z.number().int().min(1).max(365).default(90),
   /**
    * Области доступа к Management API. Пустой список — полный доступ, и это
@@ -114,7 +121,11 @@ export function registerKeyRoutes(app: FastifyInstance): void {
         prefix: generated.prefix,
         suffix: generated.suffix,
         keyHash: generated.hash,
-        services: parsed.data.services,
+        // Все сервисы, а не выбранные. Деление ключа по сервисам убрано:
+        // оно ничего не защищало (песочница и так изолирована), зато в день
+        // появления нового сервиса оставляло без него все выданные раньше ключи,
+        // и консоль отвечала «Добавьте сервис ключу» — сделать это было нечем.
+        services: [...SERVICE_CODES],
         rotationDays: parsed.data.rotationDays,
         scopes: parsed.data.scopes,
       },

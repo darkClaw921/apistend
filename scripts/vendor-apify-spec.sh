@@ -31,8 +31,14 @@ for (const item of Object.values(s.paths||{}))
 process.stdout.write(String(n));
 ")
 
-printf 'file\tsha256\tbytes\n' > "$OUT/MANIFEST.tsv"
-printf 'openapi.json\t%s\t%s\n' "$sha" "$bytes" >> "$OUT/MANIFEST.tsv"
+# Обновляем свою строку, не затирая чужие: рядом в манифесте живут снимок
+# инструментов MCP и снимок акторов, и их собирают другие скрипты.
+{
+  printf 'file\tsha256\tbytes\n'
+  grep -v $'^file\t' "$OUT/MANIFEST.tsv" 2>/dev/null | grep -v $'^openapi.json\t' | grep -v '^$'
+  printf 'openapi.json\t%s\t%s\n' "$sha" "$bytes"
+} | sort -u -k1,1 > "$OUT/MANIFEST.tsv.tmp"
+mv "$OUT/MANIFEST.tsv.tmp" "$OUT/MANIFEST.tsv"
 
 cat > "$OUT/SOURCE.json" <<JSON
 {

@@ -167,17 +167,10 @@ async function handle(
     // Счётчики ключа обновляются пачкой раз в 10 секунд, а не запросом к базе на вызов.
     recordKeyUsage(resolved.apiKey.id)
 
-    if (!resolved.apiKey.services.includes(service)) {
-      const err = buildScenarioError(service, 'invalid_token', reqId)
-      reply.headers(err.headers).headers(nativeResponseHeaders(service, { requestId: reqId }))
-      reply.header('x-apistend-request-id', reqId)
-      // В заголовке — только код: HTTP разрешает в значениях лишь ASCII, и русский
-      // текст ронял ответ целиком (ERR_INVALID_CHAR), подменяя конверт ошибки
-      // сервиса внутренней ошибкой Fastify. Подробности — в теле и в журнале.
-      reply.header('x-apistend-error', 'key-scope')
-      reply.header('x-apistend-key-services', resolved.apiKey.services.join(','))
-      return reply.code(err.status).send(err.body)
-    }
+    // Проверки «открыт ли этот сервис ключу» здесь больше нет: ключ песочницы
+    // открывает все сервисы стенда. Деление по сервисам ничего не защищало —
+    // песочница и так изолирована ключом, — зато в день появления нового сервиса
+    // оставляло без него все выданные раньше ключи.
   }
 
   // Путь Bitrix24 несёт две вещи, которых нет в каталоге:

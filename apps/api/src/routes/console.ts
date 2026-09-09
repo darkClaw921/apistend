@@ -54,31 +54,18 @@ export function registerConsoleRoutes(app: FastifyInstance): void {
     // Явно выбранный пользователем ключ уважаем как есть.
     const apiKey = input.apiKeyId
       ? await prisma.apiKey.findFirst({ where: { id: input.apiKeyId, sandboxId: ctx.sandbox.id } })
+      // Любой активный ключ песочницы подходит: ключ открывает все сервисы стенда.
+      // Раньше здесь искали ключ с нужным сервисом, и в день появления четвёртого
+      // сервиса консоль перестала работать у всех, чьи ключи выданы раньше.
       : await prisma.apiKey.findFirst({
-          where: {
-            sandboxId: ctx.sandbox.id,
-            status: { not: 'revoked' },
-            kind: 'sandbox',
-            services: { has: input.serviceCode },
-          },
+          where: { sandboxId: ctx.sandbox.id, status: { not: 'revoked' }, kind: 'sandbox' },
           orderBy: { createdAt: 'asc' },
         })
 
     if (!apiKey) {
-      const anyKey = await prisma.apiKey.findFirst({
-        where: { sandboxId: ctx.sandbox.id, status: { not: 'revoked' }, kind: 'sandbox' },
-      })
       return reply.code(400).send({
-        error: anyKey ? 'NO_KEY_FOR_SERVICE' : 'NO_KEY',
-        message: anyKey
-          ? `Ни один ключ песочницы не открыт для сервиса ${SERVICE_PROFILES[input.serviceCode].title}. Добавьте сервис ключу или создайте новый.`
-          : 'Нет активного ключа песочницы. Создайте ключ.',
-      })
-    }
-    if (!apiKey.services.includes(input.serviceCode)) {
-      return reply.code(400).send({
-        error: 'KEY_SCOPE',
-        message: `Ключ «${apiKey.name}» не даёт доступ к сервису ${SERVICE_PROFILES[input.serviceCode].title}`,
+        error: 'NO_KEY',
+        message: 'Нет активного ключа песочницы. Создайте ключ.',
       })
     }
 

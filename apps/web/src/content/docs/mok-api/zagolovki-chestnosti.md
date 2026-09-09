@@ -158,8 +158,7 @@ x-apistend-readiness: ready
 :::params
 | Заголовок | Когда приходит |
 | --- | --- |
-| `X-APIStend-Error` | ключ не подошёл: `key-missing`, `key-unknown-or-revoked`, `key-scope` |
-| `X-APIStend-Key-Services` | вместе с `key-scope`: список сервисов ключа |
+| `X-APIStend-Error` | ключ не подошёл: `key-missing`, `key-unknown-or-revoked` |
 | `X-APIStend-Did-You-Mean` | путь не найден: до трёх похожих путей каталога |
 | `X-APIStend-Scenario` | сработал сценарий ошибки, в том числе `timeout` |
 | `X-APIStend-Retry-After` | превышение лимита у Bitrix24 и Ozon — у них своего заголовка нет |

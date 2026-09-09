@@ -95,11 +95,11 @@ async function main() {
     { name: 'CI / автотесты', subtitle: 'GitLab CI · nightly-run', p: '2b8e', s: '91d0',
       services: ['bitrix24', 'ozon', 'wildberries', 'apify'], created: daysAgo(215), used: at(9, 5), reqs: 38_210, status: 'active' as const },
     { name: 'Мобильное приложение', subtitle: 'iOS · сборка 3.4.1', p: 'c40d', s: '7ae5',
-      services: ['ozon', 'wildberries'], created: daysAgo(223), used: new Date(daysAgo(1).setHours(21, 48, 0, 0)), reqs: 4_902, status: 'active' as const },
+      services: ['bitrix24', 'ozon', 'wildberries', 'apify'], created: daysAgo(223), used: new Date(daysAgo(1).setHours(21, 48, 0, 0)), reqs: 4_902, status: 'active' as const },
     { name: 'Демо для клиента', subtitle: 'Витрина · ООО «Сфера»', p: '9e11', s: '33bc',
       services: ['bitrix24'], created: daysAgo(145), used: daysAgo(142), reqs: 860, status: 'expiring' as const, expires: daysAgo(-35) },
     { name: 'Старый ключ подрядчика', subtitle: 'Отозван 21.02.2025 · И. Орлов', p: '5da7', s: '0f48',
-      services: ['bitrix24', 'wildberries'], created: daysAgo(303), used: daysAgo(198), reqs: 0, status: 'revoked' as const },
+      services: ['bitrix24', 'ozon', 'wildberries', 'apify'], created: daysAgo(303), used: daysAgo(198), reqs: 0, status: 'revoked' as const },
   ]
 
   const keys: Array<{ id: string; name: string; full: string; services: string[]; status: string }> = []
