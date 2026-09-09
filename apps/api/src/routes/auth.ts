@@ -8,18 +8,35 @@ import { engine } from '../gateway.ts'
 
 /** Вход и регистрация по логину и паролю. Без подтверждения почты и OAuth. */
 
+/**
+ * Логин — латиница, цифры и разделители: он попадает в адреса и в вывод CLI,
+ * а кириллица там превращается в проценты. Регистр не важен, логины хранятся
+ * в нижнем: «Ivan» и «ivan» — один и тот же человек, и два аккаунта на них
+ * означали бы, что вход зависит от того, как нажат Caps Lock.
+ */
+const loginField = z
+  .string()
+  .min(3, 'Логин не короче 3 символов')
+  .max(40, 'Логин не длиннее 40 символов')
+  .regex(/^[a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?$/, 'Логин: латиница, цифры, точка, дефис и подчёркивание')
+
 const credentials = z.object({
-  email: z.email('Введите корректный адрес почты').max(200),
+  login: loginField,
   password: z.string().min(8, 'Пароль не короче 8 символов').max(200),
 })
 
 const registration = credentials.extend({
   /**
-   * Имя необязательно: на экране регистрации его не спрашивают — по макету
-   * там email, пароль и проект. Когда его нет, берём часть адреса до собаки:
-   * это лучше пустого места в подписи пользователя, чем «Без имени».
+   * Имя необязательно: на экране регистрации его не спрашивают. Когда его нет,
+   * подписью служит логин — это лучше пустого места, чем «Без имени».
    */
   name: z.string().min(2, 'Укажите имя').max(80).optional(),
+  /**
+   * Почта необязательна и ни на что не влияет: писем сервис не шлёт,
+   * восстановления пароля по ней нет. Оставлена как способ связи для тех,
+   * кто хочет её указать.
+   */
+  email: z.email('Введите корректный адрес почты').max(200).optional(),
   /** Имя проекта. Стоит в хлебных крошках кабинета и в баннере CLI. */
   project: z.string().min(2, 'Название проекта не короче 2 символов').max(80).optional(),
 })
@@ -29,10 +46,9 @@ function initialsOf(name: string): string {
   return parts.map((p) => p[0]?.toUpperCase() ?? '').join('') || 'AP'
 }
 
-/** «igor.gerasimov@acme.ru» → «Igor.gerasimov». Запасное имя, когда его не спросили. */
-function nameFromEmail(email: string): string {
-  const local = email.split('@')[0] ?? 'user'
-  return local.charAt(0).toUpperCase() + local.slice(1)
+/** «igor.gerasimov» → «Igor.gerasimov». Запасное имя, когда его не спросили. */
+function nameFromLogin(login: string): string {
+  return login.charAt(0).toUpperCase() + login.slice(1)
 }
 
 export function registerAuthRoutes(app: FastifyInstance): void {
@@ -41,19 +57,27 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     if (!parsed.success) {
       return reply.code(400).send({ error: 'VALIDATION', issues: parsed.error.issues.map((i) => i.message) })
     }
-    const { email, password } = parsed.data
-    const normalizedEmail = email.toLowerCase()
-    const name = parsed.data.name ?? nameFromEmail(normalizedEmail)
+    const { password } = parsed.data
+    const login = parsed.data.login.toLowerCase()
+    const email = parsed.data.email?.toLowerCase() ?? null
+    const name = parsed.data.name ?? nameFromLogin(login)
     const project = parsed.data.project ?? 'Первый проект'
 
-    const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } })
+    const existing = await prisma.user.findUnique({ where: { login } })
     if (existing) {
-      return reply.code(409).send({ error: 'EMAIL_TAKEN', message: 'Аккаунт с такой почтой уже существует' })
+      return reply.code(409).send({ error: 'LOGIN_TAKEN', message: `Логин «${login}» уже занят` })
+    }
+    if (email) {
+      const sameEmail = await prisma.user.findUnique({ where: { email } })
+      if (sameEmail) {
+        return reply.code(409).send({ error: 'EMAIL_TAKEN', message: 'Этот адрес почты уже указан в другом аккаунте' })
+      }
     }
 
     const user = await prisma.user.create({
       data: {
-        email: normalizedEmail,
+        login,
+        email,
         passwordHash: await hashPassword(password),
         name,
         initials: initialsOf(name),
@@ -78,9 +102,9 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       },
     })
 
-    await issueSession(reply, { userId: user.id, email: user.email }, req)
+    await issueSession(reply, { userId: user.id, login: user.login }, req)
     return reply.code(201).send({
-      user: { id: user.id, email: user.email, name: user.name, initials: user.initials },
+      user: { id: user.id, login: user.login, email: user.email, name: user.name, initials: user.initials },
       sandbox: { id: sandbox.id, name: sandbox.name, project: sandbox.project },
       // Полный ключ показывается ровно один раз — здесь.
       apiKey: key.full,
@@ -92,18 +116,18 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     if (!parsed.success) {
       return reply.code(400).send({ error: 'VALIDATION', issues: parsed.error.issues.map((i) => i.message) })
     }
-    const email = parsed.data.email.toLowerCase()
-    const user = await prisma.user.findUnique({ where: { email } })
+    const login = parsed.data.login.toLowerCase()
+    const user = await prisma.user.findUnique({ where: { login } })
 
     // Одинаковый ответ и текст для «нет такого пользователя» и «неверный пароль»:
     // иначе форма превращается в способ узнать, есть ли аккаунт.
     const ok = user ? await verifyPassword(user.passwordHash, parsed.data.password) : false
     if (!user || !ok) {
-      return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: 'Неверная почта или пароль' })
+      return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: 'Неверный логин или пароль' })
     }
 
-    await issueSession(reply, { userId: user.id, email: user.email }, req)
-    return reply.send({ user: { id: user.id, email: user.email, name: user.name, initials: user.initials } })
+    await issueSession(reply, { userId: user.id, login: user.login }, req)
+    return reply.send({ user: { id: user.id, login: user.login, email: user.email, name: user.name, initials: user.initials } })
   })
 
   app.post('/api/auth/logout', async (req, reply) => {
@@ -166,7 +190,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
 
     return reply.send({
       user: {
-        id: user.id, email: user.email, name: user.name,
+        id: user.id, login: user.login, email: user.email, name: user.name,
         initials: user.initials, planLabel: user.planLabel,
       },
       usage: { requestsThisMonth, hasLimits: false },

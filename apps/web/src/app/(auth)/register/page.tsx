@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Mail, Lock, FolderGit2, Check, Copy } from 'lucide-react'
+import { AtSign, Lock, FolderGit2, Check, Copy } from 'lucide-react'
 import { api, ApiError, API_URL } from '@/lib/api'
 import { AuthScreen, AuthHeading, AuthSwitch, CliHint, AUTH_COLORS as C } from '@/components/auth/AuthScreen'
 import { AuthField, AuthSubmit, AuthError } from '@/components/auth/AuthField'
@@ -48,7 +48,7 @@ const gatewayBase = API_URL
 
 export default function RegisterPage() {
   const router = useRouter()
-  const [email, setEmail] = useState('')
+  const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
   const [project, setProject] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -62,7 +62,7 @@ export default function RegisterPage() {
     setError(null)
     try {
       const res = await api.post<{ apiKey: string }>('/api/auth/register', {
-        email,
+        login,
         password,
         project: project.trim() || undefined,
       })
@@ -147,8 +147,10 @@ export default function RegisterPage() {
 
         <div className="mt-[12px] flex flex-col gap-[16px]">
           <AuthField
-            label="email" icon={Mail} type="email" value={email} onChange={setEmail}
-            autoComplete="email" placeholder="igor@acme.ru" required autoFocus
+            label="login" hint="латиница, цифры, точка и дефис" icon={AtSign}
+            value={login} onChange={setLogin}
+            autoComplete="username" placeholder="igor" required autoFocus
+            minLength={3} maxLength={40}
           />
           <AuthField
             label="password" hint="минимум 8 символов" icon={Lock} type="password"

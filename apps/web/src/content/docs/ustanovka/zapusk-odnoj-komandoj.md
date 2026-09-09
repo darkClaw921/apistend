@@ -69,7 +69,7 @@ curl -s localhost:8080/health
 :::params Демо-учётная запись
 | Поле | Значение |
 | --- | --- |
-| `email` | `demo@apistend.ru` |
+| `login` | `demo` |
 | `пароль` | `apistend2026` |
 :::
 

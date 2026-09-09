@@ -26,7 +26,7 @@ const secret = new TextEncoder().encode(env.jwtSecret)
 
 export interface SessionClaims {
   userId: string
-  email: string
+  login: string
 }
 
 /** Хеш, а не сам идентификатор: в базе секретов не держим. */
@@ -40,7 +40,7 @@ export async function issueSession(
   request?: FastifyRequest,
 ): Promise<void> {
   const sessionId = randomUUID()
-  const token = await new SignJWT({ email: claims.email, sid: sessionId })
+  const token = await new SignJWT({ login: claims.login, sid: sessionId })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(claims.userId)
     .setIssuedAt()
@@ -86,7 +86,7 @@ export async function readSession(request: FastifyRequest): Promise<SessionClaim
     })
     if (!live || live.expiresAt.getTime() <= Date.now()) return null
 
-    return { userId: payload.sub, email: String(payload.email ?? '') }
+    return { userId: payload.sub, login: String(payload.login ?? '') }
   } catch {
     return null
   }

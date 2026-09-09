@@ -1,7 +1,7 @@
 import type { Readiness, ServiceCode } from '@apistend/shared'
 
 export interface Me {
-  user: { id: string; email: string; name: string; initials: string; planLabel: string }
+  user: { id: string; login: string; email: string | null; name: string; initials: string; planLabel: string }
   usage: { requestsThisMonth: number; hasLimits: boolean }
   /** Счётчики сайдбара. Все — из базы: в вёрстке чисел нет. */
   counts: {

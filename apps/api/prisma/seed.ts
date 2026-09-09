@@ -22,6 +22,7 @@ loadEnv({ path: resolve(here, '../../../.env'), quiet: true })
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) })
 const JWT_SECRET = process.env.JWT_SECRET!
 
+const DEMO_LOGIN = 'demo'
 const DEMO_EMAIL = 'demo@apistend.ru'
 const DEMO_PASSWORD = 'apistend2026'
 
@@ -60,10 +61,11 @@ async function main() {
   process.stdout.write('Сид APIStend\n')
 
   // Чистим только демо-аккаунт: чужие данные не трогаем.
-  await prisma.user.deleteMany({ where: { email: DEMO_EMAIL } })
+  await prisma.user.deleteMany({ where: { login: DEMO_LOGIN } })
 
   const user = await prisma.user.create({
     data: {
+      login: DEMO_LOGIN,
       email: DEMO_EMAIL,
       passwordHash: await argon2.hash(DEMO_PASSWORD, { type: argon2.argon2id, memoryCost: 19_456, timeCost: 2, parallelism: 1 }),
       name: 'Игорь Герасимов',
@@ -366,7 +368,7 @@ async function main() {
   process.stdout.write(`
 Готово.
 
-  Вход:    ${DEMO_EMAIL}
+  Логин:   ${DEMO_LOGIN}
   Пароль:  ${DEMO_PASSWORD}
 
   Песочница:  ${sandbox.name} (${sandbox.id})

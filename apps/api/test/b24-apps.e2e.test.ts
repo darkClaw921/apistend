@@ -53,10 +53,10 @@ beforeAll(async () => {
   if (!rAddr || typeof rAddr === 'string') throw new Error('нет адреса приложения')
   receiverBase = `http://127.0.0.1:${rAddr.port}`
 
-  const email = `b24app-${randomBytes(4).toString('hex')}@test.local`
+  const login = `b24app-${randomBytes(4).toString('hex')}`
   const user = await prisma.user.create({
     data: {
-      email,
+      login,
       passwordHash: await argon2.hash(PASSWORD, { type: argon2.argon2id, memoryCost: 19_456, timeCost: 2, parallelism: 1 }),
       name: 'Тест Приложений',
       initials: 'ТП',
@@ -76,13 +76,13 @@ beforeAll(async () => {
   })
   sandboxId = sandbox.id
 
-  const login = await fetch(`${apiBase}/api/auth/login`, {
+  const signIn = await fetch(`${apiBase}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password: PASSWORD }),
+    body: JSON.stringify({ login, password: PASSWORD }),
   })
-  expect(login.status).toBe(200)
-  cookie = (login.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ')
+  expect(signIn.status).toBe(200)
+  cookie = (signIn.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ')
   expect(cookie).toContain('apistend_session')
 })
 

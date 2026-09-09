@@ -84,7 +84,9 @@ function deviceLabel(userAgent: string | null): string | null {
 
 const accountProfile = z.object({
   id: z.string(),
-  email: z.string(),
+  login: z.string(),
+  /** Необязательная почта для связи: вход по ней не идёт. */
+  email: z.string().nullable(),
   name: z.string(),
   /** Две буквы для аватара в сайдбаре. */
   initials: z.string(),
@@ -97,6 +99,7 @@ const accountProfile = z.object({
 async function profileOf(user: User) {
   return {
     id: user.id,
+    login: user.login,
     email: user.email,
     name: user.name,
     initials: user.initials,
@@ -160,15 +163,26 @@ export function registerAccountV1Routes(app: FastifyInstance): void {
       scope: 'account:write',
       summary: 'Изменить профиль',
       description:
-        'Имя и инициалы меняются без подтверждения. Смена почты требует текущего пароля: ' +
-        'почта — это логин, и подменивший её получает аккаунт целиком. Тот же адрес, что уже ' +
-        'стоит у аккаунта, сменой не считается и пароля не требует. Сессии и ключи после смены ' +
-        'почты продолжают работать: адрес не участвует в проверке ни того, ни другого.',
+        'Имя, инициалы и почту можно менять без подтверждения: почта — способ связи, вход по ней ' +
+        'не идёт. Смена ЛОГИНА требует текущего пароля: логин — это вход, и подменивший его ' +
+        'получает аккаунт целиком. Тот же логин, что уже стоит у аккаунта, сменой не считается. ' +
+        'Сессии и ключи после смены логина продолжают работать: он не участвует в проверке ' +
+        'ни того, ни другого.',
       tags: ['Аккаунт'],
       body: z.object({
         name: z.string().trim().min(2, 'Имя не короче 2 символов').max(80).optional(),
         initials: z.string().trim().min(1, 'Инициалы не могут быть пустыми').max(3).optional(),
-        email: z.email('Введите корректный адрес почты').max(200).optional(),
+        login: z
+          .string()
+          .min(3, 'Логин не короче 3 символов')
+          .max(40, 'Логин не длиннее 40 символов')
+          .regex(
+            /^[a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?$/,
+            'Логин: латиница, цифры, точка, дефис и подчёркивание',
+          )
+          .optional(),
+        /** null стирает почту: способ связи можно и убрать. */
+        email: z.email('Введите корректный адрес почты').max(200).nullable().optional(),
         currentPassword: z.string().min(1).max(200).optional(),
       }),
       failures: ['CONFLICT'],
@@ -176,24 +190,36 @@ export function registerAccountV1Routes(app: FastifyInstance): void {
     },
     async (ctx, input, _req, reply) => {
       const { name, initials, currentPassword } = input.body
-      if (name === undefined && initials === undefined && input.body.email === undefined) {
-        return badRequest(reply, 'Нечего менять: укажите хотя бы одно из полей name, initials, email')
+      if (
+        name === undefined &&
+        initials === undefined &&
+        input.body.email === undefined &&
+        input.body.login === undefined
+      ) {
+        return badRequest(reply, 'Нечего менять: укажите хотя бы одно из полей name, initials, login, email')
       }
 
-      // Почта хранится в нижнем регистре — так же, как её кладёт регистрация,
-      // иначе «Ivan@…» и «ivan@…» стали бы двумя разными аккаунтами.
-      const email = input.body.email?.toLowerCase()
+      // И логин, и почта хранятся в нижнем регистре — так же, как их кладёт
+      // регистрация: иначе «Ivan» и «ivan» стали бы разными аккаунтами.
+      const login = input.body.login?.toLowerCase()
+      const changesLogin = login !== undefined && login !== ctx.user.login
+      const email = input.body.email === null ? null : input.body.email?.toLowerCase()
       const changesEmail = email !== undefined && email !== ctx.user.email
 
-      if (changesEmail) {
+      if (changesLogin) {
         if (!currentPassword) {
-          return badRequest(reply, 'Смена почты требует поля currentPassword: почта — это логин от аккаунта')
+          return badRequest(reply, 'Смена логина требует поля currentPassword: логин — это вход в аккаунт')
         }
         if (!(await verifyPassword(ctx.user.passwordHash, currentPassword))) {
           return forbidden(reply, 'Текущий пароль указан неверно')
         }
+        const taken = await prisma.user.findUnique({ where: { login }, select: { id: true } })
+        if (taken) return conflict(reply, `Логин «${login}» уже занят`)
+      }
+
+      if (changesEmail && email !== null) {
         const taken = await prisma.user.findUnique({ where: { email }, select: { id: true } })
-        if (taken) return conflict(reply, `Аккаунт с почтой ${email} уже существует`)
+        if (taken) return conflict(reply, `Почта ${email} уже указана в другом аккаунте`)
       }
 
       /**
@@ -211,6 +237,7 @@ export function registerAccountV1Routes(app: FastifyInstance): void {
         data: {
           ...(name !== undefined ? { name } : {}),
           ...(nextInitials !== undefined ? { initials: nextInitials } : {}),
+          ...(changesLogin ? { login } : {}),
           ...(changesEmail ? { email } : {}),
         },
       })
@@ -387,7 +414,7 @@ export function registerAccountV1Routes(app: FastifyInstance): void {
         'запросов, вебхуки и их доставки, сценарии, серии событий, свои моки, локальные приложения ' +
         'Bitrix24 и изменения поверх демо-данных. Восстановления нет: копии данных мы не храним, ' +
         'а тот же адрес почты после удаления можно зарегистрировать заново — это будет пустой аккаунт.\n\n' +
-        'Поэтому нужно подтверждение: в поле email присылается точный адрес удаляемого аккаунта. ' +
+        'Поэтому нужно подтверждение: в поле login присылается точный логин удаляемого аккаунта. ' +
         'При входе по cookie-сессии дополнительно требуется пароль — оставленный без присмотра ' +
         'браузер не должен уметь стереть аккаунт одним запросом. По серверному ключу пароль ' +
         'не нужен: сам ключ уже даёт полный доступ к аккаунту.\n\n' +
@@ -395,13 +422,13 @@ export function registerAccountV1Routes(app: FastifyInstance): void {
       tags: ['Аккаунт'],
       body: z.object({
         /** Точный адрес аккаунта. Регистр не важен, опечатка — важна. */
-        email: z.string().min(1, 'Подтвердите удаление: пришлите точный адрес аккаунта').max(200),
+        login: z.string().min(1, 'Подтвердите удаление: пришлите точный логин аккаунта').max(200),
         password: z.string().min(1).max(200).optional(),
       }),
       response: z.object({
         ok: z.literal(true),
         deletedAt: z.date(),
-        account: z.object({ id: z.string(), email: z.string() }),
+        account: z.object({ id: z.string(), login: z.string() }),
         removed: z.object({
           sandboxes: z.number().int(),
           apiKeys: z.number().int(),
@@ -420,7 +447,7 @@ export function registerAccountV1Routes(app: FastifyInstance): void {
       }),
     },
     async (ctx, input, _req, reply) => {
-      if (input.body.email.trim().toLowerCase() !== ctx.user.email) {
+      if (input.body.login.trim().toLowerCase() !== ctx.user.login) {
         // Тот же код, что у удаления ключа, песочницы и приложения: несовпавшее
         // подтверждение — это не ошибка формата запроса, и отличать её от опечатки
         // в теле клиент должен по коду, а не по тексту.
@@ -428,7 +455,7 @@ export function registerAccountV1Routes(app: FastifyInstance): void {
           reply,
           400,
           'CONFIRM_MISMATCH',
-          `Подтверждение не совпало: в поле email нужен точный адрес удаляемого аккаунта (${ctx.user.email})`,
+          `Подтверждение не совпало: в поле login нужен точный логин удаляемого аккаунта (${ctx.user.login})`,
         )
       }
       if (ctx.via === 'session' && !input.body.password) {
@@ -485,7 +512,7 @@ export function registerAccountV1Routes(app: FastifyInstance): void {
       return {
         ok: true as const,
         deletedAt: new Date(),
-        account: { id: ctx.user.id, email: ctx.user.email },
+        account: { id: ctx.user.id, login: ctx.user.login },
         removed: {
           sandboxes: ids.length,
           apiKeys,

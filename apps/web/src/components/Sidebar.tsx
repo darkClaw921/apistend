@@ -241,7 +241,7 @@ export function Sidebar({
             {accountOpen ? (
               <DropdownPanel onClose={() => setMenu(null)} align="left" label="Аккаунт" className="w-[228px]">
                 <p className="border-b border-border px-[14px] py-[10px] text-[12px] break-all text-text-secondary">
-                  {me.user.email}
+                  {me.user.login}
                 </p>
                 <ul className="flex flex-col border-b border-border py-[6px]">
                   {me.sandboxes.map((s) => (

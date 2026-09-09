@@ -66,6 +66,7 @@ curl -s "$STEND/api/v1/account" -H "Authorization: Bearer $STEND_KEY"
 ```json
 {
   "id": "cmtt67iv2000053m3t7mn1qu8",
+  "login": "demo",
   "email": "demo@apistend.ru",
   "name": "Игорь Герасимов",
   "initials": "ИГ",

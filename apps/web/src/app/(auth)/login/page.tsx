@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Mail, Lock } from 'lucide-react'
+import { AtSign, Lock } from 'lucide-react'
 import { api, ApiError } from '@/lib/api'
 import { AuthScreen, AuthHeading, AuthSwitch, CliHint } from '@/components/auth/AuthScreen'
 import { AuthField, AuthSubmit, AuthError } from '@/components/auth/AuthField'
@@ -48,7 +48,7 @@ const COMMENTS = [
 
 export default function LoginPage() {
   const router = useRouter()
-  const [email, setEmail] = useState('')
+  const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
@@ -58,7 +58,7 @@ export default function LoginPage() {
     setPending(true)
     setError(null)
     try {
-      await api.post('/api/auth/login', { email, password })
+      await api.post('/api/auth/login', { login, password })
       router.replace('/overview')
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Не удалось войти')
@@ -85,8 +85,8 @@ export default function LoginPage() {
 
         <div className="mt-[12px] flex flex-col gap-[16px]">
           <AuthField
-            label="email" icon={Mail} type="email" value={email} onChange={setEmail}
-            autoComplete="email" placeholder="igor@acme.ru" required autoFocus
+            label="login" icon={AtSign} value={login} onChange={setLogin}
+            autoComplete="username" placeholder="igor" required autoFocus
           />
           <AuthField
             label="password" icon={Lock} type="password" value={password} onChange={setPassword}

@@ -107,10 +107,10 @@ async function issueKey(
 
 /** Аккаунт с песочницей и полнодоступным серверным ключом. */
 async function makeAccount(tag: string) {
-  const email = `mgmt-${tag}-${rnd()}@test.local`
+  const login = `mgmt-${tag}-${rnd()}`
   const user = await prisma.user.create({
     data: {
-      email,
+      login,
       passwordHash: await hashPassword(PASSWORD),
       name: `Тест ${tag}`,
       initials: 'ТТ',
@@ -128,7 +128,7 @@ async function makeAccount(tag: string) {
     },
   })
   const key = await issueKey(sandbox.id, { name: `основной ${tag}` })
-  return { userId: user.id, email, sandboxId: sandbox.id, key }
+  return { userId: user.id, login, sandboxId: sandbox.id, key }
 }
 
 let alice: Awaited<ReturnType<typeof makeAccount>>
@@ -342,7 +342,7 @@ describe('аутентификация', () => {
     const login = await api.inject({
       method: 'POST',
       url: '/api/auth/login',
-      payload: { email: alice.email, password: PASSWORD },
+      payload: { login: alice.login, password: PASSWORD },
     })
     expect(login.statusCode).toBe(200)
     const cookie = (login.headers['set-cookie'] as string[] | string | undefined)
@@ -818,9 +818,9 @@ describe('изоляция аккаунтов', () => {
     expect(usage.status).toBe(200)
     expect(JSON.stringify(usage.body)).not.toContain(bob.sandboxId)
 
-    const account = await call<{ id: string; email: string }>('GET', '/api/v1/account', { key: alice.key.secret })
+    const account = await call<{ id: string; login: string }>('GET', '/api/v1/account', { key: alice.key.secret })
     expect(account.body.id).toBe(alice.userId)
-    expect(account.body.email).not.toBe(bob.email)
+    expect(account.body.login).not.toBe(bob.login)
   })
 
   it('созданное одним аккаунтом не появляется у другого', async () => {
@@ -1326,7 +1326,7 @@ describe('правки по итогам ревью', () => {
     const login = await api.inject({
       method: 'POST',
       url: '/api/auth/login',
-      payload: { email: alice.email, password: PASSWORD },
+      payload: { login: alice.login, password: PASSWORD },
     })
     const cookie = String(login.headers['set-cookie'] ?? '').split(';')[0]
     const cabinet = await call<{ key: { id: string } }>(
