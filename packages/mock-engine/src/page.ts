@@ -11,6 +11,8 @@
  * у Битрикс24 start. Разбираем все написания, которые встречаются в каталоге.
  */
 
+import { indexOfNmId } from './dataset.ts'
+
 export interface Page {
   offset: number
   limit: number
@@ -34,15 +36,23 @@ const PAGE_KEYS = new Set(['page', 'pagenumber', 'pagenum'])
 
 export function readPage(query: Record<string, string | string[]>, body: unknown): Page {
   const found = new Map<string, number>()
-  collect(query, found, 0)
-  collect(body, found, 0)
+  collect(query, found, 0, false)
+  collect(body, found, 0, false)
 
   const limit = clamp(found.get('limit') ?? DEFAULT_LIMIT, 1, MAX_LIMIT)
   const explicitOffset = found.get('offset')
   const page = found.get('page')
+  // Курсор Wildberries: клиент возвращает артикул последней полученной карточки,
+  // и сервер обязан продолжить со следующей. Без этого запрос «дай следующую
+  // страницу» отдавал ту же самую, и обход каталога не заканчивался никогда —
+  // клиенту оставалось выдумывать себе страховку от петли.
+  const cursorNmId = found.get('cursorNmId')
+  const fromCursor = cursorNmId === undefined ? undefined : indexOfNmId(cursorNmId)
   // Номер страницы и смещение — одно и то же, записанное по-разному. Если клиент
   // прислал номер, смещение считаем от него: иначе page=2 отдавала бы первую страницу.
-  const offset = explicitOffset ?? (page !== undefined && page > 1 ? (page - 1) * limit : 0)
+  const offset = explicitOffset
+    ?? (fromCursor !== null && fromCursor !== undefined ? fromCursor + 1 : undefined)
+    ?? (page !== undefined && page > 1 ? (page - 1) * limit : 0)
   return { offset: Math.max(0, Math.trunc(offset)), limit }
 }
 
@@ -55,19 +65,22 @@ export function isDefaultPage(page: Page): boolean {
  * Ищет параметры страницы в запросе. Заглядывает на уровень вглубь: у Ozon и WB
  * limit лежит рядом с filter, а не внутри него, но встречается и вложенная форма.
  */
-function collect(node: unknown, out: Map<string, number>, depth: number): void {
+function collect(node: unknown, out: Map<string, number>, depth: number, inCursor: boolean): void {
   if (depth > 2 || node === null || typeof node !== 'object') return
   if (Array.isArray(node)) return
   for (const [rawKey, rawValue] of Object.entries(node as Record<string, unknown>)) {
     const key = rawKey.toLowerCase().replace(/[_\s-]/g, '')
     const value = Array.isArray(rawValue) ? rawValue[0] : rawValue
     if (typeof value === 'object' && value !== null) {
-      collect(value, out, depth + 1)
+      collect(value, out, depth + 1, inCursor || key === 'cursor')
       continue
     }
     const num = toNumber(value)
     if (num === undefined) continue
-    if (LIMIT_KEYS.has(key) && !out.has('limit')) out.set('limit', num)
+    // Артикул засчитывается как курсор ТОЛЬКО внутри объекта cursor: тем же именем
+    // называют и фильтр «дай карточку по артикулу», и он не про пагинацию.
+    if (inCursor && key === 'nmid' && !out.has('cursorNmId')) out.set('cursorNmId', num)
+    else if (LIMIT_KEYS.has(key) && !out.has('limit')) out.set('limit', num)
     else if (OFFSET_KEYS.has(key) && !out.has('offset')) out.set('offset', num)
     else if (PAGE_KEYS.has(key) && !out.has('page')) out.set('page', num)
   }

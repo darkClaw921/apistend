@@ -34,6 +34,23 @@ export interface Product {
   subjectName: string
   /** Широкая категория: «Одежда», «Электроника». */
   category: string
+  /**
+   * Описание карточки.
+   *
+   * Собирается из названия, предмета и бренда, а не берётся из примера
+   * документации, где у всех карточек стоит «Тестовое описание». Описание —
+   * то, по чему подбирают поисковую фразу и собирают конкурентов; на одинаковой
+   * строке проверить этот подбор нечем.
+   */
+  description: string
+  /**
+   * Идентификатор широкой категории.
+   *
+   * Нужен справочникам: комиссия печатается парой parentID/parentName, и без
+   * своего идентификатора у категории пара разъезжалась — имя из каталога,
+   * номер из документации.
+   */
+  categoryId: number
   brand: string
   title: string
   techSize: string
@@ -121,6 +138,10 @@ function buildProduct(det: Deterministic, i: number): Product {
     subjectId: 1000 + (i % CATALOG_ITEMS.length),
     subjectName: item.subject,
     category: item.category,
+    categoryId: 600 + CATEGORY_IDS.indexOf(item.category),
+    description:
+      `${title}. ${item.subject} от бренда «${item.brand}» из категории «${item.category}». ` +
+      'Демонстрационная карточка песочницы APIStend.',
     brand: item.brand,
     title,
     techSize: '0',
@@ -167,8 +188,12 @@ export function productField(name: string, p: Product, inRecord: boolean): numbe
   if (n === 'subjectid') return p.subjectId
   if (n === 'subjectname') return p.subjectName
   if (n === 'categoryname') return p.category
+  // Справочники печатают широкую категорию парой: номер и название.
+  if (n === 'parentid') return p.categoryId
+  if (n === 'parentname') return p.category
   if (n === 'brand' || n === 'brandname') return p.brand
   if (n === 'productname' || n === 'goodsname' || n === 'itemname') return p.title
+  if (n === 'description' || n === 'descriptions') return p.description
   if (n === 'productrating' || n === 'feedbackrating') return p.rating
 
   // Цены и скидки.
@@ -218,6 +243,15 @@ export function productField(name: string, p: Product, inRecord: boolean): numbe
 }
 
 /** Поля, которые описывают товар. Используется, чтобы узнать товарный список в примере. */
+/**
+ * Порядок широких категорий: он и задаёт их номера.
+ *
+ * Отдельным списком, а не по первому появлению в каталоге: номер категории обязан
+ * быть одним и тем же при любом объёме датасета, иначе комиссия, снятая на min,
+ * не сойдётся с комиссией на medium.
+ */
+const CATEGORY_IDS: readonly string[] = [...new Set(CATALOG_ITEMS.map((i) => i.category))]
+
 const PRODUCT_KEYS = new Set(['nmid', 'nmids', 'vendorcode', 'supplierarticle', 'offerid', 'imtid', 'chrtid', 'sku'])
 
 /**
@@ -237,4 +271,57 @@ export function looksLikeProduct(node: unknown): boolean {
 export function hasProductKey(node: unknown): boolean {
   if (node === null || typeof node !== 'object' || Array.isArray(node)) return false
   return Object.keys(node).some((k) => PRODUCT_KEYS.has(k.toLowerCase().replace(/[_\s]/g, '')))
+}
+
+/**
+ * Порядковый номер товара по его артикулу.
+ *
+ * Артикулы строятся как 100_000_000 + i * 1000 + случайные 0…900, то есть строго
+ * возрастают вместе с номером. Это и позволяет восстановить номер обратно —
+ * а он нужен курсорной пагинации: клиент возвращает артикул последней полученной
+ * записи, и сервер обязан продолжить со следующей.
+ *
+ * Возвращает null, если артикул не из нашего каталога: гадать по чужому числу
+ * нельзя, страница должна остаться первой.
+ */
+export function indexOfNmId(nmId: number): number | null {
+  if (!Number.isFinite(nmId) || nmId < 100_000_000) return null
+  const index = Math.floor((nmId - 100_000_000) / 1000)
+  return index >= 0 ? index : null
+}
+
+/** Поля, по которым узнаётся запись справочника предметов: комиссии, ставки, тарифы. */
+const SUBJECT_KEYS = new Set(['subjectid', 'subjectname', 'subject'])
+
+/**
+ * Похож ли объект на запись справочника по предмету, а не по товару.
+ *
+ * Комиссии, ставки хранения и тарифы приходят списком «одна строка на предмет»:
+ * артикула в них нет, зато есть subjectID. Такой список нельзя разворачивать
+ * по каталогу — иначе на каждый товар пришлась бы своя строка комиссии, — но и
+ * оставлять его примером из документации нельзя: там ровно один предмет,
+ * «Оборудование зуботехническое», а в каталоге песочницы кофе и чайники.
+ * Пересечение пустое, и подобрать ставку не к чему: юнит-экономика не считается.
+ */
+export function looksLikeSubjectRecord(node: unknown): boolean {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) return false
+  if (hasProductKey(node)) return false
+  return Object.keys(node).some((k) => SUBJECT_KEYS.has(k.toLowerCase().replace(/[_\s]/g, '')))
+}
+
+/**
+ * Предметы каталога — по одному представителю на каждый.
+ *
+ * Возвращает товары, у которых subjectId встречается впервые: справочнику нужен
+ * не товар, а предмет, и одной записи на предмет достаточно.
+ */
+export function subjectsOf(pool: readonly Product[]): readonly Product[] {
+  const seen = new Set<number>()
+  const out: Product[] = []
+  for (const p of pool) {
+    if (seen.has(p.subjectId)) continue
+    seen.add(p.subjectId)
+    out.push(p)
+  }
+  return out
 }
