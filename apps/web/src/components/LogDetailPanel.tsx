@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { X, ExternalLink, Copy, Check } from 'lucide-react'
 import {
-  ButtonPrimary, ButtonSecondary, CodeBlock, MethodBadge, Overline, Panel, PanelFooter,
+  ButtonPrimary, ButtonSecondary, CodeBlock, JsonViewer, MethodBadge, Overline, Panel, PanelFooter,
   SkeletonRows, StatusCodeChip, Tabs, EmptyState, formatBytes, formatDateTimeMs, formatMs, meta,
 } from '@apistend/ui'
 import { api, ApiError } from '@/lib/api'
@@ -122,7 +122,8 @@ export function LogDetailPanel({ row, onClose }: { row: LogRow | null; onClose: 
                     <span className="text-[10px] text-text-tertiary">восстановлено движком</span>
                   ) : null}
                 </div>
-                <CodeBlock size="sm" code={pretty(detail.responseBody)} />
+                {/* Тело ответа бывает в сотни строк — деревом его можно свернуть. */}
+                <JsonViewer size="sm" code={pretty(detail.responseBody)} maxHeight={420} />
                 {detail.responseBodyReproduced ? (
                   <p className="mt-[8px] text-[11px] leading-[1.4] text-text-tertiary">
                     Ответы моков детерминированы, поэтому журнал их не хранит, а пересчитывает
@@ -133,7 +134,7 @@ export function LogDetailPanel({ row, onClose }: { row: LogRow | null; onClose: 
             ) : tab === 'request' ? (
               <>
                 <Overline>Тело запроса</Overline>
-                <CodeBlock className="mt-[6px]" size="sm" code={pretty(detail.requestBody)} />
+                <JsonViewer className="mt-[6px]" size="sm" code={pretty(detail.requestBody)} maxHeight={420} />
               </>
             ) : (
               <>

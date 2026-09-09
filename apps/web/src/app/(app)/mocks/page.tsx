@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Braces, Check, Copy, Play, Plus, ArrowUpDown, ArrowRight } from 'lucide-react'
 import {
-  ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, DetailPane, Dialog, EmptyState, ErrorState, MethodBadge,
+  ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, DetailPane, Dialog, EmptyState, ErrorState, JsonViewer, MethodBadge,
   Overline, Panel, PanelFooter, PanelHeader, PlaceholderChip, SearchField, SegmentControl,
   SkeletonRows, Slider, StatusChip, StatusCodeChip, Tabs, Toggle, formatCalls, formatMs, formatRelative,
   formatRules, meta,
@@ -489,7 +489,9 @@ export default function MocksPage() {
                 Тело не разбирается как JSON, хотя тип ответа его обещает.
               </p>
             ) : null}
-            <CodeBlock code={testResult.body} language="json" />
+            {/* Невалидный JSON JsonViewer покажет как есть — про это уже
+                сказано плашкой выше, подменять тело сообщением нельзя. */}
+            <JsonViewer code={testResult.body} maxHeight={360} />
           </div>
         </Dialog>
       ) : null}

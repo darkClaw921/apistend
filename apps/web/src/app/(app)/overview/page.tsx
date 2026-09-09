@@ -7,7 +7,7 @@ import {
   Activity, ArrowRight, Boxes, CircleX, KeyRound, Play, RefreshCw, Search, Timer, TriangleAlert,
 } from 'lucide-react'
 import {
-  ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, DataTable, EmptyState, KpiTile,
+  ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, DataTable, EmptyState, JsonViewer, KpiTile,
   MethodBadge, Overline, Panel, PanelFooter, PanelHeader, SegmentControl, ServiceDot,
   SkeletonRows, StatusChip, StatusCodeChip, KbdChip, formatBytes, formatDelta, formatInt,
   formatMethods, formatMs, formatPercent, formatTime, meta,
@@ -328,7 +328,10 @@ export default function OverviewPage() {
                     {previewLoading && !preview ? (
                       <SkeletonRows rows={4} />
                     ) : (
-                      <CodeBlock size="sm" maxLines={6} code={preview ? JSON.stringify(preview.response, null, 2) : '—'} />
+                      // Панель даёт блоку высоту, поэтому здесь не обрезание
+                      // по строкам, а прокрутка: ответ можно досмотреть до конца
+                      // и свернуть ветки, не уходя с обзора.
+                      <JsonViewer size="sm" fill value={preview ? preview.response : null} />
                     )}
                   </div>
                 </>

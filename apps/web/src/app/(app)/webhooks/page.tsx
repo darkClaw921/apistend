@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Check, Copy, LaptopMinimal, Pause, Play, RefreshCw, RotateCcw, Trash2, X } from 'lucide-react'
 import {
-  ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, DataTable, EmptyState, ErrorState,
+  ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, DataTable, EmptyState, ErrorState, JsonViewer,
   IconButton, MethodBadge, Overline, Panel, PanelFooter, PanelHeader, SearchField, SegmentControl,
   ServiceSquare, SkeletonRows, StatusChip, StatusCodeChip, formatInt, formatMs, formatPercent,
   formatRelative, formatTime, meta,
@@ -520,12 +520,14 @@ export default function WebhooksPage() {
                         ? 'Тело · form-urlencoded'
                         : 'Тело · JSON'}
                     </Overline>
-                    <CodeBlock
-                      className="mt-[6px]"
-                      size="sm"
-                      language={selected.contentType.includes('json') ? 'json' : 'text'}
-                      code={prettyBody(selected)}
-                    />
+                    {/* form-urlencoded деревом не разложить — там его и нет.
+                        JsonViewer сам показывает не-JSON обычным блоком, но тип
+                        тела известен заранее, и гадать незачем. */}
+                    {selected.contentType.includes('json') ? (
+                      <JsonViewer className="mt-[6px]" size="sm" code={prettyBody(selected)} maxHeight={360} />
+                    ) : (
+                      <CodeBlock className="mt-[6px]" size="sm" language="text" code={prettyBody(selected)} wrap />
+                    )}
                     {selected.errorMessage ? (
                       <p className="mt-[8px] rounded-[6px] bg-danger-soft px-[10px] py-[7px] text-[11px] text-danger">
                         {selected.errorMessage}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { CodeBlock, CounterChip, EmptyState, Panel, PanelHeader, cn, formatTimeMs } from '@apistend/ui'
+import { JsonViewer, CounterChip, EmptyState, Panel, PanelHeader, cn, formatTimeMs } from '@apistend/ui'
 
 /**
  * Журнал моста между порталом и фреймом приложения.
@@ -145,7 +145,7 @@ export function BridgeLogPanel({
                     <span className="truncate text-[11px] text-text-secondary">{e.summary}</span>
                   </button>
                   {expanded ? (
-                    <CodeBlock className="mx-[12px] mb-[10px]" size="sm" language="json" code={pretty(e.payload)} />
+                    <JsonViewer className="mx-[12px] mb-[10px]" size="sm" code={pretty(e.payload)} maxHeight={280} />
                   ) : null}
                 </li>
               )

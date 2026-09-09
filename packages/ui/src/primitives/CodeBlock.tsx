@@ -85,7 +85,7 @@ export function highlightJson(line: string): Tok[] {
 
 export function CodeBlock({
   code, language = 'json', showLineNumbers, onCopy, copyable = true,
-  size = 'md', radius = 6, className, maxLines, wrap = false, maxHeight,
+  size = 'md', radius = 6, className, maxLines, wrap = false, maxHeight, fill = false,
 }: {
   code: string
   language?: 'json' | 'shell' | 'text'
@@ -114,6 +114,15 @@ export function CodeBlock({
   wrap?: boolean
   /** Максимальная высота в пикселях. Всё, что выше, прокручивается по вертикали. */
   maxHeight?: number
+  /**
+   * Занять всю высоту родителя и прокручиваться внутри неё.
+   *
+   * Отдельный флаг, а не `className="h-full overflow-auto"` снаружи: cn() — это
+   * clsx, а не tailwind-merge, поэтому оба класса overflow оказывались в разметке
+   * разом, и выигрывал не тот, что передали, а тот, что стоит позже в таблице
+   * стилей. Блок с виду был прокручиваемым и не прокручивался.
+   */
+  fill?: boolean
 }) {
   const [copied, setCopied] = useState(false)
   const allLines = code.split('\n')
@@ -134,7 +143,11 @@ export function CodeBlock({
   return (
     <div
       style={{ borderRadius: radius }}
-      className={cn('relative overflow-hidden bg-code-bg', className)}
+      className={cn(
+        'relative bg-code-bg',
+        fill ? 'flex h-full min-h-0 flex-col overflow-hidden' : 'overflow-hidden',
+        className,
+      )}
     >
       {copyable ? (
         <button
@@ -147,13 +160,16 @@ export function CodeBlock({
         </button>
       ) : null}
       <pre
-        style={maxHeight ? { maxHeight } : undefined}
+        style={maxHeight && !fill ? { maxHeight } : undefined}
         className={cn(
           'scrollbar-thin px-[14px] py-[12px] font-mono',
           // Перенос вместо горизонтальной прокрутки: адрес и проза должны
           // читаться целиком, не уезжая за край.
           wrap ? 'break-words whitespace-pre-wrap' : 'overflow-x-auto',
-          maxHeight ? 'overflow-y-auto' : undefined,
+          maxHeight && !fill ? 'overflow-y-auto' : undefined,
+          // Прокручивается сам pre, а не обёртка: у обёртки overflow-hidden,
+          // и снаружи его не перебить.
+          fill ? 'min-h-0 flex-1 overflow-auto' : undefined,
           size === 'sm' ? 'text-[11px] leading-[1.25]' : 'text-[12px] leading-[1.35]',
         )}
       >

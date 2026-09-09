@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Copy, FileDown, Play, Plus, Trash2 } from 'lucide-react'
 import {
-  ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, IconButton, MethodBadge,
+  ButtonPrimary, ButtonSecondary, CodeBlock, CounterChip, IconButton, JsonEditor, JsonViewer, MethodBadge,
   Overline, Panel, PanelHeader, SkeletonRows, StatusChip, StatusCodeChip, Tabs,
   formatBytes, formatMs, formatTime, meta,
 } from '@apistend/ui'
@@ -333,12 +333,13 @@ function ConsoleScreen() {
                 ) : leftTab === 'body' ? (
                   <>
                     <Overline>Тело запроса · JSON</Overline>
-                    <textarea
+                    {/* Подсветка и проверка на месте ввода: ошибаются как раз
+                        в запросе, а ответ при этом показывался подсвеченным. */}
+                    <JsonEditor
+                      className="mt-[8px]"
                       value={bodyText}
-                      onChange={(e) => setBodyText(e.target.value)}
-                      spellCheck={false}
+                      onChange={setBodyText}
                       placeholder={'{\n  "limit": 50\n}'}
-                      className="mt-[8px] h-[280px] w-full resize-none rounded-[6px] bg-code-bg p-[12px] font-mono text-[12px] leading-[1.35] text-code-text outline-none"
                     />
                   </>
                 ) : leftTab === 'auth' ? (
@@ -447,15 +448,19 @@ function ConsoleScreen() {
                     </p>
                   </div>
                 ) : rightTab === 'response' ? (
-                  <CodeBlock code={responseJson} showLineNumbers className="h-full overflow-auto" />
+                  // Дерево, а не простыня: ответ метода каталога — сотни строк,
+                  // и чтобы понять его форму, нужно сворачивать ветки. Прокрутка
+                  // задаётся флагом fill, а не классом снаружи: className с
+                  // overflow-auto не перебивал внутренний overflow-hidden.
+                  <JsonViewer value={result.body} fill />
                 ) : rightTab === 'headers' ? (
                   <CodeBlock
                     language="text"
                     code={Object.entries(result.headers).map(([k, v]) => `${k}: ${v}`).join('\n')}
-                    className="h-full overflow-auto"
+                    fill
                   />
                 ) : (
-                  <CodeBlock language="text" code={result.curl} className="h-full overflow-auto" />
+                  <CodeBlock language="text" code={result.curl} fill wrap />
                 )}
               </div>
             </Panel>
