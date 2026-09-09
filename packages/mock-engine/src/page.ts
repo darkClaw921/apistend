@@ -16,6 +16,15 @@ import { indexOfNmId } from './dataset.ts'
 export interface Page {
   offset: number
   limit: number
+  /**
+   * Назвал ли размер страницы сам клиент.
+   *
+   * Нужно спискам событий: боевая статистика Wildberries отдаёт всё запрошенное
+   * окно за раз (потолок — 80 000 записей), и клиент строит по нему график за
+   * 30 или 90 дней одним запросом. Отдать ему двадцать записей одного дня —
+   * значит показать график из одной точки там, где в бою их девяносто.
+   */
+  explicitLimit: boolean
 }
 
 /** Страница по умолчанию: клиент ничего не просил, отдаём первую и небольшую. */
@@ -39,7 +48,8 @@ export function readPage(query: Record<string, string | string[]>, body: unknown
   collect(query, found, 0, false)
   collect(body, found, 0, false)
 
-  const limit = clamp(found.get('limit') ?? DEFAULT_LIMIT, 1, MAX_LIMIT)
+  const requestedLimit = found.get('limit')
+  const limit = clamp(requestedLimit ?? DEFAULT_LIMIT, 1, MAX_LIMIT)
   const explicitOffset = found.get('offset')
   const page = found.get('page')
   // Курсор Wildberries: клиент возвращает артикул последней полученной карточки,
@@ -53,7 +63,7 @@ export function readPage(query: Record<string, string | string[]>, body: unknown
   const offset = explicitOffset
     ?? (fromCursor !== null && fromCursor !== undefined ? fromCursor + 1 : undefined)
     ?? (page !== undefined && page > 1 ? (page - 1) * limit : 0)
-  return { offset: Math.max(0, Math.trunc(offset)), limit }
+  return { offset: Math.max(0, Math.trunc(offset)), limit, explicitLimit: requestedLimit !== undefined }
 }
 
 /** Совпадает ли страница со значением по умолчанию — только такие ответы кешируются. */

@@ -2,6 +2,8 @@ import { sample } from 'openapi-sampler'
 import { Deterministic } from './deterministic.ts'
 import { hasProductKey, looksLikeProduct, productField, type Product } from './dataset.ts'
 import type { Page } from './page.ts'
+import type { Window } from './window.ts'
+import type { OrderEvent } from './timeline.ts'
 import {
   BRAND, CATEGORY, CITY, COMPANY_NAME, COMPANY_PREFIX, FIRST_NAME, LAST_NAME,
   ORDER_STATUS, POSTING_STATUS, PRODUCT, WAREHOUSE,
@@ -26,6 +28,22 @@ export interface FillContext {
   pool: readonly Product[]
   /** Запрошенная страница каталога: сколько товаров отдать и с какого начать. */
   page: Page
+  /** Период, за который клиент попросил данные. */
+  window: Window
+  /**
+   * События журнала, попавшие в окно. Функция, а не массив: журнал нужен методам
+   * статистики, а платить за его сборку на каждом ответе каталога незачем.
+   */
+  events: () => readonly OrderEvent[]
+  /**
+   * Отметка проекции: тело уже датировано относительно сегодняшнего дня.
+   *
+   * Общий сдвиг дат нужен телам, взятым из документации. Но там, где даты
+   * поставили журнал, временной ряд или запрошенный период, сдвигать нечего:
+   * сдвиг увёл бы период ответа в сторону от периода запроса — то есть сломал
+   * бы ровно то, ради чего эти даты и подставлялись.
+   */
+  state?: { dated: boolean }
 }
 
 const SAMPLER_OPTIONS = { skipReadOnly: false, skipWriteOnly: true, quiet: true } as const
