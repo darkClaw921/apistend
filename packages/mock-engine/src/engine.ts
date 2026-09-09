@@ -5,7 +5,11 @@ import type { CatalogBundle, CatalogMethod, Scenario, ServiceCode } from '@apist
 import { SERVICE_PROFILES, buildScenarioError, unknownMethodError } from '@apistend/shared'
 import { MockRouter } from './router.ts'
 import { Deterministic } from './deterministic.ts'
+import type { FillContext } from './sampler.ts'
 import { buildFromSchema } from './sampler.ts'
+import { projectExample } from './project.ts'
+import { productPool } from './dataset.ts'
+import { isDefaultPage, readPage } from './page.ts'
 import { LruCache } from './cache.ts'
 
 /**
@@ -160,8 +164,14 @@ export class MockEngine {
       }
     }
 
-    const cacheKey = `${method.id}|${req.salt}`
-    const cached = this.bodyCache.get(cacheKey)
+    // Страница входит в ключ: ответ зависит от неё так же, как от метода и объёма.
+    const page = readPage(req.query, req.body)
+    const cacheKey = `${method.id}|${req.salt}|${page.offset}:${page.limit}`
+    // Кешируем только страницу по умолчанию. Ключей у произвольной пагинации столько,
+    // сколько клиент придумает смещений, и кеш из полезного превращается в способ
+    // занять память: собрать страницу заново стоит доли миллисекунды.
+    const cacheable = isDefaultPage(page)
+    const cached = cacheable ? this.bodyCache.get(cacheKey) : undefined
     if (cached) {
       return {
         status: method.successStatus,
@@ -175,11 +185,13 @@ export class MockEngine {
     }
 
     const det = new Deterministic(`${req.salt}|${method.id}`)
-    const ctx = { det, now: req.now }
+    // Каталог зависит только от объёма датасета: иначе «тот же товар» в двух
+    // методах снова оказался бы разными товарами.
+    const ctx = { det, now: req.now, pool: productPool(req.salt), page }
     const built = this.buildBody(index, method, ctx)
 
     const serialized = JSON.stringify(built.body ?? null)
-    this.bodyCache.set(cacheKey, { body: built.body, serialized })
+    if (cacheable) this.bodyCache.set(cacheKey, { body: built.body, serialized })
 
     return {
       status: method.successStatus,
@@ -196,11 +208,13 @@ export class MockEngine {
   private buildBody(
     index: ServiceIndex,
     method: CatalogMethod,
-    ctx: { det: Deterministic; now: Date },
+    ctx: FillContext,
   ): { body: unknown; source: 'example' | 'schema' | 'generic' } {
-    // Ярус 1: пример из спецификации.
+    // Ярус 1: пример из спецификации. Форму берём из документации, товары — из каталога
+    // песочницы: иначе каталог, заказы и финансы говорили бы про разные артикулы.
     if (method.responseExample !== null && method.responseExample !== undefined) {
-      return { body: stripStaticTime(index.bundle.serviceCode, method.responseExample), source: 'example' }
+      const example = stripStaticTime(index.bundle.serviceCode, method.responseExample)
+      return { body: projectExample(example, ctx), source: 'example' }
     }
 
     // Ярус 2: схема + детерминированный филлер.
@@ -254,9 +268,31 @@ export class MockEngine {
 function inlineSchema(spec: object | undefined, method: CatalogMethod): unknown {
   const paths = (spec as { paths?: Record<string, Record<string, unknown>> } | undefined)?.paths
   const op = paths?.[method.path]?.[method.httpMethod.toLowerCase()] as
-    | { responses?: Record<string, { content?: Record<string, { schema?: unknown }> }> }
+    | { responses?: Record<string, unknown> }
     | undefined
-  return op?.responses?.[String(method.successStatus)]?.content?.['application/json']?.schema ?? null
+  // Ответ бывает записан ссылкой на общий компонент — так у половины методов WB.
+  // Без разыменования такой метод молча уезжал на generic-ярус и отдавал пустой
+  // объект: именно так «цены и скидки» оказывались пустыми при живой схеме.
+  const response = deref(spec, op?.responses?.[String(method.successStatus)]) as
+    | { content?: Record<string, { schema?: unknown }> }
+    | undefined
+  const content = response?.content
+  if (!content) return null
+  const json = content['application/json'] ?? Object.values(content)[0]
+  return deref(spec, json?.schema) ?? null
+}
+
+/** Разыменовывает локальный $ref. Схему не раскрывает: с ней справляется сэмплер. */
+function deref(spec: object | undefined, node: unknown, depth = 0): unknown {
+  if (depth > 8 || node === null || typeof node !== 'object') return node
+  const ref = (node as { $ref?: unknown }).$ref
+  if (typeof ref !== 'string' || !ref.startsWith('#/')) return node
+  let cur: unknown = spec
+  for (const seg of ref.slice(2).split('/')) {
+    if (cur === null || typeof cur !== 'object') return undefined
+    cur = (cur as Record<string, unknown>)[seg.replace(/~1/g, '/').replace(/~0/g, '~')]
+  }
+  return deref(spec, cur, depth + 1)
 }
 
 /**
