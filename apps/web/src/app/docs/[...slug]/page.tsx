@@ -17,13 +17,24 @@ export function generateStaticParams(): Array<{ slug: string[] }> {
     .map((d) => ({ slug: d.segments }))
 }
 
-export async function generateMetadata(props: PageProps<'/docs/[...slug]'>): Promise<Metadata> {
+/**
+ * Тип пропсов объявлен здесь, а не взят из глобального PageProps.
+ *
+ * PageProps генерирует сама Next во время сборки, поэтому проверка типов
+ * без предварительного билда его не находит: локально всё сходилось,
+ * а в CI, где typecheck идёт до сборки, падало.
+ */
+interface DocsPageProps {
+  params: Promise<{ slug: string[] }>
+}
+
+export async function generateMetadata(props: DocsPageProps): Promise<Metadata> {
   const { slug } = await props.params
   const page = getDoc(slug.join('/'))
   return page ? { title: page.title, description: page.description } : {}
 }
 
-export default async function DocsPage(props: PageProps<'/docs/[...slug]'>) {
+export default async function DocsPage(props: DocsPageProps) {
   const { slug } = await props.params
   const page = getDoc(slug.join('/'))
   if (!page) notFound()
