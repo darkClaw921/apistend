@@ -42,6 +42,37 @@ const OZON_GRPC = {
   UNAUTHENTICATED: 16,
 } as const
 
+/**
+ * Типы ошибок Apify.
+ *
+ * Значения — из живых ответов боевого API и из component-схем его OpenAPI,
+ * а не из общих соображений. Отдельно стоит отметить token-not-provided:
+ * при полном отсутствии токена Apify отвечает именно им, а invalid-token
+ * приходит на токен неверный. Клиент, различающий эти два случая, в моке
+ * должен видеть ту же разницу.
+ */
+export const APIFY_ERRORS = {
+  TOKEN_NOT_PROVIDED: ['token-not-provided', 'Authentication token was not provided'],
+  INVALID_TOKEN: ['invalid-token', 'Authentication token is not valid.'],
+  RECORD_NOT_FOUND: ['record-not-found', 'The requested resource was not found.'],
+  RATE_LIMIT_EXCEEDED: ['rate-limit-exceeded', 'You have exceeded the rate limit. Please try again later.'],
+  INTERNAL_ERROR: ['internal-error', 'Internal server error occurred.'],
+  GATEWAY_TIMEOUT: ['gateway-timeout', 'The request timed out.'],
+} as const satisfies Record<string, readonly [string, string]>
+
+export type ApifyErrorKey = keyof typeof APIFY_ERRORS
+
+export function apifyError(key: ApifyErrorKey, status: number): MockErrorResponse {
+  const [type, message] = APIFY_ERRORS[key]
+  // Конверт ровно такой, как в components.schemas.ErrorResponse: объект error
+  // с двумя обязательными полями. Ни requestId, ни кода — их у Apify нет.
+  return {
+    status,
+    body: { error: { type, message } },
+    headers: { 'content-type': SERVICE_PROFILES.apify.native.contentType },
+  }
+}
+
 export function bitrix24Error(key: B24ErrorKey, status: number, description?: string): MockErrorResponse {
   const [code, defaultDescription] = B24_ERRORS[key]
   return {
@@ -128,6 +159,19 @@ export function buildScenarioError(
     }
   }
 
+  if (service === 'apify') {
+    switch (scenario) {
+      case 'invalid_token':
+        return apifyError('INVALID_TOKEN', 401)
+      case 'not_found':
+        return apifyError('RECORD_NOT_FOUND', 404)
+      case 'rate_limit':
+        return apifyError('RATE_LIMIT_EXCEEDED', 429)
+      case 'server_error':
+        return apifyError('INTERNAL_ERROR', 500)
+    }
+  }
+
   switch (scenario) {
     case 'invalid_token':
       return wildberriesError(401, 'Unauthorized', 'invalid API access token: empty main token', requestId)
@@ -169,6 +213,7 @@ export function timeoutError(service: ServiceCode, requestId: string): MockError
     // DEADLINE_EXCEEDED — ровно тот код gRPC, которым описывается невышедший в срок вызов.
     return ozonError(504, OZON_GRPC.DEADLINE_EXCEEDED, 'Deadline exceeded')
   }
+  if (service === 'apify') return apifyError('GATEWAY_TIMEOUT', 504)
   return wildberriesError(504, 'Gateway Timeout', 'upstream did not answer in time', requestId, 'ag-gateway')
 }
 
@@ -177,7 +222,20 @@ export function unknownMethodError(service: ServiceCode, requestId: string): Moc
   return buildScenarioError(service, 'not_found', requestId)
 }
 
-/** Ошибка авторизации: ключ APIStend отсутствует, невалиден или отозван. */
-export function unauthorizedError(service: ServiceCode, requestId: string): MockErrorResponse {
+/**
+ * Ошибка авторизации: ключ APIStend отсутствует, невалиден или отозван.
+ *
+ * `keyPresent` различает «токена не прислали» и «токен не тот». Разница видна
+ * только там, где её делает боевой сервис: Apify на пустой запрос отвечает
+ * token-not-provided, а на неверный токен — invalid-token, и клиент, который
+ * по этому различает «не залогинен» и «протух ключ», в моке обязан увидеть то же.
+ * Остальным трём сервисам различие безразлично — у них один конверт на оба случая.
+ */
+export function unauthorizedError(
+  service: ServiceCode,
+  requestId: string,
+  keyPresent = true,
+): MockErrorResponse {
+  if (service === 'apify' && !keyPresent) return apifyError('TOKEN_NOT_PROVIDED', 401)
   return buildScenarioError(service, 'invalid_token', requestId)
 }

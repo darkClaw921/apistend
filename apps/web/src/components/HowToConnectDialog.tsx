@@ -53,6 +53,7 @@ const AUTH_NOTE: Record<ServiceCode, string> = {
   bitrix24: 'Ключ идёт параметром auth= или в пути входящего вебхука — как у боевого портала.',
   ozon: 'Заголовки Client-Id и Api-Key. Client-Id песочница принимает любой.',
   wildberries: 'Заголовок Authorization с токеном, без префикса Bearer.',
+  apify: 'Заголовок Authorization: Bearer или параметр token= в адресе — оба как в бою.',
 }
 
 export function HowToConnectDialog({

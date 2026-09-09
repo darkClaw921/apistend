@@ -261,7 +261,7 @@ function CatalogScreen() {
       <Topbar
         // Гость проекта не имеет, и звать его «Новой песочницей» рано:
         // сначала регистрация.
-        breadcrumb={shell ? `Проект «${shell.project}» / Каталог API` : 'Демо-API Bitrix24, Ozon и Wildberries'}
+        breadcrumb={shell ? `Проект «${shell.project}» / Каталог API` : 'Демо-API Bitrix24, Ozon, Wildberries и Apify'}
         title="Каталог API"
         search={globalSearch}
         onSearchChange={setGlobalSearch}

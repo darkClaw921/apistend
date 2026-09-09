@@ -47,6 +47,11 @@ const SERVICE_SAMPLES: Record<ServiceSummary['code'], readonly Sample[]> = {
     { method: 'POST', path: '/api/v3/stocks/{warehouseId}' },
     { method: 'POST', path: '/content/v2/get/cards/list' },
   ],
+  apify: [
+    { method: 'GET', path: '/v2/actors' },
+    { method: 'POST', path: '/v2/actors/{actorId}/runs' },
+    { method: 'GET', path: '/v2/datasets/{datasetId}/items' },
+  ],
 }
 
 /** Бейдж глагола на тёмном: примитив MethodBadge рассчитан на светлый фон кабинета. */

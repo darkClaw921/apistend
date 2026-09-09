@@ -93,7 +93,7 @@ async function main() {
     { name: 'Продакшн-интеграция 1С', subtitle: 'Сервер обмена · 1С:УТ 11', p: '7f3a', s: '4c21',
       services: ['bitrix24', 'ozon'], created: daysAgo(179), used: at(14, 32), reqs: 12_480, status: 'active' as const },
     { name: 'CI / автотесты', subtitle: 'GitLab CI · nightly-run', p: '2b8e', s: '91d0',
-      services: ['bitrix24', 'ozon', 'wildberries'], created: daysAgo(215), used: at(9, 5), reqs: 38_210, status: 'active' as const },
+      services: ['bitrix24', 'ozon', 'wildberries', 'apify'], created: daysAgo(215), used: at(9, 5), reqs: 38_210, status: 'active' as const },
     { name: 'Мобильное приложение', subtitle: 'iOS · сборка 3.4.1', p: 'c40d', s: '7ae5',
       services: ['ozon', 'wildberries'], created: daysAgo(223), used: new Date(daysAgo(1).setHours(21, 48, 0, 0)), reqs: 4_902, status: 'active' as const },
     { name: 'Демо для клиента', subtitle: 'Витрина · ООО «Сфера»', p: '9e11', s: '33bc',
@@ -139,7 +139,7 @@ async function main() {
       prefix: `stend_sk_${cliBody.slice(0, 4)}`,
       suffix: cliBody.slice(-4),
       keyHash: hashApiKey(cliFull),
-      services: ['bitrix24', 'ozon', 'wildberries'],
+      services: ['bitrix24', 'ozon', 'wildberries', 'apify'],
     },
   })
 

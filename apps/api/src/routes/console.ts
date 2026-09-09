@@ -211,6 +211,10 @@ function buildCurl(
     lines.push(`  -H 'Client-Id: 123456' \\`, `  -H 'Api-Key: ${keyPrefix}…' \\`)
   } else if (input.serviceCode === 'wildberries') {
     lines.push(`  -H 'Authorization: ${keyPrefix}…' \\`)
+  } else if (input.serviceCode === 'apify') {
+    // У Apify префикс Bearer обязателен — без него боевой API отвечает
+    // token-not-provided, и показывать голый токен значило бы дать нерабочую строку.
+    lines.push(`  -H 'Authorization: Bearer ${keyPrefix}…' \\`)
   } else {
     lines.push(`  -H 'X-Mock-Key: ${keyPrefix}…' \\`)
   }

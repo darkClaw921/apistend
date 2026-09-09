@@ -6,10 +6,10 @@
 
 [![CI](https://github.com/darkClaw921/apistend/actions/workflows/ci.yml/badge.svg)](https://github.com/darkClaw921/apistend/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/apistend?label=apistend&color=3B54F5)](https://www.npmjs.com/package/apistend)
-[![Методов](https://img.shields.io/badge/методов-2%20421-3B54F5)](#каталог)
+[![Методов](https://img.shields.io/badge/методов-2%20652-3B54F5)](#каталог)
 [![Лицензия MIT](https://img.shields.io/badge/лицензия-MIT-555)](LICENSE)
 
-**Демо-копии боевых API Bitrix24, Ozon Seller и Wildberries.**<br>
+**Демо-копии боевых API Bitrix24, Ozon Seller, Wildberries и Apify.**<br>
 Те же схемы ответов, те же коды ошибок, те же события — без боевых данных и без лимитов.
 
 </div>
@@ -25,17 +25,20 @@
 ```
 
 Шлюз принимает ключ там же, где его ждёт боевой сервис: `Authorization` у Wildberries,
-`Client-Id` + `Api-Key` у Ozon, путь `/rest/{user}/{code}/` или параметр `auth=` у Bitrix24.
+`Client-Id` + `Api-Key` у Ozon, путь `/rest/{user}/{code}/` или параметр `auth=` у Bitrix24,
+`Authorization: Bearer` или `?token=` у Apify.
 Клиентскую библиотеку переписывать не нужно — она шлёт то, что шлёт всегда.
 
 ## Что внутри
 
 | | |
 | --- | --- |
-| **Каталог** | 2 421 метод: Bitrix24 — 1 685, Ozon — 420, Wildberries — 316 |
+| **Каталог** | 2 652 метода: Bitrix24 — 1 685, Ozon — 420, Wildberries — 316, Apify — 231 |
 | **Источник** | официальные OpenAPI и документация сервисов, снимки зафиксированы по sha256 |
 | **События** | нативный формат каждого сервиса, включая политику повторов и подписи |
 | **Доставка на localhost** | WebSocket-туннель, публичный адрес не нужен |
+| **MCP для ИИ-агентов** | мок `mcp.apify.com` плюс собственный MCP-сервер с каталогом и вызовом моков |
+| **Акторы Apify** | 150 акторов со схемами входа и выхода — вызов проверяется, запуск не тратит кредиты |
 | **Нагрузочная проверка** | серии событий с заданной скоростью и количеством |
 | **Пропускная способность** | 20 500 запросов в секунду при p95 6,3 мс |
 
@@ -136,13 +139,13 @@ npx apistend trigger ONCRMDEALUPDATE
 
 Политика доставки — свойство сервиса, а не транспорта:
 
-| | Bitrix24 | Ozon | Wildberries |
-| --- | --- | --- | --- |
-| Content-Type | `x-www-form-urlencoded` | `application/json` | `application/json` |
-| Успех | 2xx | **200 И тело `{"result": true}`** | строго 200 |
-| Таймаут | не документирован | 5 с | 10 с |
-| Повторы | **нет вообще** | до потолка 10 мин, 5 попыток | 10 с → 15 мин, затем событие удаляется |
-| Подпись | `auth[application_token]` в теле | нет | HMAC-SHA256 в `X-Hub-Signature` |
+| | Bitrix24 | Ozon | Wildberries | Apify |
+| --- | --- | --- | --- | --- |
+| Content-Type | `x-www-form-urlencoded` | `application/json` | `application/json` | `application/json` |
+| Успех | 2xx | **200 И тело `{"result": true}`** | строго 200 | 2xx |
+| Таймаут | не документирован | 5 с | 10 с | 2 мин |
+| Повторы | **нет вообще** | до потолка 10 мин, 5 попыток | 10 с → 15 мин, затем событие удаляется | 11 попыток, интервал удваивается до ~32 ч |
+| Подпись | `auth[application_token]` в теле | нет | HMAC-SHA256 в `X-Hub-Signature` | нет — секрет в адресе |
 
 Единая сетка повторов на всех сервисах дала бы ложную картину ровно в том сценарии,
 ради которого инструмент и нужен: «что будет, если мой обработчик упал».
@@ -173,6 +176,7 @@ npx apistend trigger ONCRMDEALUPDATE --count 5000 --rate 200 --watch
 | Bitrix24 | 1 685 | [b24restdocs](https://github.com/bitrix24/b24restdocs) — YFM-Markdown, OpenAPI у сервиса нет | MIT |
 | Ozon Seller | 420 | зеркало OpenAPI, снимок в `specs/ozon/SOURCE.json` | не объявлена |
 | Wildberries | 316 | OpenAPI 3.0.1, 14 файлов | не объявлена |
+| Apify | 231 | [OpenAPI 3.1](https://docs.apify.com/api/openapi.json) — публикует сам вендор, без антибота | не объявлена |
 
 Русские тексты Bitrix24 — с `apidocs.bitrix24.ru`: MIT-репозиторий существует только
 на английском, а интерфейс русский. Описание есть у 100 % методов, по-русски — у 99,9 %.
@@ -184,7 +188,7 @@ npx apistend trigger ONCRMDEALUPDATE --count 5000 --rate 200 --watch
 
 Три яруса по приоритету:
 
-1. **Пример из спецификации** — 1 445 методов Bitrix24, 128 Ozon, 86 WB. Отдаём как есть.
+1. **Пример из спецификации** — 1 445 методов Bitrix24, 128 Ozon, 86 WB, 41 Apify. Отдаём как есть.
 2. **Схема и датасет** — `openapi-sampler` даёт скелет, детерминированный филлер
    подставляет значения. Детерминизм не через `faker.seed()`, а чистой функцией
    `value = f(hash(соль, тип, id, путь_поля))`: сид faker не гарантирован между версиями.

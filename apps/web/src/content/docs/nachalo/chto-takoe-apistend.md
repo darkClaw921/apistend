@@ -32,6 +32,7 @@ APIStend отвечает на запросы так же, как отвечаю
 | Bitrix24 | `/b24` | `<portal>.bitrix24.ru/rest/` | `bitrix24` |
 | Ozon Seller API | `/oz` | `api-seller.ozon.ru` | `ozon` |
 | Wildberries | `/wb` | `suppliers-api.wildberries.ru` | `wildberries` |
+| Apify API | `/apify` | `api.apify.com` | `apify` |
 
 У Bitrix24 работает и адресация без префикса — `/rest/…` в корне стенда: портал
 сообщает приложению голый домен, и приложение склеивает адрес REST само.

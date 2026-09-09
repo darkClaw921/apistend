@@ -137,5 +137,5 @@ loopback: `localhost`, `127.0.0.1`, `::1` и имена, оканчивающи�
 
 :::next
 - [CLI apistend](/docs/sobytiya/cli) — все команды и флаги агента
-- [Вебхуки](/docs/sobytiya/vebhuki) — профили трёх сервисов и правила успеха
+- [Вебхуки](/docs/sobytiya/vebhuki) — профили сервисов и правила успеха
 :::

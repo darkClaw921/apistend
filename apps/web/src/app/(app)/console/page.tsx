@@ -55,6 +55,7 @@ const DEFAULT_PATH: Record<string, { path: string; method: string }> = {
   bitrix24: { path: '/rest/crm.deal.list', method: 'GET' },
   ozon: { path: '/v3/posting/fbs/list', method: 'POST' },
   wildberries: { path: '/api/v3/warehouses', method: 'GET' },
+  apify: { path: '/v2/actors', method: 'GET' },
 }
 
 function ConsoleScreen() {

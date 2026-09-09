@@ -51,10 +51,14 @@ export function nativeResponseHeaders(
     headers[native.requestIdHeader] = input.requestId
   }
 
-  if (native.rateLimitHeaders && input.rate) {
-    headers['x-ratelimit-limit'] = String(input.rate.limit)
-    headers['x-ratelimit-remaining'] = String(input.rate.remaining)
-    headers['x-ratelimit-reset'] = String(input.rate.resetInSeconds)
+  if (input.rate) {
+    // Отдаём ровно те из трёх, которые сервис отдаёт в бою: у Wildberries все три,
+    // у Apify только limit, у Ozon и Битрикс24 ни одного.
+    for (const part of native.rateLimitHeaders) {
+      if (part === 'limit') headers['x-ratelimit-limit'] = String(input.rate.limit)
+      if (part === 'remaining') headers['x-ratelimit-remaining'] = String(input.rate.remaining)
+      if (part === 'reset') headers['x-ratelimit-reset'] = String(input.rate.resetInSeconds)
+    }
   }
 
   if (input.limited && native.retryHeader && input.rate) {
@@ -91,11 +95,44 @@ export function allGatewayResponseHeaders(): readonly string[] {
     const native = SERVICE_PROFILES[code].native
     if (native.requestIdHeader) names.add(native.requestIdHeader)
     if (native.retryHeader) names.add(native.retryHeader)
-    if (native.rateLimitHeaders) {
-      names.add('x-ratelimit-limit')
-      names.add('x-ratelimit-remaining')
-      names.add('x-ratelimit-reset')
+    for (const part of native.rateLimitHeaders) names.add(`x-ratelimit-${part}`)
+    if (native.paginationHeaderPrefix) {
+      for (const field of PAGINATION_FIELDS) names.add(`${native.paginationHeaderPrefix}${field}`)
     }
   }
   return [...names]
+}
+
+/**
+ * Поля конверта пагинации, которые сервис дублирует в заголовки.
+ *
+ * Набор — из живого ответа Apify: те же пять имён перечислены и в его собственном
+ * Access-Control-Expose-Headers, то есть читать их из браузера предполагается.
+ */
+export const PAGINATION_FIELDS = ['total', 'offset', 'count', 'limit', 'desc'] as const
+
+/**
+ * Заголовки пагинации по УЖЕ СОБРАННОМУ телу ответа.
+ *
+ * Источник значений — само тело: заголовок, разошедшийся с конвертом `data`,
+ * был бы хуже отсутствующего, потому что клиент, листающий по заголовку,
+ * ушёл бы в бесконечный цикл. Поэтому здесь ничего не вычисляется —
+ * только переносится то, что в теле уже есть.
+ */
+export function paginationHeaders(service: ServiceCode, body: unknown): Record<string, string> {
+  const prefix = SERVICE_PROFILES[service].native.paginationHeaderPrefix
+  if (!prefix) return {}
+  if (body === null || typeof body !== 'object') return {}
+  const data = (body as { data?: unknown }).data
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return {}
+
+  const out: Record<string, string> = {}
+  for (const field of PAGINATION_FIELDS) {
+    const value = (data as Record<string, unknown>)[field]
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      out[`${prefix}${field}`] = String(value)
+    }
+  }
+  // Ответ не списковый — ни одного из полей нет, и заголовков быть не должно.
+  return out
 }

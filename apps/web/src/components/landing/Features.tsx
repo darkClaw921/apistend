@@ -69,7 +69,7 @@ function errorRow(scenario: ErrorScenario, label: string, rowBg: string, tint: s
     rowBg,
     tint,
     code: codes.join(' / '),
-    // На 401, 500 и 504 три сервиса сходятся — там оговорка была бы шумом.
+    // Там, где сервисы сходятся в одном коде, оговорка была бы шумом.
     note:
       codes.length === 1
         ? null

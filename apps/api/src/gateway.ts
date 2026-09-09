@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Scenario, ServiceCode } from '@apistend/shared'
-import { SCENARIOS, SERVICE_LIST, SERVICE_PROFILES, isServiceCode, buildScenarioError, timeoutError, nativeResponseHeaders } from '@apistend/shared'
+import { SCENARIOS, SERVICE_LIST, SERVICE_PROFILES, isServiceCode, buildScenarioError, timeoutError, nativeResponseHeaders, paginationHeaders } from '@apistend/shared'
 import { MockEngine } from '@apistend/mock-engine'
 import { extractRawKey, resolveApiKey } from './lib/api-key.ts'
 import { checkRateLimit } from './lib/rate-limit.ts'
@@ -34,7 +34,7 @@ import { expandBracketKeys, runBatch } from './b24/batch.ts'
  * попросту не вызывается.
  */
 
-export const engine = MockEngine.load(['bitrix24', 'ozon', 'wildberries'])
+export const engine = MockEngine.load(['bitrix24', 'ozon', 'wildberries', 'apify'])
 
 const SERVICE_BY_MOUNT = new Map(SERVICE_LIST.map((p) => [p.mountPath.slice(1), p.code]))
 
@@ -127,7 +127,9 @@ async function handle(
 
   // Открытый доступ из браузера — отличие песочницы от боя, и оно помечается.
   // Access-Control-* ставит CORS-плагин (см. isGatewayPath в server.ts).
-  reply.header('x-apistend-cors', 'added-by-sandbox')
+  // У Apify это НЕ отличие: боевой API отвечает access-control-allow-origin: *,
+  // и пометка «добавлено песочницей» была бы неправдой в обратную сторону.
+  reply.header('x-apistend-cors', profile.native.nativeCors ? 'native' : 'added-by-sandbox')
 
   const query = (req.query ?? {}) as Record<string, unknown>
   // Тело парсится до авторизации: Bitrix24 разрешает класть ключ внутрь JSON-тела.
@@ -147,7 +149,7 @@ async function handle(
   if (!resolved && !appCtx) {
     // Тело обязано совпадать с боевым до последнего поля, поэтому причина уходит
     // в служебный заголовок: иначе отладка превращается в гадание.
-    const err = unauthorizedError(service, reqId)
+    const err = unauthorizedError(service, reqId, rawKey !== null)
     // Лимит здесь не считается: субъекта, на котором его вести, ещё нет —
     // значит и заголовков остатка быть не может. Отдаём то, что боевой сервис
     // отдаёт вместе с 401: свой Content-Type и свой идентификатор запроса.
@@ -187,7 +189,7 @@ async function handle(
       ? rawPath.replace(/^\/rest\/\d+\/[^/]+\//, '/rest/').replace(/\.(json|xml)$/, '')
       : rawPath
 
-  const rate = checkRateLimit(rateSubject, service, Date.now())
+  const rate = checkRateLimit(rateSubject, service, Date.now(), path)
 
   let scenario = parseScenario(req.headers['x-mock-scenario'] as string | undefined)
   if (!rate.allowed) scenario = 'rate_limit'
@@ -352,6 +354,12 @@ async function handle(
   })
 
   reply.headers(result.headers)
+  // Заголовки пагинации — из тела, которое уже собрано. Отдаёт их пока только Apify,
+  // и только на списковых ответах: у одиночного объекта полей total/offset нет,
+  // значит и заголовков быть не должно.
+  if (profile.native.paginationHeaderPrefix && result.responseSource !== 'error') {
+    reply.headers(paginationHeaders(service, result.body))
+  }
   // Отдаём готовую строку: Fastify не будет сериализовать объект ещё раз.
   return reply.code(result.status).type(profile.native.contentType).send(payload)
 }

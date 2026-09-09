@@ -1,0 +1,10 @@
+{
+  "service": "apify",
+  "sourceUrl": "https://docs.apify.com/api/v2",
+  "specUrl": "https://docs.apify.com/api/openapi.json",
+  "specVersion": "v2-2026-09-02T154542Z",
+  "specLicense": null,
+  "snapshotDate": "2026-09-02",
+  "methodCount": 231,
+  "note": "Спецификацию публикует сам вендор по прямой ссылке, без антибота и зеркал: extraction = spec. Дата снимка взята из info.version самой спецификации, а не из даты скачивания."
+}

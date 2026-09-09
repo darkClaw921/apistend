@@ -46,3 +46,4 @@ examples/b24-local-app/.tokens.json
 
 # Локальные настройки Claude Code: разрешения инструментов конкретной машины.
 .claude/settings.local.json
+.forge-worktrees/
