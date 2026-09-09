@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const SNAPSHOT = join(here, '../../../../specs/apify/actors.json.gz')
+const SNAPSHOT_META = join(here, '../../../../specs/apify/actors-meta.json')
 
 export interface ActorPricing {
   readonly model: string | null
@@ -125,4 +126,38 @@ export function searchActors(keywords: string, limit: number, offset: number): {
 
   matched.sort((a, b) => (b.stats.totalUsers30Days ?? 0) - (a.stats.totalUsers30Days ?? 0))
   return { total: matched.length, items: matched.slice(offset, offset + limit) }
+}
+
+/** Счётчики снимка: сколько акторов снято и у скольких есть схемы. */
+export interface ActorSnapshotMeta {
+  readonly capturedAt: string
+  readonly actorCount: number
+  readonly withInputSchema: number
+  readonly withOutputSchema: number
+}
+
+let cachedMeta: ActorSnapshotMeta | null = null
+let metaFailed = false
+
+/**
+ * Счётчики снимка без его распаковки.
+ *
+ * Их спрашивает витрина сервисов на каждый показ главной страницы, а снимок
+ * весит тринадцать мегабайт в разжатом виде. Читать его ради одного числа
+ * значило бы держать эти мегабайты в памяти процесса, который в MCP может
+ * не зайти ни разу. Поэтому рядом лежит отдельный файл на пару сотен байт.
+ *
+ * null — снимок не собирали. Тогда числа просто нет, и показывать вместо него
+ * ноль нельзя: ноль читается как «акторов нет», а их не снимали.
+ */
+export function actorSnapshotMeta(): ActorSnapshotMeta | null {
+  if (cachedMeta) return cachedMeta
+  if (metaFailed) return null
+  try {
+    cachedMeta = JSON.parse(readFileSync(SNAPSHOT_META, 'utf8')) as ActorSnapshotMeta
+    return cachedMeta
+  } catch {
+    metaFailed = true
+    return null
+  }
 }

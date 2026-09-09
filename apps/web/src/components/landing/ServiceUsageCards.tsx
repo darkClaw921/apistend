@@ -95,7 +95,15 @@ function ServiceCard({ service }: { service: ServiceSummary }) {
       <dl className="grid grid-cols-2 gap-x-[12px] gap-y-[12px] border-t border-night-line pt-[14px]">
         <Metric value={formatInt(service.methodsCount)} label="методов" />
         <Metric value={formatInt(usage?.requestsTotal ?? 0)} label="запросов через стенд" />
-        <Metric value={formatInt(usage?.users ?? 0)} label="разработчиков за 30 дней" />
+        {/* У Apify вместо счётчика разработчиков — акторы: их снимок и есть то,
+            ради чего этот сервис здесь, а «0 разработчиков за 30 дней» на новом
+            сервисе показывает не популярность, а его возраст. У остальных
+            сервисов акторов не бывает, и метрика остаётся прежней. */}
+        {typeof service.actorsCount === 'number' ? (
+          <Metric value={formatInt(service.actorsCount)} label="акторов в снимке" />
+        ) : (
+          <Metric value={formatInt(usage?.users ?? 0)} label="разработчиков за 30 дней" />
+        )}
         <Metric
           value={formatInt(online)}
           label="сейчас в песочницах"

@@ -280,6 +280,30 @@ writeFileSync(file, packed)
 const sha = createHash('sha256').update(packed).digest('hex')
 writeManifestRow(join(outDir, 'MANIFEST.tsv'), 'actors.json.gz', sha, packed.length)
 
+/*
+ * Счётчики отдельным файлом на пару сотен байт.
+ *
+ * Их спрашивает витрина сервисов на каждый показ страницы, а сам снимок весит
+ * тринадцать мегабайт в разжатом виде. Распаковывать его ради одного числа —
+ * значит держать эти мегабайты в памяти процесса, который в MCP может не зайти
+ * ни разу за всё время работы.
+ */
+const meta = {
+  capturedAt: snapshot.capturedAt,
+  sourceUrl: snapshot.sourceUrl,
+  actorCount: snapshot.actorCount,
+  withInputSchema: snapshot.withInputSchema,
+  withOutputSchema: snapshot.withOutputSchema,
+}
+const metaText = `${JSON.stringify(meta, null, 2)}\n`
+writeFileSync(join(outDir, 'actors-meta.json'), metaText)
+writeManifestRow(
+  join(outDir, 'MANIFEST.tsv'),
+  'actors-meta.json',
+  createHash('sha256').update(metaText).digest('hex'),
+  Buffer.byteLength(metaText),
+)
+
 console.log(`Готово: ${actors.length} акторов, со схемой входа ${withInput}, с описанием выхода ${withOutput}`)
 console.log(`  ${file} — ${(packed.length / 1024 / 1024).toFixed(1)} МБ сжато из ${(Buffer.byteLength(text) / 1024 / 1024).toFixed(1)} МБ`)
 if (failures.length > 0) {

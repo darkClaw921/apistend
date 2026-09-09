@@ -5,6 +5,7 @@ import { env } from '../env.ts'
 import { clampNumber } from '../lib/guard.ts'
 import { prisma } from '../db.ts'
 import { flushRequestLogs } from '../lib/log-buffer.ts'
+import { actorSnapshotMeta } from '../mcp/apify-actors.ts'
 
 /**
  * Каталог методов.
@@ -117,6 +118,12 @@ export function registerCatalogRoutes(app: FastifyInstance): void {
         rateLimit: profile.rateLimit.description,
         nativeAuth: profile.nativeAuth.description,
         usage: usage[profile.code] ?? EMPTY_USAGE,
+        /**
+         * Акторы снятого снимка магазина. Есть только у Apify: у остальных
+         * сервисов акторов не бывает, и поле остаётся null — не ноль. Ноль
+         * читался бы как «акторов нет», а их у Битрикс24 нет как понятия.
+         */
+        actorsCount: profile.code === 'apify' ? (actorSnapshotMeta()?.actorCount ?? null) : null,
       }
     })
     const total = services.reduce((sum, s) => sum + s.methodsCount, 0)

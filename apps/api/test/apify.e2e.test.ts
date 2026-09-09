@@ -147,6 +147,25 @@ describe('нативная авторизация', () => {
   })
 })
 
+describe('витрина сервисов', () => {
+  it('у Apify вместо счётчика разработчиков — число акторов', async () => {
+    const res = await api.inject({ method: 'GET', url: '/api/services' })
+    expect(res.statusCode).toBe(200)
+    const services = (JSON.parse(res.body) as {
+      services: Array<{ code: string; actorsCount: number | null }>
+    }).services
+
+    const apify = services.find((s) => s.code === 'apify')
+    expect(apify?.actorsCount).toBeGreaterThan(0)
+
+    // У остальных null, а не ноль: акторов у них не бывает как понятия,
+    // и ноль на витрине читался бы как «их нет», а не «их тут не бывает».
+    for (const s of services.filter((x) => x.code !== 'apify')) {
+      expect(s.actorsCount).toBeNull()
+    }
+  })
+})
+
 describe('ключ открывает все сервисы стенда', () => {
   it('ключ с урезанным набором в базе всё равно работает на чужом сервисе', async () => {
     // Ключ этого теста заведён с services: ['apify'] — ровно так выглядит ключ,

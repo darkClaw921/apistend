@@ -34,6 +34,11 @@ export interface ServiceSummary {
   snapshotDate: string | null
   rateLimit: string
   nativeAuth: string
+  /**
+   * Акторов в снятом снимке магазина. Есть только у Apify; у остальных null —
+   * не ноль: акторов у них не бывает как понятия.
+   */
+  actorsCount?: number | null
   /** Живые счётчики витрины: считаются по журналу запросов, кешируются на 30 секунд. */
   usage?: {
     requestsTotal: number
