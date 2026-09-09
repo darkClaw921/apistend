@@ -85,7 +85,7 @@ export function highlightJson(line: string): Tok[] {
 
 export function CodeBlock({
   code, language = 'json', showLineNumbers, onCopy, copyable = true,
-  size = 'md', radius = 6, className, maxLines,
+  size = 'md', radius = 6, className, maxLines, wrap = false, maxHeight,
 }: {
   code: string
   language?: 'json' | 'shell' | 'text'
@@ -95,11 +95,30 @@ export function CodeBlock({
   size?: 'sm' | 'md'
   radius?: 6 | 14
   className?: string
+  /**
+   * Показать только первые N строк.
+   *
+   * Именно предпросмотр, а не способ уместить длинный текст: остальные строки
+   * не показываются никак, и добраться до них нельзя. Для длинного текста,
+   * который человек должен прочитать или скопировать целиком, есть maxHeight —
+   * он ограничивает высоту, оставляя прокрутку.
+   */
   maxLines?: number
+  /**
+   * Переносить длинные строки вместо горизонтальной прокрутки.
+   *
+   * Нужно там, где строка — не код, а адрес или проза. Горизонтальная прокрутка
+   * для них плохой ответ: полосы на macOS скрыты, а колесо мыши без Shift
+   * по горизонтали не крутит, и текст оказывается недостижим.
+   */
+  wrap?: boolean
+  /** Максимальная высота в пикселях. Всё, что выше, прокручивается по вертикали. */
+  maxHeight?: number
 }) {
   const [copied, setCopied] = useState(false)
   const allLines = code.split('\n')
   const lines = maxLines ? allLines.slice(0, maxLines) : allLines
+  const hiddenLines = allLines.length - lines.length
 
   async function copy() {
     try {
@@ -128,8 +147,13 @@ export function CodeBlock({
         </button>
       ) : null}
       <pre
+        style={maxHeight ? { maxHeight } : undefined}
         className={cn(
-          'overflow-x-auto scrollbar-thin px-[14px] py-[12px] font-mono',
+          'scrollbar-thin px-[14px] py-[12px] font-mono',
+          // Перенос вместо горизонтальной прокрутки: адрес и проза должны
+          // читаться целиком, не уезжая за край.
+          wrap ? 'break-words whitespace-pre-wrap' : 'overflow-x-auto',
+          maxHeight ? 'overflow-y-auto' : undefined,
           size === 'sm' ? 'text-[11px] leading-[1.25]' : 'text-[12px] leading-[1.35]',
         )}
       >
@@ -151,8 +175,27 @@ export function CodeBlock({
           ))}
         </code>
       </pre>
+      {hiddenLines > 0 ? (
+        // Молча обрезанный текст выглядит как весь текст. Кнопка «Копировать»
+        // при этом копирует его целиком — про это тоже надо сказать.
+        <p className="border-t border-white/5 px-[14px] py-[7px] text-[11px] text-code-muted">
+          и ещё {hiddenLines} {pluralLines(hiddenLines)} — копирование заберёт целиком
+        </p>
+      ) : null}
     </div>
   )
+}
+
+function pluralLines(n: number): string {
+  const tail = n % 100
+  if (tail >= 11 && tail <= 14) return 'строк'
+  switch (n % 10) {
+    case 1: return 'строка'
+    case 2:
+    case 3:
+    case 4: return 'строки'
+    default: return 'строк'
+  }
 }
 
 /** Шапка терминала: фон code-surface, три точки 9 px, имя файла mono 11 px. */

@@ -18,6 +18,15 @@ import { apistendMcpServer } from '../mcp/apistend.ts'
 const mcpBody = z.object({ enabled: z.boolean() })
 
 /**
+ * Место под ключ в готовых текстах.
+ *
+ * Сервер подставить сюда настоящий ключ не может и не должен: в базе лежит только
+ * его хеш, полностью ключ существует ровно один момент — сразу после создания.
+ * Поэтому подстановкой занимается кабинет, у которого этот момент есть.
+ */
+export const KEY_PLACEHOLDER = 'stend_sk_ВАШ_КЛЮЧ'
+
+/**
  * Готовая инструкция для ИИ-агента.
  *
  * Собирается из живого списка инструментов, а не пишется отдельным текстом:
@@ -70,7 +79,7 @@ function agentInstructions(mcpUrl: string, tools: readonly { name: string; descr
     '',
     '```json',
     JSON.stringify(
-      { mcpServers: { apistend: { url: mcpUrl, headers: { Authorization: 'Bearer stend_sk_ВАШ_КЛЮЧ' } } } },
+      { mcpServers: { apistend: { url: mcpUrl, headers: { Authorization: `Bearer ${KEY_PLACEHOLDER}` } } } },
       null,
       2,
     ),
@@ -94,12 +103,14 @@ export function registerSettingsRoutes(app: FastifyInstance): void {
       protocolVersion: apistendMcpServer.protocolVersion,
       /** Готовый блок для конфига клиента MCP. */
       clientConfig: JSON.stringify(
-        { mcpServers: { apistend: { url, headers: { Authorization: 'Bearer stend_sk_ВАШ_КЛЮЧ' } } } },
+        { mcpServers: { apistend: { url, headers: { Authorization: `Bearer ${KEY_PLACEHOLDER}` } } } },
         null,
         2,
       ),
       /** Готовая инструкция для агента: копируется в его системный текст или AGENTS.md. */
       agentInstructions: agentInstructions(url, tools),
+      /** Место под ключ: кабинет подставляет сюда настоящий, когда создаёт его. */
+      keyPlaceholder: KEY_PLACEHOLDER,
       tools: tools.map((t) => ({ name: t.name, title: t.title ?? t.name, description: t.description })),
     })
   })

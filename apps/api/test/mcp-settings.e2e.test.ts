@@ -155,6 +155,21 @@ describe('готовые тексты для копирования', () => {
     expect(config.mcpServers.apistend.headers.Authorization).toContain('Bearer stend_sk_')
   })
 
+  it('место под ключ есть в обоих текстах — кабинету есть что подставить', async () => {
+    const res = await api.inject({ method: 'GET', url: '/api/settings/mcp', headers: { cookie } })
+    const body = JSON.parse(res.body) as {
+      keyPlaceholder: string
+      clientConfig: string
+      agentInstructions: string
+    }
+    // Кабинет подставляет настоящий ключ заменой этой строки: если её не будет
+    // хотя бы в одном тексте, пользователь скопирует конфиг без ключа и получит
+    // отказ там, где всё должно было работать сразу.
+    expect(body.keyPlaceholder).toMatch(/^stend_sk_/)
+    expect(body.clientConfig).toContain(body.keyPlaceholder)
+    expect(body.agentInstructions).toContain(body.keyPlaceholder)
+  })
+
   it('инструкция перечисляет ровно те инструменты, что отдаёт сервер', async () => {
     const res = await api.inject({ method: 'GET', url: '/api/settings/mcp', headers: { cookie } })
     const body = JSON.parse(res.body) as { agentInstructions: string; tools: Array<{ name: string }> }
