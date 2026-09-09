@@ -120,6 +120,22 @@ export class MockEngine {
     return this.services.get(service)?.bundle.methods ?? []
   }
 
+  /**
+   * Второй заход по маршрутам — с путём, приведённым к написанию спецификации.
+   *
+   * Возвращает метод каталога как есть: и в журнале, и в заголовках честности
+   * должен стоять тот метод, чей ответ отдан, а не строка, набранная клиентом.
+   */
+  private matchAlias(index: ServiceIndex, req: MockRequest, ignoreHttpMethod: boolean) {
+    for (const alias of SERVICE_PROFILES[req.service].pathAliases ?? []) {
+      if (!alias.from.test(req.path)) continue
+      const canonical = req.path.replace(alias.from, alias.to)
+      const hit = index.router.match(req.httpMethod, canonical, ignoreHttpMethod)
+      if (hit) return hit
+    }
+    return null
+  }
+
   handle(req: MockRequest): MockResult {
     const index = this.services.get(req.service)
     if (!index) {
@@ -131,7 +147,11 @@ export class MockEngine {
     }
 
     const ignoreHttpMethod = SERVICE_PROFILES[req.service].routing === 'path-only'
-    const matched = index.router.match(req.httpMethod, req.path, ignoreHttpMethod)
+    // Каноничный путь ищем первым: алиас — редкое написание, и платить за него
+    // лишним проходом по шаблонам на каждом запросе незачем.
+    const matched =
+      index.router.match(req.httpMethod, req.path, ignoreHttpMethod) ??
+      this.matchAlias(index, req, ignoreHttpMethod)
     if (!matched) {
       const err = unknownMethodError(req.service, req.requestId)
       const suggestions = index.router.suggest(req.path)

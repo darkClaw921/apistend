@@ -58,6 +58,15 @@ export interface ActorSnapshotEntry {
   readonly outputSchema: Record<string, unknown> | null
   /** Описание полей датасета: форма результата запуска. */
   readonly datasetFields: Record<string, unknown> | null
+  /**
+   * Строки результата, которые автор показал в readme актора.
+   *
+   * Второй источник формы выхода, и по охвату он шире первого: поля датасета
+   * объявлены у 429 акторов снимка, примеры в readme — у 739, вместе — у 874
+   * из 1 200. Это по-прежнему слова автора о собственном акторе, просто
+   * записанные не схемой, а куском JSON под заголовком «Output».
+   */
+  readonly outputExamples?: readonly Record<string, unknown>[]
 }
 
 export interface ActorSnapshot {

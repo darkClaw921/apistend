@@ -119,10 +119,27 @@ function requestedCount(input: Record<string, unknown>): number {
 /**
  * Элементы датасета, которые отдал бы запуск актора.
  *
- * Пустой массив означает честное «форму выхода актор не описал»: у части акторов
- * в сборке нет ни схемы датасета, ни схемы выхода, и придумывать за автора поля
- * его результата — ровно то, чего проект не делает.
+ * Форму выхода ищем в двух местах, оба — слова самого автора:
+ *   1) схема полей датасета из сборки — по ней и строится образец;
+ *   2) примеры строк из readme, если схемы нет. Их отдаём КАК ЕСТЬ и не
+ *      размножаем до запрошенного количества: три показанных автором строки —
+ *      это три строки, а не заготовка, из которой можно нарезать тридцать.
+ *
+ * Пустой массив означает честное «форму выхода актор не описал» — у 326 акторов
+ * снимка нет ни схемы, ни примеров. Придумывать за автора поля его результата —
+ * ровно то, чего проект не делает: по такому полю пишут разбор ответа, и
+ * несуществующее поле обошлось бы дороже отсутствующего.
  */
+/** Откуда взята форма выхода актора. Уходит в ответ инструмента: агенту важно, чему верить. */
+export type ActorOutputSource = 'dataset-schema' | 'readme-examples' | 'none'
+
+export function actorOutputSource(actor: ActorSnapshotEntry): ActorOutputSource {
+  if (actor.hasNoDataset) return 'none'
+  const fields = (actor.datasetFields as { fields?: JsonSchema } | null)?.fields
+  if (fields?.properties) return 'dataset-schema'
+  return (actor.outputExamples?.length ?? 0) > 0 ? 'readme-examples' : 'none'
+}
+
 export function sampleFromActorOutput(
   actor: ActorSnapshotEntry,
   input: Record<string, unknown>,
@@ -131,7 +148,10 @@ export function sampleFromActorOutput(
   if (actor.hasNoDataset) return []
 
   const fields = (actor.datasetFields as { fields?: JsonSchema } | null)?.fields
-  if (!fields?.properties) return []
+  if (!fields?.properties) {
+    const examples = actor.outputExamples ?? []
+    return examples.slice(0, requestedCount(input)).map((row) => ({ ...row }))
+  }
 
   const count = requestedCount(input)
   const items: Record<string, unknown>[] = []

@@ -6,7 +6,8 @@ import { RpcError, RPC, type McpServerDefinition, type McpTool, type McpToolResu
 import { engine } from '../gateway.ts'
 import { requestId } from '../lib/ids.ts'
 import { actorSnapshot, findActor, searchActors, type ActorSnapshotEntry } from './apify-actors.ts'
-import { sampleFromActorOutput } from './actor-output.ts'
+import { actorOutputSource, sampleFromActorOutput, type ActorOutputSource } from './actor-output.ts'
+import { recordRun, runById, runByDatasetId } from './run-registry.ts'
 
 /**
  * Мок MCP-сервера Apify.
@@ -58,16 +59,13 @@ function mockId(prefix: string, seed: string): string {
   return out
 }
 
-/** Инструменты, за которыми стоит метод каталога REST. */
+/**
+ * Инструменты, за которыми стоит метод каталога REST.
+ *
+ * Запуск и датасет сюда не входят: их отдаёт реестр запусков, а к движку они
+ * обращаются только когда идентификатор пришёл со стороны — не от call-actor.
+ */
 const REST_BACKED: Record<string, { method: string; path: (a: Record<string, unknown>) => string }> = {
-  'get-actor-run': {
-    method: 'GET',
-    path: (a) => `/v2/actor-runs/${encodeURIComponent(String(a.runId))}`,
-  },
-  'get-dataset-items': {
-    method: 'GET',
-    path: (a) => `/v2/datasets/${encodeURIComponent(String(a.datasetId))}/items`,
-  },
   'get-key-value-store-record': {
     method: 'GET',
     path: (a) =>
@@ -116,6 +114,29 @@ function selectTools(req: FastifyRequest): readonly McpTool[] {
   })
 }
 
+/**
+ * Приписка к ответу запуска: откуда взялись строки.
+ *
+ * Пишется словами и в текст для модели, а не только в структуру: агент читает
+ * именно текст, и без этой строки пустой результат он объяснит себе сам —
+ * решит, что по запросу ничего не нашлось, и начнёт менять вход, которого
+ * менять не нужно.
+ */
+const OUTPUT_SOURCE_NOTE: Record<ActorOutputSource, string> = {
+  'dataset-schema':
+    '_APIStend: это песочница, настоящего запуска не было. Строки собраны по схеме полей ' +
+    'датасета из последней сборки актора — значения взяты из `examples`, которые написал ' +
+    'его автор. Форма настоящая, значения демонстрационные._',
+  'readme-examples':
+    '_APIStend: это песочница, настоящего запуска не было. Строки — примеры результата, ' +
+    'которые автор актора показал в readme: схему полей датасета он не объявил. ' +
+    'Их ровно столько, сколько показал автор, — это не «данные кончились»._',
+  none:
+    '_APIStend: это песочница, настоящего запуска не было. Форму результата автор актора ' +
+    'не описал ни схемой полей датасета, ни примером в readme, поэтому список пуст. ' +
+    'Это не пустая выдача по запросу и не ошибка входа: менять вход бессмысленно._',
+}
+
 /** Ответ инструмента: текст для модели плюс структура для строгого клиента. */
 function result(text: string, structured: unknown, isError = false): McpToolResult {
   return {
@@ -143,6 +164,12 @@ function throughEngine(httpMethod: string, path: string, body: unknown): McpTool
     salt: 'medium',
   })
   return result(answer.serialized, answer.body, answer.responseSource === 'error')
+}
+
+/** Число из аргументов инструмента: клиенты присылают и `2`, и `"2"`. */
+function numberArg(value: unknown): number | undefined {
+  const n = typeof value === 'string' ? Number(value) : value
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined
 }
 
 function requireString(args: Record<string, unknown>, name: string): string {
@@ -173,10 +200,63 @@ function actorCard(actor: ActorSnapshotEntry): string {
 function noSnapshot(): never {
   throw new RpcError(
     RPC.INTERNAL_ERROR,
-    'Снимок акторов не собран: запустите APIFY_TOKEN=… node scripts/vendor-apify-actors.mjs. ' +
+    'Снимок акторов не собран: запустите node scripts/vendor-apify-actors.mjs. ' +
     'Выдумывать акторов мок не станет.',
   )
 }
+
+/**
+ * Что песочница дописывает к дословным instructions боевого сервера.
+ *
+ * Боевой текст не трогаем: по нему модель решает, как выбирать акторов и как
+ * их запускать, и переписанный «близко к тексту» он перестал бы быть тем же
+ * интерфейсом. Но молчать о подмене нельзя: агент, не знающий, что запуска
+ * не было, объяснит демонстрационные строки себе сам — и запишет их в выводы
+ * о рынке или начнёт чинить вход, с которым всё в порядке.
+ *
+ * Раздел идёт последним и подписан, чтобы его нельзя было спутать со словами
+ * Apify.
+ */
+const SANDBOX_INSTRUCTIONS = [
+  '',
+  '---',
+  '',
+  '# APIStend sandbox (not Apify)',
+  '',
+  'This server is a sandbox that answers INSTEAD of `mcp.apify.com`. Nothing here',
+  'touches the real Apify platform: no Actor is executed, no credits are spent,',
+  'no request leaves the sandbox. Treat every value below as a demonstration of',
+  'SHAPE, never as a fact about the real world — do not quote prices, ratings or',
+  'counts from it as if they were scraped today.',
+  '',
+  '## Where the data comes from',
+  '- Actors, their input schemas and dataset fields are a dated snapshot of the',
+  '  real Apify Store, not invented listings.',
+  '- `call-actor` validates the input against the actor\u2019s real input schema, so a',
+  '  malformed call fails here exactly as it would in production — that is the',
+  '  cheapest thing this sandbox gives you.',
+  '- Run output comes from what the actor\u2019s author described, in this order:',
+  '  the dataset field schema of the latest build; the example rows the author',
+  '  showed in the readme; otherwise an EMPTY list. Every run reports which one',
+  '  it used in `_apistend.outputSource`.',
+  '- An empty `items` means "the author never described the output", not "the',
+  '  query found nothing". Changing the input will not fill it.',
+  '',
+  '## Runs and datasets',
+  'A run made with `call-actor` is remembered: `get-dataset-items` for its',
+  '`datasetId` and `get-actor-run` for its `runId` return that same run. Ids not',
+  'produced by this sandbox fall back to the generic mock of the REST method.',
+  '',
+  '## What refuses',
+  'Tools that need the live network (`search-apify-docs`, `fetch-apify-docs`,',
+  '`apify--rag-web-browser`, `apify--web-fetch`) refuse instead of inventing page',
+  'text. `report-problem` is accepted locally and never reaches Apify support.',
+  '',
+  '## The REST API is mocked too',
+  'The same sandbox serves `api.apify.com` v2 over HTTP under `/apify`, with the',
+  'same paths and auth: `Authorization: Bearer <sandbox key>` or `?token=`. Both',
+  '`/v2/acts/...` and `/v2/actors/...` work, as they do in production.',
+].join('\n')
 
 export const apifyMcpServer: McpServerDefinition = {
   protocolVersion: vendored.protocolVersion,
@@ -184,7 +264,8 @@ export const apifyMcpServer: McpServerDefinition = {
   // что сервер умеет, и подменённое здесь имя сломало бы совместимость сразу.
   serverInfo: vendored.serverInfo,
   capabilities: vendored.capabilities,
-  instructions: vendored.instructions,
+  // Дословные instructions боевого сервера плюс раздел о том, что это песочница.
+  instructions: vendored.instructions + SANDBOX_INSTRUCTIONS,
 
   tools: (req) => selectTools(req),
 
@@ -324,6 +405,7 @@ export const apifyMcpServer: McpServerDefinition = {
           defaultKeyValueStoreId: mockId('kvs', seed),
           buildNumber: actor.buildNumber ?? '0.0.1',
         }
+        const source = actorOutputSource(actor)
         const text = [
           `Actor \`${actor.name}\` finished with status SUCCEEDED.`,
           `- **Run ID:** ${runId}`,
@@ -333,8 +415,15 @@ export const apifyMcpServer: McpServerDefinition = {
           '```json',
           JSON.stringify(items.slice(0, 3), null, 2),
           '```',
+          '',
+          OUTPUT_SOURCE_NOTE[source],
         ].join('\n')
-        return result(text, { run, datasetId, items })
+        // Запуск запоминается: следующий вызов агента — get-dataset-items по
+        // этому датасету, и он обязан вернуть те же строки, а не образец REST.
+        recordRun({ run, datasetId, items })
+        // Служебное поле песочницы. Имя с подчёркиванием — чтобы клиент, читающий
+        // боевую форму ответа, не принял его за поле Apify.
+        return result(text, { run, datasetId, items, _apistend: { sandbox: true, outputSource: source } })
       }
 
       case 'report-problem': {
@@ -346,6 +435,29 @@ export const apifyMcpServer: McpServerDefinition = {
           'мок наружу не ходит. В бою этот инструмент создаёт обращение.',
           { delivered: false, sandbox: true },
         )
+      }
+
+      case 'get-actor-run': {
+        const recorded = runById(requireString(args, 'runId'))
+        if (recorded) return result(JSON.stringify({ data: recorded.run }), { data: recorded.run })
+        return throughEngine('GET', `/v2/actor-runs/${encodeURIComponent(String(args.runId))}`, args)
+      }
+
+      case 'get-dataset-items': {
+        const recorded = runByDatasetId(requireString(args, 'datasetId'))
+        if (!recorded) {
+          return throughEngine(
+            'GET',
+            `/v2/datasets/${encodeURIComponent(String(args.datasetId))}/items`,
+            args,
+          )
+        }
+        // offset и limit — как у боевого инструмента: их и передаёт клиент,
+        // разбирающий выдачу по частям.
+        const offset = numberArg(args.offset) ?? 0
+        const limit = numberArg(args.limit)
+        const page = recorded.items.slice(offset, limit === undefined ? undefined : offset + limit)
+        return result(JSON.stringify(page), page)
       }
 
       default: {

@@ -106,6 +106,21 @@ describe('каталог и адресация', () => {
     expect(viaPrefix.body).toEqual(viaMount.body)
   })
 
+  it('историческое написание /v2/acts ведёт к тому же методу, что /v2/actors', async () => {
+    // Живая проверка 09.09.2026: боевой api.apify.com отвечает 200 на оба написания,
+    // а его документация и клиенты пишут именно acts.
+    const acts = await call('/apify/v2/acts')
+    const actors = await call('/apify/v2/actors')
+    expect(acts.status).toBe(200)
+    expect(acts.body).toEqual(actors.body)
+
+    const one = await call('/apify/v2/acts/memo23~wildberries-scraper')
+    expect(one.status).toBe(200)
+    expect(one.body).toEqual((await call('/apify/v2/actors/memo23~wildberries-scraper')).body)
+    // Метод в заголовках честности — каноничный, тот, чей ответ отдан.
+    expect(one.headers['x-apistend-upstream']).toBe('https://api.apify.com')
+  })
+
   it('несуществующий путь — родной конверт Apify, а не чужой', async () => {
     const res = await call('/apify/v2/this-does-not-exist')
     expect(res.status).toBe(404)

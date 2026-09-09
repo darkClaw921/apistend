@@ -207,6 +207,17 @@ export interface ServiceProfile {
    * иначе рабочая интеграция на GET получит 404 там, где боевой портал отвечает.
    */
   readonly routing: 'method-and-path' | 'path-only'
+  /**
+   * Исторические написания путей, которые боевой сервис принимает наравне
+   * с теми, что описаны в его спецификации.
+   *
+   * У Apify это `/v2/acts/…`: спецификация, из которой собран каталог, знает
+   * только `/v2/actors/…`, но боевой api.apify.com отвечает 200 на оба
+   * написания, и `acts` — как раз то, что стоит в примерах его документации
+   * и в коде его собственных клиентов. Каталог этим не раздувается: алиас
+   * приводит путь к каноничному и уходит в тот же метод, а не заводит второй.
+   */
+  readonly pathAliases?: readonly { readonly from: RegExp; readonly to: string }[]
   /** Где клиентская библиотека сервиса передаёт ключ. Шлюз обязан принять все варианты. */
   readonly nativeAuth: {
     readonly kind: 'path' | 'headers' | 'header'
@@ -492,6 +503,11 @@ export const SERVICE_PROFILES: Readonly<Record<ServiceCode, ServiceProfile>> = {
         'быть идемпотентным.',
     },
     routing: 'method-and-path',
+    // Живая проверка 09.09.2026: GET /v2/acts/memo23~wildberries-scraper и
+    // GET /v2/actors/memo23~wildberries-scraper оба отвечают 200 одним и тем же
+    // телом. Без алиаса клиент, написанный по документации Apify, получал бы
+    // от песочницы 404 там, где боевой сервис отвечает.
+    pathAliases: [{ from: /^\/v2\/acts(?=\/|$)/, to: '/v2/actors' }],
     nativeAuth: {
       kind: 'header',
       headers: ['Authorization'],
