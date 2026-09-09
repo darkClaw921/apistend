@@ -177,6 +177,10 @@ model ApiKey {
   /// Argon2id от полного ключа. Полный ключ показывается один раз при создании.
   keyHash   String       @unique
   services  String[]
+  /// Области доступа к Management API: keys:read, webhooks:write и так далее.
+  /// Пустой массив — полный доступ: все ключи, выданные до появления областей,
+  /// продолжают работать, а «ключ без прав» иначе означал бы бесполезный ключ.
+  scopes    String[]     @default([])
   status    ApiKeyStatus @default(active)
   rotationDays Int       @default(90)
   expiresAt DateTime?
@@ -227,6 +231,9 @@ model RequestLog {
   @@index([sandboxId, timestamp(sort: Desc)])
   @@index([sandboxId, statusCode])
   @@index([sandboxId, serviceCode])
+  /// Фильтр журнала по ключу и подсчёт вызовов перед удалением ключа: оба
+  /// обращения появились с Management API и без индекса читали таблицу целиком.
+  @@index([sandboxId, apiKeyId, timestamp(sort: Desc)])
   @@map("request_logs")
 }
 
@@ -494,11 +501,15 @@ model Alert {
   meta      String
   icon      String
   link      String?
+  /// Когда уведомление прочитали. Хранится время, а не флаг: «прочитано вчера»
+  /// и «прочитано только что» — разные вещи для того, кто разбирает накопившееся.
+  readAt    DateTime?
   createdAt DateTime @default(now())
 
   sandbox Sandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
 
   @@index([sandboxId])
+  @@index([sandboxId, readAt])
   @@map("alerts")
 }
 

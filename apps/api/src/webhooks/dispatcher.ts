@@ -7,6 +7,7 @@ import {
 import { prisma } from '../db.ts'
 import { deliveryId } from '../lib/ids.ts'
 import { getSession, sendFrame } from '../tunnel/registry.ts'
+import { checkPublicTarget } from '../lib/webhook-target.ts'
 
 /**
  * Диспетчер доставки событий.
@@ -259,6 +260,35 @@ async function deliverPublic(
   let responseBody = ''
   let errorKind: string | null = null
   let errorMessage: string | null = null
+
+  /*
+   * Адрес проверяется здесь, перед самой отправкой, а не только там, где подписку заводят.
+   *
+   * Проверка при создании закрывает ровно один вход, а записей Webhook в базе появляется
+   * больше, чем через форму: событие ONAPPUNINSTALL заводит подписку из адреса приложения
+   * Bitrix24, и через него внутренний адрес попадал в доставку в обход checkPublicTarget.
+   * Здесь же сходятся все пути сразу — и обычная доставка, и повтор, и серия событий.
+   *
+   * Это не отменяет проверку на входе: там пользователь узнаёт о неподходящем адресе
+   * сразу и с объяснением, а не из журнала доставок.
+   */
+  const verdict = await checkPublicTarget(url)
+  if (!verdict.ok) {
+    // Повторять нечего: адрес не станет публичным от ожидания, а сетка ретраев
+    // сервиса устроила бы внутреннему хосту ещё четыре запроса. Состояние сразу
+    // терминальное, причина видна в журнале доставок.
+    await prisma.webhookDelivery.updateMany({
+      where: { id },
+      data: {
+        state: 'failed',
+        durationMs: Date.now() - startedAt,
+        nextRetryAt: null,
+        errorKind: 'blocked',
+        errorMessage: verdict.reason,
+      },
+    })
+    return
+  }
 
   try {
     const res = await fetch(url, {

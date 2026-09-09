@@ -16,12 +16,22 @@ import { registerWebhookRoutes } from './routes/webhooks.ts'
 import { registerMockRoutes } from './routes/mocks.ts'
 import { registerOverviewRoutes } from './routes/overview.ts'
 import { registerB24AppRoutes } from './routes/b24-apps.ts'
+import { registerOpenApiRoute } from './routes/v1/_registry.ts'
+import { registerAccountV1Routes } from './routes/v1/account.ts'
+import { registerSandboxV1Routes } from './routes/v1/sandboxes.ts'
+import { registerKeysV1Routes } from './routes/v1/keys.ts'
+import { registerWebhookV1Routes } from './routes/v1/webhooks.ts'
+import { registerScenarioV1Routes } from './routes/v1/scenarios.ts'
+import { registerMockV1Routes } from './routes/v1/mocks.ts'
+import { registerV1LogsRoutes } from './routes/v1/logs.ts'
+import { registerCatalogV1Routes } from './routes/v1/catalog.ts'
 import { registerTunnel } from './tunnel/server.ts'
 import { startWebhookScheduler } from './webhooks/dispatcher.ts'
 import { reapInterruptedBursts } from './webhooks/burst.ts'
 import { bufferStats, flushRequestLogs } from './lib/log-buffer.ts'
 import { flushKeyUsage, keyUsageStats } from './lib/key-usage.ts'
 import { keyCacheStats } from './lib/api-key.ts'
+import { mgmtRateStats } from './lib/mgmt.ts'
 import { retentionStats, startRetentionJob, stopRetentionJob } from './lib/retention.ts'
 import { allSessions } from './tunnel/registry.ts'
 
@@ -93,13 +103,59 @@ export async function buildServer() {
         return
       }
       // Кабинет ходит с другого порта и обязан присылать cookie сессии.
-      done(null, { origin: [env.webOrigin], credentials: true })
+      // Сюда же попадает Management API (/api/v1/*): он принимает ту же cookie,
+      // поэтому строгий origin ему подходит, а серверному клиенту CORS не нужен вовсе.
+      // Заголовки лимита частоты приходится перечислять: без exposedHeaders браузер
+      // их не отдаёт коду страницы, и кабинет не смог бы показать, сколько осталось.
+      done(null, {
+        origin: [env.webOrigin],
+        credentials: true,
+        // Умолчание плагина — «GET,HEAD,POST», то есть ровно те методы, которым
+        // предполёт не нужен. Браузер сверяет запрошенный метод с этим списком,
+        // и PATCH с DELETE не проходили предполёт вообще: кабинетное удаление
+        // вебхука и весь Management API, где почти у каждого ресурса есть PATCH
+        // и DELETE, из браузера были недоступны.
+        methods: 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS',
+        exposedHeaders: [
+          'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset', 'retry-after',
+        ],
+      })
     },
   })
 
   // Тело неизвестного типа не должно ронять запрос: мок обязан принять всё,
   // что пришлёт клиентская библиотека, и разобраться сам.
   app.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, body, done) => done(null, body))
+
+  /**
+   * Пустое тело при заголовке «Content-Type: application/json».
+   *
+   * Встроенный разбор Fastify отвечает на него своим английским
+   * FST_ERR_CTP_EMPTY_JSON_BODY — ещё до того, как запрос дойдёт до маршрута.
+   * А случай этот обычный: fetch и curl ставят заголовок по привычке даже там,
+   * где телу взяться неоткуда (POST /api/v1/keys/:id/rotate, «сбросить песочницу»,
+   * «повторить доставку», «погасить все сессии»). Считаем пустое тело за {} —
+   * и пусть на нём спотыкается уже проверка полей, с русским текстом и разбором
+   * по именам, а не разбор транспорта.
+   *
+   * Заодно русским становится ответ на битый JSON.
+   */
+  app.removeContentTypeParser('application/json')
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    const text = (body as string).trim()
+    if (text.length === 0) {
+      done(null, {})
+      return
+    }
+    try {
+      done(null, JSON.parse(text))
+    } catch {
+      done(Object.assign(new Error('Тело запроса не разбирается как JSON'), {
+        statusCode: 400,
+        code: 'INVALID_JSON',
+      }))
+    }
+  })
   app.addContentTypeParser(
     'application/x-www-form-urlencoded',
     { parseAs: 'string' },
@@ -162,6 +218,7 @@ export async function buildServer() {
     responseCache: engine.cacheStats(),
     keyCache: keyCacheStats(),
     keyUsage: keyUsageStats(),
+    mgmtRate: mgmtRateStats(),
     tunnelSessions: allSessions().length,
     memoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
     retention: retentionStats(),
@@ -176,6 +233,48 @@ export async function buildServer() {
   registerMockRoutes(app)
   registerOverviewRoutes(app)
   registerB24AppRoutes(app)
+
+  /**
+   * Management API — то же самое, что делается в кабинете, но программно.
+   *
+   * Регистрируется после кабинета и до шлюза. До шлюза — потому что его маршруты
+   * самые широкие; после кабинета — потому что пути не пересекаются, и порядок
+   * между ними ничего не решает, кроме читаемости этого списка.
+   *
+   * Адреса /api/v1 и /api/v1/ (ровно они, без продолжения) заняты библиотекой
+   * BX24.js из registerB24AppRoutes — статический маршрут в Fastify приоритетнее
+   * параметрического, поэтому /api/v1/keys и соседи её не перекрывают.
+   */
+  registerAccountV1Routes(app)
+  registerSandboxV1Routes(app)
+  registerKeysV1Routes(app)
+  registerWebhookV1Routes(app)
+  registerScenarioV1Routes(app)
+  registerMockV1Routes(app)
+  registerV1LogsRoutes(app)
+  registerCatalogV1Routes(app)
+  /*
+   * Неизвестный адрес под /api/v1/ отвечает нашим конвертом, а не фастифаевским.
+   *
+   * По умолчанию Fastify отдаёт {"message":"Route ... not found","error":"Not Found"} —
+   * английский текст и другая форма, чем у всех остальных отказов Management API.
+   * Клиент, который разбирает поле error по своему справочнику кодов, на опечатке
+   * в адресе получал бы непонятное «Not Found» вместо NOT_FOUND.
+   */
+  app.setNotFoundHandler((req, reply) => {
+    if (req.url.startsWith('/api/v1/')) {
+      return reply.code(404).send({
+        error: 'NOT_FOUND',
+        message: `Адрес ${req.method} ${req.url.split('?')[0]} не существует. ` +
+          'Список маршрутов — в /api/v1/openapi.json',
+      })
+    }
+    return reply.code(404).send({ error: 'NOT_FOUND', message: 'Адрес не найден' })
+  })
+
+  // Служебная пара без авторизации: /api/v1/openapi.json и /api/v1/meta.
+  // Документ собирается на каждый запрос, поэтому место вызова роли не играет.
+  registerOpenApiRoute(app)
 
   // Шлюз регистрируется последним: его маршруты самые широкие (/wb/*, /v1/:service/*)
   // и не должны перехватывать /api/*.

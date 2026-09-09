@@ -18,6 +18,8 @@ import { prisma } from '../db.ts'
  */
 
 const COOKIE = 'apistend_session'
+/** Имя cookie нужно и Management API: он описывает cookieAuth в OpenAPI. */
+export const SESSION_COOKIE = COOKIE
 const TTL_SECONDS = 60 * 60 * 24 * 14
 
 const secret = new TextEncoder().encode(env.jwtSecret)
@@ -90,15 +92,28 @@ export async function readSession(request: FastifyRequest): Promise<SessionClaim
   }
 }
 
-/** Гасит сессию, которой пришёл запрос. Вызывается выходом. */
-export async function revokeSession(request: FastifyRequest): Promise<void> {
+/**
+ * Хеш сессии, которой пришёл запрос, — в том виде, в каком он лежит в базе.
+ *
+ * Нужен управлению сессиями: отметить в списке текущую строку и не погасить её
+ * заодно со всеми остальными можно только сравнением с записью, а сам
+ * идентификатор наружу не отдаётся. null означает, что текущей сессии нет вовсе:
+ * запрос пришёл по серверному ключу либо cookie нечитаема.
+ */
+export async function currentSessionHash(request: FastifyRequest): Promise<string | null> {
   const token = request.cookies[COOKIE]
-  if (!token) return
+  if (!token) return null
   try {
     const { payload } = await jwtVerify(token, secret)
-    const sid = typeof payload.sid === 'string' ? payload.sid : null
-    if (sid) await prisma.authSession.deleteMany({ where: { tokenHash: hashOf(sid) } })
+    return typeof payload.sid === 'string' ? hashOf(payload.sid) : null
   } catch {
-    // Токен нечитаем — гасить нечего.
+    // Токен нечитаем — считать его чьей-то сессией нельзя.
+    return null
   }
+}
+
+/** Гасит сессию, которой пришёл запрос. Вызывается выходом. */
+export async function revokeSession(request: FastifyRequest): Promise<void> {
+  const hash = await currentSessionHash(request)
+  if (hash) await prisma.authSession.deleteMany({ where: { tokenHash: hash } })
 }

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { SCENARIOS, SERVICE_CODES, SERVICE_PROFILES } from '@apistend/shared'
 import { prisma } from '../db.ts'
@@ -8,6 +9,8 @@ import { requestId as newRequestId } from '../lib/ids.ts'
 import { enqueueRequestLog } from '../lib/log-buffer.ts'
 import { checkRateLimit } from '../lib/rate-limit.ts'
 import { env } from '../env.ts'
+import { maskSecretsInText } from '../lib/keys.ts'
+import { maskHeaders } from '../lib/mask-log.ts'
 
 /**
  * Консоль запросов — серверный прокси.
@@ -135,8 +138,13 @@ export function registerConsoleRoutes(app: FastifyInstance): void {
       clientIp: req.ip,
       scenario,
       responseSource: result.responseSource,
-      requestHeaders: input.headers,
-      requestBody: input.body ? JSON.stringify(input.body).slice(0, 8_000) : null,
+      // Ключ песочницы приезжает и в заголовках, и в теле (у Bitrix24 это
+      // штатный параметр auth). Журнал — это данные пользователя, они хранятся,
+      // и без маскирования рабочий ключ лежал бы в базе открытым текстом.
+      requestHeaders: maskHeaders(input.headers) as Prisma.InputJsonValue,
+      requestBody: input.body
+        ? maskSecretsInText(JSON.stringify(input.body)).slice(0, 8_000)
+        : null,
       responseHeaders: result.headers,
       // См. комментарий в gateway.ts: детерминированные тела не храним.
       responseBody: result.responseSource === 'error' ? payload.slice(0, 8_000) : null,

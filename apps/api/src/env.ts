@@ -19,8 +19,27 @@ export const env = {
   webOrigin: process.env.WEB_ORIGIN ?? `http://localhost:${process.env.WEB_PORT ?? 3000}`,
   publicOrigin: process.env.APISTEND_PUBLIC_ORIGIN ?? `http://localhost:${process.env.API_PORT ?? 8080}`,
   isProduction: process.env.NODE_ENV === 'production',
+  /**
+   * Потолок песочниц на аккаунт.
+   *
+   * Ограничение существует не ради тарифа, а ради самого инстанса: у каждой песочницы
+   * свои ключи, наложения демо-данных и журнал, и скрипт с правом sandboxes:write
+   * заводил бы их сотнями в пределах обычной нормы запросов.
+   */
+  maxSandboxesPerAccount: Number(process.env.MAX_SANDBOXES_PER_ACCOUNT ?? 20),
+
   /** Соединений к PostgreSQL на инстанс. Общее число = это значение × количество инстансов. */
   dbPoolSize: Number(process.env.DB_POOL_SIZE ?? 12),
+
+  /**
+   * Потолок запросов к Management API на одного субъекта (ключ или сессию) в минуту.
+   *
+   * Это защита самого APIStend, а не эмуляция лимитов боевого сервиса: публичный
+   * API позволяет пересоздавать песочницы и рассылать серии событий, и скрипт
+   * с ошибкой в цикле не должен утаскивать за собой базу. 240 — четыре запроса
+   * в секунду: живой CLI столько не делает, а пачечная выгрузка логов проходит.
+   */
+  mgmtRateLimitPerMin: Number(process.env.MGMT_RATE_LIMIT ?? 240),
 
   // ── серии событий (нагрузочное тестирование вебхуков) ──
   /** Потолок скорости одной серии, событий в секунду. Запрос выше — обрезается, и об этом сообщается. */
