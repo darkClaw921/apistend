@@ -67,7 +67,7 @@ beforeAll(async () => {
   // Отдельный аккаунт под тест: чужие данные не трогаем.
   const user = await prisma.user.create({
     data: {
-      email: `tunnel-${randomBytes(4).toString('hex')}@test.local`,
+      login: `tunnel-${randomBytes(4).toString('hex')}`,
       passwordHash: 'x', name: 'Тест Туннеля', initials: 'ТТ',
     },
   })

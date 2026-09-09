@@ -54,7 +54,7 @@ beforeAll(async () => {
 
   const user = await prisma.user.create({
     data: {
-      email: `burst-${randomBytes(4).toString('hex')}@test.local`,
+      login: `burst-${randomBytes(4).toString('hex')}`,
       passwordHash: 'x', name: 'Тест Серий', initials: 'ТС',
     },
   })
