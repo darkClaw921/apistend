@@ -5,6 +5,7 @@ import { prisma } from '../src/db.ts'
 import { generateKey, hashPassword } from '../src/lib/keys.ts'
 import { invalidateKeyCache } from '../src/lib/api-key.ts'
 import { resetRateLimits } from '../src/lib/rate-limit.ts'
+import { productPool } from '@apistend/mock-engine'
 
 /**
  * Два MCP-сервера: мок mcp.apify.com на /apify/mcp и собственный APIStend на /mcp.
@@ -106,6 +107,26 @@ afterAll(async () => {
   await api.close()
 })
 
+/** Запуск в форме, объявленной в outputSchema боевого сервера. */
+type Run = {
+  runId: string
+  status: string
+  startedAt: string
+  finishedAt: string
+  storages: { datasets: { default: { id: string; itemCount: number } } }
+  _apistend?: { outputSource: string; values: string; matchedQuery?: boolean }
+}
+
+/** Строки датасета — тем же вызовом, каким за ними идёт агент. */
+async function datasetItems(datasetId: string, args: Record<string, unknown> = {}) {
+  const res = await rpc('/apify/mcp', 'tools/call', {
+    name: 'get-dataset-items',
+    arguments: { datasetId, ...args },
+  })
+  return (res.frame as { result: { structuredContent: { items: Record<string, unknown>[] } } })
+    .result.structuredContent.items
+}
+
 describe('транспорт совпадает с боевым mcp.apify.com', () => {
   it('ответ приходит кадром SSE, а не голым JSON', async () => {
     const res = await rpc('/apify/mcp', 'initialize', {
@@ -202,9 +223,14 @@ describe('мок mcp.apify.com', () => {
       arguments: { actor: 'apify/instagram-scraper' },
     })
     const structured = (res.frame as {
-      result: { structuredContent: { name: string; inputSchema: { properties: Record<string, unknown> } } }
+      result: {
+        structuredContent: {
+          actorInfo: { fullName: string }
+          inputSchema: { properties: Record<string, unknown> }
+        }
+      }
     }).result.structuredContent
-    expect(structured.name).toBe('apify/instagram-scraper')
+    expect(structured.actorInfo.fullName).toBe('apify/instagram-scraper')
     // Схема снята с боевой сборки актора — значит в ней его собственные поля.
     expect(Object.keys(structured.inputSchema.properties)).toContain('resultsLimit')
   })
@@ -220,38 +246,38 @@ describe('мок mcp.apify.com', () => {
     expect(result).toHaveProperty('structuredContent')
   })
 
-  it('call-actor возвращает запуск и элементы по схеме датасета', async () => {
+  it('call-actor возвращает запуск в форме боевого сервера', async () => {
     const res = await rpc('/apify/mcp', 'tools/call', {
       name: 'call-actor',
       arguments: { actor: 'apify/instagram-scraper', input: { resultsLimit: 4 } },
     })
-    const structured = (res.frame as {
-      result: { structuredContent: { run: { status: string; id: string }; items: unknown[] } }
-    }).result.structuredContent
-    expect(structured.run.status).toBe('SUCCEEDED')
-    expect(structured.run.id).toHaveLength(17)
-    // Сколько попросили во входе, столько и пришло.
-    expect(structured.items).toHaveLength(4)
+    const structured = (res.frame as { result: { structuredContent: Run } }).result.structuredContent
+    expect(structured.status).toBe('SUCCEEDED')
+    expect(structured.runId).toHaveLength(17)
+    // Элементы в structuredContent запуска не лежат — как и у боевого сервера:
+    // там storages, по которым клиент идёт за датасетом. Сколько попросили
+    // во входе, столько строк и записано в датасет.
+    expect(structured.storages.datasets.default.itemCount).toBe(4)
   })
 
   it('данные запуска детерминированы, а отметки времени живые', async () => {
     const args = { name: 'call-actor', arguments: { actor: 'apify/instagram-scraper', input: { resultsLimit: 2 } } }
     const first = await rpc('/apify/mcp', 'tools/call', args)
     const second = await rpc('/apify/mcp', 'tools/call', args)
-    type Run = { run: { id: string; startedAt: string; finishedAt: string }; datasetId: string; items: unknown[] }
     const a = (first.frame as { result: { structuredContent: Run } }).result.structuredContent
     const b = (second.frame as { result: { structuredContent: Run } }).result.structuredContent
 
     // Тело — чистая функция от (актор, вход): агент, которого отлаживают прогоном
     // по кругу, обязан получать одни и те же данные, иначе свою ошибку не отличить
     // от шума мока.
-    expect(a.items).toEqual(b.items)
-    expect(a.run.id).toBe(b.run.id)
-    expect(a.datasetId).toBe(b.datasetId)
+    expect(a.runId).toBe(b.runId)
+    expect(a.storages.datasets.default.id).toBe(b.storages.datasets.default.id)
+    expect(await datasetItems(a.storages.datasets.default.id))
+      .toEqual(await datasetItems(b.storages.datasets.default.id))
 
     // А вот время запуска у боевого Apify каждый раз своё, и замораживать его
     // здесь значило бы отдать клиенту запуск, который «начался» в прошлом веке.
-    expect(Date.parse(a.run.finishedAt)).toBeGreaterThan(Date.parse(a.run.startedAt))
+    expect(Date.parse(a.finishedAt)).toBeGreaterThan(Date.parse(a.startedAt))
   })
 
   it('instructions несут и боевой текст, и предупреждение песочницы', async () => {
@@ -276,7 +302,13 @@ describe('мок mcp.apify.com', () => {
         structuredContent: { _apistend: { sandbox: boolean; outputSource: string } }
       }
     }).result
-    expect(structured.structuredContent._apistend).toEqual({ sandbox: true, outputSource: 'readme-examples' })
+    expect(structured.structuredContent._apistend).toMatchObject({
+      sandbox: true,
+      // Форму строки дал readme актора, значения — общий каталог песочницы.
+      outputSource: 'readme-examples',
+      values: 'apistend-catalog',
+      matchedQuery: true,
+    })
     // Модель читает текст, а не структуру, — предупреждение обязано быть и там.
     expect(structured.content[0]!.text).toContain('APIStend')
     expect(structured.content[0]!.text).toContain('readme')
@@ -298,15 +330,57 @@ describe('мок mcp.apify.com', () => {
       name: 'call-actor',
       arguments: { actor: 'memo23/wildberries-scraper', input: { queries: ['кроссовки'] } },
     })
-    const structured = (res.frame as {
-      result: { structuredContent: { items: Record<string, unknown>[] } }
-    }).result.structuredContent
-    expect(structured.items.length).toBeGreaterThan(0)
+    const structured = (res.frame as { result: { structuredContent: Run } }).result.structuredContent
+    const items = await datasetItems(structured.storages.datasets.default.id)
+    expect(items.length).toBeGreaterThan(0)
     // Карточка товара, а не образец из спецификации: имя, цена, продавец.
-    const product = structured.items[0]!
+    const product = items[0]!
     expect(product).toHaveProperty('name')
     expect(product).toHaveProperty('priceSale')
     expect(product).toHaveProperty('supplierName')
+  })
+
+  it('выдача отвечает на поисковую фразу и на запрошенное количество', async () => {
+    // Ради этого мок и нужен: без реакции на queries конвейер сбора конкурентов
+    // проверяется целиком, а ценовая логика — нет. Коврик за 10 125 ₽ и айфон
+    // за 29 514 ₽ в одном коридоре цен не дают ни медианы, ни отклонения.
+    const run = await rpc('/apify/mcp', 'tools/call', {
+      name: 'call-actor',
+      arguments: {
+        actor: 'memo23/wildberries-scraper',
+        input: { queries: ['коврик для йоги'], maxItems: 5 },
+      },
+    })
+    const structured = (run.frame as { result: { structuredContent: Run } }).result.structuredContent
+    const items = await datasetItems(structured.storages.datasets.default.id)
+
+    expect(items).toHaveLength(5)
+    for (const item of items) {
+      expect(String(item.name)).toContain('Коврик для йоги')
+      // Цена со скидкой не выше цены до скидки — иначе коридор цен считается
+      // по числам, которые не могли встретиться вместе.
+      expect(Number(item.priceSale)).toBeLessThanOrEqual(Number(item.priceBasic))
+      // Артикул — из общего каталога песочницы, того же, из которого отвечают
+      // моки Wildberries и Ozon.
+      expect(productPool('medium').some((p) => p.nmId === item.productId)).toBe(true)
+      // Ссылка ведёт на свой товар, а не на товар из примера автора.
+      expect(String(item.url)).toContain(String(item.productId))
+    }
+    // Товары одной категории — цены одного порядка, а не «айфон против коврика».
+    expect(new Set(items.map((i) => i.supplierName)).size).toBe(1)
+  })
+
+  it('нетоварному актору каталог не подмешивается', async () => {
+    // У instagram-scraper строка выдачи — пост, а не карточка товара: подставить
+    // туда цену и артикул значило бы испортить пример автора без выигрыша.
+    const run = await rpc('/apify/mcp', 'tools/call', {
+      name: 'call-actor',
+      arguments: { actor: 'apify/instagram-scraper', input: { resultsLimit: 2 } },
+    })
+    const structured = (run.frame as { result: { structuredContent: Run } }).result.structuredContent
+    expect(structured._apistend?.values).toBe('actor-author')
+    const items = await datasetItems(structured.storages.datasets.default.id)
+    expect(items[0]).not.toHaveProperty('priceSale')
   })
 
   it('датасет запуска отдаёт те же строки, что вернул сам запуск', async () => {
@@ -317,33 +391,22 @@ describe('мок mcp.apify.com', () => {
       name: 'call-actor',
       arguments: { actor: 'memo23/wildberries-scraper', input: { queries: ['кроссовки'] } },
     })
-    const structured = (run.frame as {
-      result: { structuredContent: { datasetId: string; run: { id: string }; items: unknown[] } }
-    }).result.structuredContent
+    const structured = (run.frame as { result: { structuredContent: Run } }).result.structuredContent
+    const datasetId = structured.storages.datasets.default.id
 
-    const items = await rpc('/apify/mcp', 'tools/call', {
-      name: 'get-dataset-items',
-      arguments: { datasetId: structured.datasetId },
-    })
-    expect((items.frame as { result: { structuredContent: unknown } }).result.structuredContent)
-      .toEqual(structured.items)
+    const items = await datasetItems(datasetId)
+    expect(items.length).toBe(structured.storages.datasets.default.itemCount)
 
-    // Первая строка по limit — та же, что первая строка запуска.
-    const first = await rpc('/apify/mcp', 'tools/call', {
-      name: 'get-dataset-items',
-      arguments: { datasetId: structured.datasetId, limit: 1 },
-    })
-    expect((first.frame as { result: { structuredContent: unknown[] } }).result.structuredContent)
-      .toEqual(structured.items.slice(0, 1))
+    // Страница по limit — начало того же датасета, а не другая выдача.
+    expect(await datasetItems(datasetId, { limit: 1 })).toEqual(items.slice(0, 1))
 
     // И сам запуск виден по своему идентификатору.
     const info = await rpc('/apify/mcp', 'tools/call', {
       name: 'get-actor-run',
-      arguments: { runId: structured.run.id },
+      arguments: { runId: structured.runId },
     })
-    const data = (info.frame as { result: { structuredContent: { data: { id: string; status: string } } } })
-      .result.structuredContent.data
-    expect(data.id).toBe(structured.run.id)
+    const data = (info.frame as { result: { structuredContent: Run } }).result.structuredContent
+    expect(data.runId).toBe(structured.runId)
     expect(data.status).toBe('SUCCEEDED')
   })
 
@@ -356,18 +419,20 @@ describe('мок mcp.apify.com', () => {
     expect(error.message).toContain('живой сети')
   })
 
-  it('чужой датасет, не из запуска, отвечает тем же телом, что и REST-шлюз', async () => {
-    const viaMcp = await rpc('/apify/mcp', 'tools/call', {
+  it('чужой датасет — отказ, а не образец из спецификации', async () => {
+    // Раньше сюда отвечал мок REST образцом [{"foo":"bar"}]. Для агента это
+    // хуже отказа: он разбирал бы выдачу, которой не было, и не понял бы,
+    // почему в ней нет его полей.
+    const res = await rpc('/apify/mcp', 'tools/call', {
       name: 'get-dataset-items',
       arguments: { datasetId: 'abc123' },
     })
-    const viaRest = await api.inject({
-      method: 'GET',
-      url: '/apify/v2/datasets/abc123/items',
-      headers: { authorization: `Bearer ${key}` },
-    })
-    const mcpText = (viaMcp.frame as { result: { content: Array<{ text: string }> } }).result.content[0]!.text
-    expect(JSON.parse(mcpText)).toEqual(JSON.parse(viaRest.body))
+    const result = (res.frame as {
+      result: { isError?: boolean; structuredContent?: unknown; content: Array<{ text: string }> }
+    }).result
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toBeUndefined()
+    expect(result.content[0]!.text).toContain('call-actor')
   })
 })
 
@@ -377,7 +442,7 @@ describe('собственный MCP-сервер APIStend', () => {
     const instructions = (res.frame as { result: { instructions: string } }).result.instructions
     expect(instructions).toContain('Данные демонстрационные')
     expect(instructions).toContain('/apify/mcp')
-    expect(instructions).toContain('_apistend.outputSource')
+    expect(instructions).toContain('_apistend')
   })
 
   it('list_services называет адрес мока MCP у Apify и молчит о нём у остальных', async () => {
