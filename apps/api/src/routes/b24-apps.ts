@@ -8,6 +8,7 @@ import {
 } from '@apistend/shared'
 import { prisma } from '../db.ts'
 import { requireSandbox } from '../lib/guard.ts'
+import { checkPublicTarget } from '../lib/webhook-target.ts'
 import { dispatchWebhook } from '../webhooks/dispatcher.ts'
 import { BX24_JS_SOURCE, bx24JsEtag } from '../b24/bx24-js.ts'
 import {
@@ -29,6 +30,22 @@ import {
  *   /api/v1/     — библиотека BX24.js, без авторизации вообще (её грузит браузер
  *                  из чужого фрейма, и никакой cookie туда не приедет).
  */
+
+/**
+ * Адрес приложения проверяется тем же правилом, что и адрес вебхука.
+ *
+ * На него уходит событие ONAPPUNINSTALL — обычной публичной доставкой, то есть
+ * запросом с нашего сервера. Без проверки карточка приложения была бы обходным
+ * входом для внутреннего адреса мимо checkPublicTarget, которым закрыт экран вебхуков.
+ */
+async function appTargetIssue(handlerUrl: string | null, installUrl: string | null): Promise<string | null> {
+  for (const [field, value] of [['Путь обработчика', handlerUrl], ['Путь установки', installUrl]] as const) {
+    if (!value) continue
+    const verdict = await checkPublicTarget(value)
+    if (!verdict.ok) return `${field}: ${verdict.reason}`
+  }
+  return null
+}
 
 /** Адрес, который откроет браузер: только http и https. */
 function httpUrl(label: string) {
@@ -134,6 +151,9 @@ export function registerB24AppRoutes(app: FastifyInstance): void {
       return reply.code(400).send({ error: 'VALIDATION', issues: ['Для приложения без интерфейса нужен путь установки'] })
     }
 
+    const blocked = await appTargetIssue(parsed.data.handlerUrl ?? null, parsed.data.installUrl ?? null)
+    if (blocked) return reply.code(400).send({ error: 'VALIDATION', issues: [blocked] })
+
     const code = (parsed.data.code ?? slugify(parsed.data.title)).toLowerCase()
     const clash = await prisma.b24App.findFirst({ where: { sandboxId: ctx.sandbox.id, code } })
     if (clash) {
@@ -195,6 +215,12 @@ export function registerB24AppRoutes(app: FastifyInstance): void {
         return reply.code(400).send({ error: 'VALIDATION', issues: [`Неизвестные права: ${invalid.join(', ')}`] })
       }
     }
+
+    const blockedTarget = await appTargetIssue(
+      parsed.data.handlerUrl === undefined ? null : parsed.data.handlerUrl ?? null,
+      parsed.data.installUrl === undefined ? null : parsed.data.installUrl ?? null,
+    )
+    if (blockedTarget) return reply.code(400).send({ error: 'VALIDATION', issues: [blockedTarget] })
 
     const updated = await prisma.b24App.update({
       where: { id: existing.id },

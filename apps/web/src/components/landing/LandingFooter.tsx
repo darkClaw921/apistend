@@ -30,8 +30,8 @@ const NPM = 'https://www.npmjs.com/package/apistend'
 
 type FooterLinkItem = { label: string; href: string; external?: boolean }
 
-/* Проверено на дереве репозитория: docs/bitrix24-local-apps.md, examples/
-   и LICENSE на месте — каждая ссылка ниже открывает существующий файл. */
+/* Проверено: examples/ и LICENSE на месте в репозитории, а каждый адрес /docs/…
+   ниже отвечает страницей из src/content/docs — ни одна ссылка не ведёт в никуда. */
 const FOOTER_COLUMNS: ReadonlyArray<{ title: string; links: ReadonlyArray<FooterLinkItem> }> = [
   {
     title: 'Продукт',
@@ -46,16 +46,16 @@ const FOOTER_COLUMNS: ReadonlyArray<{ title: string; links: ReadonlyArray<Footer
   {
     title: 'Разработчикам',
     links: [
-      { label: 'Быстрый старт', href: '/#how' },
-      /* Был пункт «Документация» → /tree/main/docs. Справочника там нет: в docs/
-         лежат ровно два файла — заметка о нашем деплое и разбор локальных
-         приложений Bitrix24. Первый про внутреннюю кухню, второй — настоящая
-         документация продукта, на неё и ведём, назвав пункт её же заголовком. */
-      { label: 'Локальные приложения Bitrix24', href: `${GITHUB}/blob/main/docs/bitrix24-local-apps.md`, external: true },
+      /* Пункт вёл в /tree/main/docs, где справочника не было. Теперь раздел
+         документации есть на самом сайте — /docs, — и три пункта ниже ведут
+         в его страницы, а не в markdown на GitHub. */
+      { label: 'Документация', href: '/docs' },
+      { label: 'Быстрый старт', href: '/docs/nachalo/bystryj-start' },
+      { label: 'Локальные приложения Bitrix24', href: '/docs/bitrix24/lokalnye-prilozheniya' },
+      /* Пункт макета «CLI и агент»: пакет apistend — это и есть CLI с командой
+         listen, но описан он теперь у нас, а не только в карточке npm. */
+      { label: 'CLI apistend', href: '/docs/sobytiya/cli' },
       { label: 'Примеры интеграций', href: `${GITHUB}/tree/main/examples`, external: true },
-      /* Пункт макета «CLI и агент» ведёт в npm: отдельной страницы про CLI нет,
-         а пакет apistend — это и есть CLI с командой listen. */
-      { label: 'CLI apistend', href: NPM, external: true },
     ],
   },
   {

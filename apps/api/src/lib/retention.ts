@@ -49,12 +49,30 @@ export async function purgeOldLogs(): Promise<number> {
   return deleted
 }
 
+/**
+ * Просроченные сессии кабинета.
+ *
+ * Строка auth_sessions живёт две недели и после этого бесполезна: readSession
+ * сверяет срок и такую сессию не принимает, а список активных сессий её прячет.
+ * Но никто её не удалял, и таблица росла на каждый вход навсегда. Здесь их немного,
+ * поэтому без пачек: обычный DELETE по индексируемому полю.
+ */
+export async function purgeExpiredSessions(): Promise<number> {
+  const { count } = await prisma.authSession.deleteMany({
+    where: { expiresAt: { lt: new Date() } },
+  })
+  return count
+}
+
 export function startRetentionJob(log: (msg: string) => void): void {
   if (timer) return
   const run = () => {
     void purgeOldLogs()
       .then((n) => { if (n > 0) log(`ретеншен: удалено ${n} записей журнала старше ${RETENTION_DAYS} дней`) })
       .catch((e) => log(`ретеншен: ошибка — ${String(e)}`))
+    void purgeExpiredSessions()
+      .then((n) => { if (n > 0) log(`ретеншен: удалено ${n} просроченных сессий кабинета`) })
+      .catch((e) => log(`ретеншен сессий: ошибка — ${String(e)}`))
   }
   // Первый прогон с задержкой: старт приложения не должен упираться в уборку.
   setTimeout(run, 30_000).unref()

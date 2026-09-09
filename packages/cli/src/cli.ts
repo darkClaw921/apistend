@@ -87,6 +87,23 @@ cli
         'Ключ создаётся в разделе «Ключи и токены» веб-интерфейса')
       process.exit(1)
     }
+    /*
+     * Вид ключа проверяется здесь, а не «когда-нибудь потом».
+     *
+     * Статус песочницы отдаётся и по ключу песочницы, поэтому login с stend_sbx_
+     * проходил успешно и сохранял в конфигурацию ключ, которым туннель работать
+     * не может: отказ приходил на первой же следующей команде и выглядел так,
+     * будто сломался listen, а не вход.
+     */
+    if (!key.startsWith('stend_sk_')) {
+      out.error(
+        'Это не серверный ключ',
+        'Туннелю нужен ключ вида stend_sk_… — ключ песочницы (stend_sbx_…) им ходит код интеграции. ' +
+          'Серверный ключ создаётся в разделе «Ключи и токены» или запросом POST /api/v1/keys с kind: "server"',
+      )
+      process.exit(1)
+    }
+
     try {
       const status = await apiClient.status(key, flags.apiBase)
       writeConfig({ ...readConfig(), apiKey: key, apiBase: resolveApiBase(flags.apiBase), sandbox: status.sandbox })

@@ -7,7 +7,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, LibraryBig, Boxes, Terminal, ScrollText, Webhook, GitBranch,
   Database, AppWindow, KeyRound, Users, Settings, PlugZap, ChevronDown, ChevronUp,
-  Check, LogOut, Search, Rocket, Zap, ArrowRight, LifeBuoy,
+  Check, LogOut, Search, Rocket, Zap, ArrowRight, LifeBuoy, BookOpen,
   ChevronsLeft, ChevronsRight, User, type LucideIcon,
 } from 'lucide-react'
 import { DropdownPanel, KbdChip, NavBadge, NavItem, NavSection, cn, formatInt, plural } from '@apistend/ui'
@@ -417,6 +417,18 @@ export function Sidebar({
               )}
             </Link>
             <span className={cn('ml-auto flex shrink-0 items-center gap-[4px]', rail && 'ml-0')}>
+              {/* Документация. Стоит первой в этом ряду: за ответом сюда идут
+                  чаще, чем в трекер, а раскладку ряд держит ту же — иконка
+                  26×26, как у справки и сворачивания, поэтому и в узкой полосе
+                  ничего не разъезжается. */}
+              <Link
+                href="/docs"
+                aria-label="Документация"
+                title="Документация"
+                className="flex h-[26px] w-[26px] items-center justify-center rounded-[5px] bg-night-2 text-nav-text transition-colors hover:text-nav-text-active"
+              >
+                <BookOpen size={13} aria-hidden />
+              </Link>
               <a
                 href={GITHUB_ISSUES}
                 target="_blank"

@@ -5,6 +5,7 @@ import { prisma } from '../db.ts'
 import { generateKey, maskOf } from '../lib/keys.ts'
 import { invalidateKeyCache } from '../lib/api-key.ts'
 import { requireSandbox } from '../lib/guard.ts'
+import { scopeSchema } from '../lib/mgmt.ts'
 import { env } from '../env.ts'
 
 /** Экран «Ключи и токены». Лимитов на количество ключей и запросов у продукта нет. */
@@ -15,6 +16,12 @@ const createBody = z.object({
   kind: z.enum(['sandbox', 'server']).default('sandbox'),
   services: z.array(z.enum(SERVICE_CODES)).min(1, 'Выберите хотя бы один сервис'),
   rotationDays: z.number().int().min(1).max(365).default(90),
+  /**
+   * Области доступа к Management API. Пустой список — полный доступ, и это
+   * поведение по умолчанию: ключ, выданный до появления областей, и ключ,
+   * выданный кабинетом без выбора, работают одинаково.
+   */
+  scopes: z.array(scopeSchema).default([]),
 })
 
 export function registerKeyRoutes(app: FastifyInstance): void {
@@ -44,6 +51,8 @@ export function registerKeyRoutes(app: FastifyInstance): void {
         // Просто число: лимитов нет, прогресс-бара в этой колонке быть не должно.
         requestsPerDay: k.requestsPerDay,
         rotationDays: k.rotationDays,
+        // Пустой список означает полный доступ к Management API — так его и показываем.
+        scopes: k.scopes,
       })),
       summary: {
         total: keys.length,
@@ -107,6 +116,7 @@ export function registerKeyRoutes(app: FastifyInstance): void {
         keyHash: generated.hash,
         services: parsed.data.services,
         rotationDays: parsed.data.rotationDays,
+        scopes: parsed.data.scopes,
       },
     })
 
@@ -172,6 +182,11 @@ export function registerKeyRoutes(app: FastifyInstance): void {
           keyHash: generated.hash,
           services: key.services,
           rotationDays: key.rotationDays,
+          // Области доступа переносятся вместе с ключом. Без этой строки ключ,
+          // выпущенный с ограниченными правами, после нажатия «Прокрутить»
+          // получал пустой список — а пустой список означает полный доступ
+          // к Management API. Ротация не имеет права повышать права.
+          scopes: key.scopes,
         },
       }),
     ])
