@@ -19,7 +19,13 @@ import { LruCache } from '@apistend/mock-engine'
  */
 
 export interface RecordedRun {
+  /** Запуск в форме, объявленной в outputSchema инструмента call-actor. */
   readonly run: Record<string, unknown>
+  /**
+   * Тот же запуск в форме RunShort из OpenAPI Apify — так его отдаёт список
+   * запусков, и только там есть фактическая стоимость `usageTotalUsd`.
+   */
+  readonly short: Record<string, unknown>
   readonly datasetId: string
   readonly items: readonly Record<string, unknown>[]
 }
@@ -30,12 +36,33 @@ export interface RecordedRun {
  * Отладочный цикл агента — это десятки запусков за сессию, а элементы одного
  * запуска ограничены сверху самим образцом (не больше пятидесяти строк).
  */
-const runs = new LruCache<RecordedRun>(1_000)
-const datasets = new LruCache<RecordedRun>(1_000)
+const MAX_RUNS = 1_000
+const runs = new LruCache<RecordedRun>(MAX_RUNS)
+const datasets = new LruCache<RecordedRun>(MAX_RUNS)
+
+/**
+ * Порядок запусков — для списка.
+ *
+ * LRU перестраивается при каждом ЧТЕНИИ, а список запусков должен идти в
+ * порядке их начала: агент, читающий последний запуск, иначе получал бы тот,
+ * который сам же перед этим и посмотрел.
+ */
+let ordered: RecordedRun[] = []
 
 export function recordRun(entry: RecordedRun): void {
-  runs.set(String(entry.run.runId), entry)
+  const runId = String(entry.run.runId)
+  runs.set(runId, entry)
   datasets.set(entry.datasetId, entry)
+  // Повторный запуск с тем же входом даёт тот же идентификатор: в списке он
+  // должен остаться одной строкой, а не размножиться по числу вызовов.
+  ordered = ordered.filter((x) => String(x.run.runId) !== runId)
+  ordered.push(entry)
+  if (ordered.length > MAX_RUNS) ordered = ordered.slice(-MAX_RUNS)
+}
+
+/** Запуски песочницы в порядке их начала — от раннего к позднему. */
+export function recordedRuns(): readonly RecordedRun[] {
+  return ordered
 }
 
 export function runById(runId: string): RecordedRun | undefined {
