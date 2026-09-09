@@ -7,13 +7,15 @@ import { usePathname, useRouter } from 'next/navigation'
 import {
   LayoutDashboard, LibraryBig, Boxes, Terminal, ScrollText, Webhook, GitBranch,
   Database, AppWindow, KeyRound, Users, Settings, PlugZap, ChevronDown, ChevronUp,
-  Check, LogOut, Search, Rocket, Zap, ArrowRight, LifeBuoy, BookOpen,
+  Check, LogOut, Search, Rocket, Zap, ArrowRight, LifeBuoy, BookOpen, Plus,
   ChevronsLeft, ChevronsRight, User, type LucideIcon,
 } from 'lucide-react'
 import { DropdownPanel, KbdChip, NavBadge, NavItem, NavSection, cn, formatInt, plural } from '@apistend/ui'
 import { api } from '@/lib/api'
 import type { Me } from '@/lib/types'
 import { NotificationsBell } from './NotificationsBell'
+import { CreateSandboxDialog } from './CreateSandboxDialog'
+import { useOptionalShell } from './AppShell'
 
 /**
  * Сайдбар. Макет «Screen Template v2» в APIStend.pen (переработан).
@@ -95,6 +97,9 @@ export function Sidebar({
    * они открывались вдвоём и накладывались.
    */
   const [menu, setMenu] = useState<'account' | 'alerts' | null>(null)
+  const [creatingSandbox, setCreatingSandbox] = useState(false)
+  // Необязательный: сайдбар рисуется и в каркасе каталога, открытом гостям.
+  const shell = useOptionalShell()
   const accountOpen = menu === 'account'
   const [leaving, setLeaving] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
@@ -151,7 +156,9 @@ export function Sidebar({
     router.refresh()
   }
 
-  const sandbox = me.sandboxes[0]
+  // Подпись под именем пользователя — проект ВЫБРАННОЙ песочницы: после
+  // переключения там должна стоять она, а не первая по счёту.
+  const sandbox = me.sandboxes.find((s) => s.id === shell?.sandboxId) ?? me.sandboxes[0]
   const steps = me.onboarding
   const doneSteps = steps.filter((s) => s.done).length
   const nextStep = steps.find((s) => !s.done)
@@ -243,22 +250,47 @@ export function Sidebar({
                 <p className="border-b border-border px-[14px] py-[10px] text-[12px] break-all text-text-secondary">
                   {me.user.login}
                 </p>
-                <ul className="flex flex-col border-b border-border py-[6px]">
-                  {me.sandboxes.map((s) => (
-                    <li key={s.id} className="flex items-center gap-[8px] px-[14px] py-[8px]">
-                      <Check size={13} className="shrink-0 text-accent" aria-hidden />
-                      <span className="flex min-w-0 flex-col">
-                        <span className="truncate font-mono text-[12px] text-text-primary">{s.name}</span>
-                        <span className="truncate text-[11px] text-text-tertiary">{s.project}</span>
-                      </span>
-                    </li>
-                  ))}
+                <ul className="flex max-h-[220px] flex-col overflow-y-auto scrollbar-thin border-b border-border py-[6px]">
+                  {me.sandboxes.map((s) => {
+                    const current = s.id === shell?.sandboxId
+                    return (
+                      <li key={s.id}>
+                        <button
+                          type="button"
+                          // Галочка стоит только у текущей: раньше она была
+                          // у каждой строки и означала «песочница существует»,
+                          // а читалась как «выбрана».
+                          onClick={() => { if (!current) shell?.switchSandbox(s.id) }}
+                          aria-current={current}
+                          className={cn(
+                            'flex w-full items-center gap-[8px] px-[14px] py-[8px] text-left',
+                            current ? 'cursor-default' : 'hover:bg-bg',
+                          )}
+                        >
+                          <Check
+                            size={13}
+                            className={cn('shrink-0', current ? 'text-accent' : 'text-transparent')}
+                            aria-hidden
+                          />
+                          <span className="flex min-w-0 flex-col">
+                            <span className="truncate font-mono text-[12px] text-text-primary">{s.name}</span>
+                            <span className="truncate text-[11px] text-text-tertiary">{s.project}</span>
+                          </span>
+                        </button>
+                      </li>
+                    )
+                  })}
                 </ul>
-                {/* Вторая песочница пока не заводится — так и говорим, вместо
-                    пункта «Создать», который ничего не создаёт. */}
+                <button
+                  type="button"
+                  onClick={() => { setMenu(null); setCreatingSandbox(true) }}
+                  className="flex w-full items-center gap-[8px] border-b border-border px-[14px] py-[10px] text-left text-[13px] text-text-primary hover:bg-bg"
+                >
+                  <Plus size={14} className="shrink-0 text-text-secondary" aria-hidden />
+                  Новая песочница
+                </button>
                 <p className="border-b border-border px-[14px] py-[10px] text-[11px] leading-[1.45] text-text-tertiary">
-                  Вторая песочница пока не заводится. Объём данных, задержку и долю ошибок
-                  настраивают на экране{' '}
+                  Объём данных, задержку и долю ошибок настраивают на экране{' '}
                   <Link href="/keys" onClick={() => setMenu(null)} className="font-semibold text-accent">
                     «Ключи и токены»
                   </Link>
@@ -454,6 +486,15 @@ export function Sidebar({
           </div>
         </div>
       </aside>
+
+      {creatingSandbox ? (
+        <CreateSandboxDialog
+          onClose={() => setCreatingSandbox(false)}
+          // Переключаемся сразу: заводят вторую песочницу, чтобы в ней работать,
+          // а не чтобы посмотреть на неё в списке.
+          onCreated={(id) => shell?.switchSandbox(id)}
+        />
+      ) : null}
     </>
   )
 }

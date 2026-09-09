@@ -48,7 +48,9 @@ export default function KeysPage() {
   const [resetPending, setResetPending] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
 
-  const sandbox = shell.me.sandboxes[0]
+  // Именно ВЫБРАННАЯ песочница, а не первая: настройки задержки и доли ошибок
+  // применяются к той, в которой человек сейчас работает.
+  const sandbox = shell.me.sandboxes.find((s) => s.id === shell.sandboxId) ?? shell.me.sandboxes[0]
   const [latency, setLatency] = useState(sandbox?.latencyMs ?? 250)
   const [errorRate, setErrorRate] = useState(sandbox?.errorRate ?? 5)
   const [behaviourSaved, setBehaviourSaved] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')

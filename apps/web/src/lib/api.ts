@@ -18,6 +18,30 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080
  */
 export const SERVER_API_URL = process.env.APISTEND_INTERNAL_API_URL ?? API_URL
 
+/**
+ * Выбранная песочница.
+ *
+ * Живёт здесь, а не прокидывается в каждый вызов, по числу этих вызовов: экранов
+ * одиннадцать, запросов в них — десятки, и забытый в одном месте `?sandboxId=`
+ * означал бы, что этот экран молча показывает данные ЧУЖОЙ песочницы. Параметр
+ * добавляется один раз, в общем месте, и добавляется всем.
+ *
+ * Эндпоинтам, которым песочница не нужна (вход, каталог, сводка сервисов),
+ * лишний параметр не мешает: они его не читают.
+ */
+let activeSandboxId = ''
+
+export function setActiveSandbox(id: string): void {
+  activeSandboxId = id
+}
+
+/** Дописывает выбранную песочницу, не трогая уже указанную явно. */
+function withSandbox(path: string): string {
+  if (!activeSandboxId) return path
+  if (path.includes('sandboxId=')) return path
+  return `${path}${path.includes('?') ? '&' : '?'}sandboxId=${encodeURIComponent(activeSandboxId)}`
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
@@ -35,7 +59,7 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
-    response = await fetch(`${API_URL}${path}`, {
+    response = await fetch(`${API_URL}${withSandbox(path)}`, {
       ...init,
       credentials: 'include',
       headers: {

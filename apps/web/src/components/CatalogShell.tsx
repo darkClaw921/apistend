@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useState, type ReactNode } from 'react'
-import { api, ApiError } from '@/lib/api'
+import { api, ApiError, setActiveSandbox } from '@/lib/api'
 import type { Me } from '@/lib/types'
 import { Sidebar } from './Sidebar'
-import { ShellContext, useSearchPalette } from './AppShell'
+import { ShellContext, useSandboxSelection, useSearchPalette } from './AppShell'
 import { LandingNav } from './landing/LandingNav'
 
 /**
@@ -22,6 +22,7 @@ export function CatalogShell({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
   const [ready, setReady] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const { storedSandboxId, switchSandbox } = useSandboxSelection()
   const { openSearch, searchDialog } = useSearchPalette()
 
   async function loadMe() {
@@ -62,12 +63,25 @@ export function CatalogShell({ children }: { children: ReactNode }) {
     )
   }
 
-  const sandboxId = me.sandboxes[0]?.id ?? ''
-  const project = me.sandboxes[0]?.project ?? 'Без названия'
+  // Тот же выбор песочницы, что и в кабинете: каталог открыт и гостям, но
+  // вошедший должен видеть здесь ту же песочницу, в которой работает рядом.
+  const known = me.sandboxes.find((s) => s.id === storedSandboxId)
+  const active = known ?? me.sandboxes[0]
+  const sandboxId = active?.id ?? ''
+  const project = active?.project ?? 'Без названия'
+  setActiveSandbox(sandboxId)
 
   return (
     <ShellContext.Provider
-      value={{ me, sandboxId, project, refresh: loadMe, openMenu: () => setMenuOpen(true), openSearch }}
+      value={{
+        me,
+        sandboxId,
+        project,
+        refresh: loadMe,
+        switchSandbox,
+        openMenu: () => setMenuOpen(true),
+        openSearch,
+      }}
     >
       <div className="flex h-screen overflow-hidden bg-bg">
         <Sidebar

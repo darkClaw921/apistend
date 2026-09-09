@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { Dialog } from '@apistend/ui'
-import { api, ApiError } from '@/lib/api'
+import { api, ApiError, setActiveSandbox } from '@/lib/api'
 import type { Me } from '@/lib/types'
 import { Sidebar } from './Sidebar'
 import { GlobalSearch } from './GlobalSearch'
@@ -21,6 +21,13 @@ interface ShellState {
   /** Название проекта пользователя — то, что стоит в хлебных крошках. */
   project: string
   refresh: () => Promise<void>
+  /**
+   * Переключить активную песочницу.
+   *
+   * Выбор запоминается в браузере: перезагрузка страницы не должна возвращать
+   * человека в первую песочницу, если он работает во второй.
+   */
+  switchSandbox: (id: string) => void
   /**
    * Открыть сайдбар-шторку на узком экране. Живёт в контексте, а не в пропсах
    * каждого экрана: шапку рисуют одиннадцать страниц, и протаскивать через все
@@ -40,6 +47,48 @@ interface ShellState {
  * использовать AppShell целиком, но обязан дать вошедшему тот же контекст.
  */
 export const ShellContext = createContext<ShellState | null>(null)
+
+/** Ключ в localStorage: выбранная песочница. */
+const SANDBOX_KEY = 'apistend.sandboxId'
+
+/**
+ * Выбор активной песочницы. Общий для кабинета и каталога.
+ *
+ * Хранится в браузере: перезагрузка страницы не должна возвращать человека
+ * в первую песочницу, если он работает во второй.
+ */
+export function useSandboxSelection(): {
+  storedSandboxId: string
+  switchSandbox: (id: string) => void
+} {
+  // Читается при монтировании, а не при отрисовке: на сервере localStorage нет,
+  // и обращение к нему прямо в теле компонента уронило бы серверную отрисовку.
+  const [storedSandboxId, setStoredSandboxId] = useState('')
+
+  useEffect(() => {
+    try {
+      setStoredSandboxId(localStorage.getItem(SANDBOX_KEY) ?? '')
+    } catch {
+      // Хранилище недоступно (приватный режим, запрет) — работаем с первой песочницей.
+    }
+  }, [])
+
+  function switchSandbox(id: string) {
+    setStoredSandboxId(id)
+    setActiveSandbox(id)
+    try {
+      localStorage.setItem(SANDBOX_KEY, id)
+    } catch {
+      // Не сохранилось — выбор всё равно действует до перезагрузки.
+    }
+    // Данные всех экранов принадлежат песочнице, и показывать чужие, пока
+    // страница не перезагружена, нельзя. Полная перезагрузка проще и надёжнее,
+    // чем просить одиннадцать экранов перечитать себя.
+    window.location.reload()
+  }
+
+  return { storedSandboxId, switchSandbox }
+}
 
 export function useShell(): ShellState {
   const ctx = useContext(ShellContext)
@@ -103,6 +152,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const { storedSandboxId, switchSandbox } = useSandboxSelection()
   const { openSearch, searchDialog } = useSearchPalette()
 
   async function load() {
@@ -150,12 +200,25 @@ export function AppShell({ children }: { children: ReactNode }) {
     )
   }
 
-  const sandboxId = me.sandboxes[0]?.id ?? ''
-  const project = me.sandboxes[0]?.project ?? 'Без названия'
+  // Сохранённый выбор действителен, только пока такая песочница существует:
+  // удалённая или чужая молча уводила бы все экраны в 404.
+  const known = me.sandboxes.find((s) => s.id === storedSandboxId)
+  const active = known ?? me.sandboxes[0]
+  const sandboxId = active?.id ?? ''
+  const project = active?.project ?? 'Без названия'
+  setActiveSandbox(sandboxId)
 
   return (
     <ShellContext.Provider
-      value={{ me, sandboxId, project, refresh: load, openMenu: () => setMenuOpen(true), openSearch }}
+      value={{
+        me,
+        sandboxId,
+        project,
+        refresh: load,
+        switchSandbox,
+        openMenu: () => setMenuOpen(true),
+        openSearch,
+      }}
     >
       <div className="flex h-screen overflow-hidden bg-bg">
         <Sidebar
