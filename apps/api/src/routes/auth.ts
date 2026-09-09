@@ -98,7 +98,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         prefix: key.prefix,
         suffix: key.suffix,
         keyHash: key.hash,
-        services: ['bitrix24', 'ozon', 'wildberries'],
+        services: ['bitrix24', 'ozon', 'wildberries', 'apify'],
       },
     })
 

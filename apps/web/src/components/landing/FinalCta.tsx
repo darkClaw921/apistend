@@ -19,13 +19,13 @@ export function FinalCta() {
       </h2>
       {/* «За пять секунд» и «сегодня же» из макета убраны: время подъёма песочницы
           мы не замеряли, и замерять там нечего — регистрация одним запросом заводит
-          и песочницу, и ключ (apps/api/src/routes/auth.ts), причём сразу на все три
-          сервиса (services: ['bitrix24', 'ozon', 'wildberries']), а полный ключ
+          и песочницу, и ключ (apps/api/src/routes/auth.ts), причём сразу на все
+          сервисы стенда (services в apps/api/src/routes/auth.ts), а полный ключ
           возвращается в том же ответе. Это и говорим вместо срока — и другими
           словами, чем первый шаг секции «Как это работает». */}
       <p className="mx-auto mt-[24px] max-w-[640px] text-[16px] leading-[27px] text-nav-text md:text-[17px]">
-        Ключ сразу на все три сервиса выдаётся при регистрации. Им же уходит первый
-        запрос к Bitrix24, Ozon или Wildberries.
+        Ключ сразу на все сервисы выдаётся при регистрации. Им же уходит первый
+        запрос к Bitrix24, Ozon, Wildberries или Apify.
       </p>
 
       <div className="mt-[24px] flex flex-wrap justify-center gap-[12px]">

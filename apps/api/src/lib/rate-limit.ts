@@ -1,5 +1,5 @@
 import type { ServiceCode } from '@apistend/shared'
-import { SERVICE_PROFILES } from '@apistend/shared'
+import { rateLimitClassFor } from '@apistend/shared'
 
 /**
  * Лимиты боевых API — эмуляция, а не защита APIStend.
@@ -14,12 +14,20 @@ import { SERVICE_PROFILES } from '@apistend/shared'
  *
  * Важно: у Bitrix24 при превышении — 503 QUERY_LIMIT_EXCEEDED, а не 429.
  * Код берётся из профиля сервиса, а не зашивается здесь.
+ *
+ * Лимит не всегда свойство сервиса целиком: у Apify он зависит от эндпоинта
+ * (60 в секунду по умолчанию, 200 на записи key-value store, 400 на запуски
+ * и датасеты). Поэтому ведро заводится на (субъект, сервис, класс пути),
+ * а класс выбирает профиль — здесь про конкретные пути ничего не знают.
  */
 
 interface Bucket {
   /** Сколько запросов ещё пропустим прямо сейчас. Дробное: ведро пополняется плавно. */
   tokens: number
   filledAt: number
+  /** Параметры класса, которому принадлежит ведро: нужны уборщику. */
+  perMs: number
+  burst: number
 }
 
 const buckets = new Map<string, Bucket>()
@@ -39,20 +47,31 @@ export interface RateVerdict {
   retryInSeconds: number
 }
 
-export function checkRateLimit(apiKeyId: string, service: ServiceCode, now = Date.now()): RateVerdict {
-  const { limit, windowMs, burst } = SERVICE_PROFILES[service].rateLimit
-  const key = `${apiKeyId}:${service}`
+export function checkRateLimit(
+  apiKeyId: string,
+  service: ServiceCode,
+  now = Date.now(),
+  path = '',
+): RateVerdict {
+  const cls = rateLimitClassFor(service, path)
+  const { limit, windowMs, burst } = cls
+  // Имя класса пустое у сервисов с единым лимитом — ключ ведра тогда прежний.
+  const key = cls.name ? `${apiKeyId}:${service}:${cls.name}` : `${apiKeyId}:${service}`
   const perMs = limit / windowMs
 
   if (now - lastSweep > 60_000) {
     // Ведро, наполнившееся до краёв, неотличимо от отсутствующего — удаляем.
+    // Порог считаем по параметрам ТОГО класса, которому ведро принадлежит:
+    // общая скорость текущего вызова стёрла бы чужие вёдра раньше срока
+    // (у Apify самый быстрый класс наполняется в шесть раз быстрее базового).
     for (const [k, b] of buckets) {
-      if (b.tokens + (now - b.filledAt) * perMs >= burst) buckets.delete(k)
+      const own = b.burst
+      if (b.tokens + (now - b.filledAt) * b.perMs >= own) buckets.delete(k)
     }
     lastSweep = now
   }
 
-  const bucket = buckets.get(key) ?? { tokens: burst, filledAt: now }
+  const bucket = buckets.get(key) ?? { tokens: burst, filledAt: now, perMs, burst }
   bucket.tokens = Math.min(burst, bucket.tokens + (now - bucket.filledAt) * perMs)
   bucket.filledAt = now
 

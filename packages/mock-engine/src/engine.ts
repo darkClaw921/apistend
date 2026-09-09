@@ -281,5 +281,9 @@ function genericBody(service: ServiceCode, method: CatalogMethod): unknown {
   if (method.successStatus === 204) return null
   if (service === 'ozon') return { result: {} }
   if (service === 'bitrix24') return { result: [], total: 0 }
+  // Apify заворачивает КАЖДЫЙ ответ в конверт data — и одиночный объект, и список.
+  // Клиент, читающий response.data, на голом {} получил бы undefined и упал бы
+  // не там, где ошибся, а на следующем обращении к полю.
+  if (service === 'apify') return { data: {} }
   return {}
 }

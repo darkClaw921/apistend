@@ -121,14 +121,14 @@ function LogRows() {
   )
 }
 
-/** Колонка «Подключай»: три сервиса, стрелка и адрес приложения на машине разработчика. */
+/** Колонка «Подключай»: сервисы стенда, стрелка и адрес приложения на машине разработчика. */
 function WebhookChain() {
   return (
     <div className="flex min-h-[168px] w-full flex-col items-center justify-center gap-[8px] rounded-[10px] border border-night-line bg-code-surface p-[16px]">
       <div className="flex items-start justify-center gap-[8px]">
         {SERVICE_LIST.map((service) => (
           /* Цвет марки — только на квадрате и только переменной токена, как в ServiceSquare;
-             сам примитив рисует одну букву, а в макете короткий код B24 / OZ / WB. */
+             сам примитив рисует одну букву, а в макете короткий код B24 / OZ / WB / APF. */
           <span
             key={service.code}
             aria-hidden

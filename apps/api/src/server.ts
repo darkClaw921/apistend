@@ -7,6 +7,8 @@ import { SERVICE_LIST, allGatewayResponseHeaders } from '@apistend/shared'
 import { env } from './env.ts'
 import { prisma } from './db.ts'
 import { engine, registerGateway } from './gateway.ts'
+import { registerMcp } from './mcp/routes.ts'
+import { MCP_EXPOSED_HEADERS } from './mcp/transport.ts'
 import { registerAuthRoutes } from './routes/auth.ts'
 import { registerCatalogRoutes } from './routes/catalog.ts'
 import { registerKeyRoutes } from './routes/keys.ts'
@@ -61,6 +63,10 @@ const GATEWAY_PREFIXES = [
   '/rest/',
   '/custom/',
   '/oauth/',
+  // Оба MCP-сервера: мок mcp.apify.com и собственный сервер APIStend.
+  // Им нужен тот же открытый CORS, что и шлюзу: клиентом MCP всё чаще
+  // оказывается браузерное расширение, а не локальный процесс.
+  '/mcp',
 ]
 
 function isGatewayPath(url: string): boolean {
@@ -94,7 +100,7 @@ export async function buildServer() {
           // страницы только перечисленные здесь заголовки, и забытый в списке
           // X-Ratelimit-Reset выглядел бы для клиентской библиотеки так же,
           // как отсутствующий, — то есть подмена адреса ломала бы рабочий код.
-          exposedHeaders: [...allGatewayResponseHeaders()],
+          exposedHeaders: [...allGatewayResponseHeaders(), ...MCP_EXPOSED_HEADERS],
           // Предполёт без заголовков предполёта — обычный OPTIONS, и отвечать
           // на него четырёхсотым нельзя: этим спрашивают, что умеет адрес.
           strictPreflight: false,
@@ -274,6 +280,10 @@ export async function buildServer() {
   // Служебная пара без авторизации: /api/v1/openapi.json и /api/v1/meta.
   // Документ собирается на каждый запрос, поэтому место вызова роли не играет.
   registerOpenApiRoute(app)
+
+  // MCP регистрируется ДО шлюза: /apify/mcp иначе попал бы под /apify/*
+  // и ушёл бы в движок моков как обычный REST-путь, которого в каталоге нет.
+  registerMcp(app)
 
   // Шлюз регистрируется последним: его маршруты самые широкие (/wb/*, /v1/:service/*)
   // и не должны перехватывать /api/*.

@@ -80,7 +80,7 @@ export default function LoginPage() {
         <AuthHeading
           kicker="// вход в песочницу"
           title="С возвращением"
-          subtitle="Демо-API Bitrix24, Ozon и Wildberries ждут ваши запросы."
+          subtitle="Демо-API Bitrix24, Ozon, Wildberries и Apify ждут ваши запросы."
         />
 
         <div className="mt-[12px] flex flex-col gap-[16px]">

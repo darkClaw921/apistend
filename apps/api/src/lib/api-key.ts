@@ -67,6 +67,12 @@ export function extractRawKey(
   const q = query.auth
   if (typeof q === 'string' && q.length > 0) return q
 
+  // Apify: параметр token= в адресе. Способ описан в его securitySchemes наравне
+  // с Bearer и используется там, где заголовок поставить негде, — например,
+  // в адресе, который Apify сам подставляет в вебхук.
+  const token = query.token
+  if (typeof token === 'string' && token.length > 0) return token
+
   // Bitrix24: секрет в пути входящего вебхука /rest/{user_id}/{code}/{method}.json
   const m = /^\/rest\/\d+\/([^/]+)\//.exec(path)
   if (m?.[1]) return m[1]

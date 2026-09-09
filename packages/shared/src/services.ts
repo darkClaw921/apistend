@@ -1,5 +1,5 @@
 /**
- * Профили трёх демо-сервисов.
+ * Профили демо-сервисов.
  *
  * Значения не выдуманы: сняты с официальной документации и живых ответов боевых API
  * (см. план проекта, раздел «Что изменило постановку задачи»). Профиль — единственное место,
@@ -7,7 +7,7 @@
  * событий. Резолвер моков и диспетчер вебхуков не знают про сервисы ничего, кроме профиля.
  */
 
-export const SERVICE_CODES = ['bitrix24', 'ozon', 'wildberries'] as const
+export const SERVICE_CODES = ['bitrix24', 'ozon', 'wildberries', 'apify'] as const
 export type ServiceCode = (typeof SERVICE_CODES)[number]
 
 export function isServiceCode(v: unknown): v is ServiceCode {
@@ -30,6 +30,33 @@ export type ResponseSource = (typeof RESPONSE_SOURCES)[number]
 export const EXTRACTION_KINDS = ['spec', 'mirror', 'parsed'] as const
 export type ExtractionKind = (typeof EXTRACTION_KINDS)[number]
 
+/**
+ * Класс лимита для части путей сервиса.
+ *
+ * Нужен там, где лимит — свойство не сервиса, а эндпоинта. У Apify это так:
+ * живые ответы отдают `x-ratelimit-limit: 60` на /v2/store и /v2/acts/…,
+ * но `90` на /v2/users/me, а документация называет ещё 200 для записей
+ * key-value store и 400 для запусков и датасетов. Один общий лимит на сервис
+ * означал бы, что клиент, читающий заголовок на датасете, увидит 60 вместо 400
+ * и построит свой троттлинг всемеро строже боевого.
+ */
+export interface RateLimitClass {
+  /** Короткое имя класса: идёт в ключ ведра и в документацию. */
+  readonly name: string
+  /**
+   * Пути, к которым относится класс, — регулярным выражением, а не префиксом.
+   *
+   * Префикса недостаточно: у Apify `/v2/acts/{id}` живёт с базовыми 60, а
+   * `/v2/acts/{id}/runs` — с четырьмястами. Разделяет их не начало пути, а хвост.
+   */
+  readonly pathPattern: RegExp
+  /** Ёмкость и скорость этого класса — те же единицы, что у профиля. */
+  readonly limit: number
+  readonly windowMs: number
+  readonly burst: number
+  readonly description: string
+}
+
 export interface RateLimitProfile {
   /** Сколько запросов в окне. */
   readonly limit: number
@@ -50,7 +77,23 @@ export interface RateLimitProfile {
   readonly retryAfterSeconds: number | null
   /** Человекочитаемое описание для карточки метода. */
   readonly description: string
+  /**
+   * Классы лимита по путям. Первый подошедший выигрывает, не подошёл ни один —
+   * работают limit/windowMs/burst самого профиля. Пусто у сервисов с единым лимитом.
+   */
+  readonly classes?: readonly RateLimitClass[]
 }
+
+/**
+ * Какие из заголовков лимита сервис отдаёт на самом деле.
+ *
+ * Раньше здесь стоял булев флаг — «отдаёт три заголовка или ни одного». Живые
+ * ответы Apify показали третий вариант: `x-ratelimit-limit` есть, а `-remaining`
+ * и `-reset` нет вовсе. Приписать недостающие два так же неверно, как приписать
+ * все три сервису, у которого их нет: клиент напишет откат по остатку, которого
+ * в бою не увидит.
+ */
+export type RateLimitHeaderPart = 'limit' | 'remaining' | 'reset'
 
 export interface WebhookProfile {
   readonly contentType: 'application/json' | 'application/x-www-form-urlencoded'
@@ -103,15 +146,34 @@ export interface NativeHeadersProfile {
    */
   readonly requestIdFormat: 'hex32' | 'hex16' | null
   /**
-   * Отдаёт ли сервис X-Ratelimit-* на КАЖДОМ ответе.
+   * Какие X-Ratelimit-* сервис отдаёт на КАЖДОМ ответе.
    *
-   * Документированы они только у Wildberries. У Битрикс24 остаток лимита живёт
-   * в теле, в конверте `time` (`operating`, `operating_reset_at`), а заголовков нет:
-   * шлюз, приписывающий их, учит клиента читать то, чего в бою не будет.
+   * Все три — только у Wildberries. У Apify живые ответы отдают один
+   * `x-ratelimit-limit`, без остатка и без сброса. У Битрикс24 остаток лимита
+   * живёт в теле, в конверте `time` (`operating`, `operating_reset_at`),
+   * а заголовков нет вовсе; у Ozon нет и того.
    */
-  readonly rateLimitHeaders: boolean
+  readonly rateLimitHeaders: readonly RateLimitHeaderPart[]
   /** Имя заголовка с паузой до повторной попытки при превышении лимита. */
   readonly retryHeader: string | null
+  /**
+   * Префикс заголовков пагинации, если сервис их отдаёт.
+   *
+   * У Apify списковые ответы дублируют поля конверта `data` в заголовки
+   * `x-apify-pagination-total|offset|count|limit|desc`, и они же перечислены
+   * в его `Access-Control-Expose-Headers` — то есть это часть контракта,
+   * а не украшение. Значения берутся из тела, которое мок и так отдаёт,
+   * поэтому расхождения между заголовком и телом возникнуть не может.
+   */
+  readonly paginationHeaderPrefix: string | null
+  /**
+   * Разрешает ли боевой сервис обращение из браузера.
+   *
+   * Ozon с 16.05.2025 запрещает, WB не отдаёт CORS вовсе, Битрикс24 отдаёт только
+   * порталу. Apify отвечает `access-control-allow-origin: *` — и для него пометка
+   * «CORS добавлен песочницей» была бы неправдой в другую сторону.
+   */
+  readonly nativeCors: boolean
 }
 
 export interface ServiceProfile {
@@ -182,8 +244,10 @@ export const SERVICE_PROFILES: Readonly<Record<ServiceCode, ServiceProfile>> = {
       // Заголовков лимита у Битрикс24 нет вовсе — про остаток ресурса клиент узнаёт
       // из полей time.operating и time.operating_reset_at, документация лимитов
       // прямо предписывает ориентироваться на них.
-      rateLimitHeaders: false,
+      rateLimitHeaders: [],
       retryHeader: null,
+      paginationHeaderPrefix: null,
+      nativeCors: false,
     },
     webhook: {
       contentType: 'application/x-www-form-urlencoded',
@@ -234,8 +298,11 @@ export const SERVICE_PROFILES: Readonly<Record<ServiceCode, ServiceProfile>> = {
       requestIdFormat: 'hex16',
       // Ozon документирует сам лимит (около 50 запросов в секунду), но не заголовки
       // с остатком, и в ответах их нет. Приписывать их — учить клиента читать пустоту.
-      rateLimitHeaders: false,
+      rateLimitHeaders: [],
       retryHeader: null,
+      paginationHeaderPrefix: null,
+      // Запросы из браузера Ozon запрещает с 16.05.2025.
+      nativeCors: false,
     },
     webhook: {
       contentType: 'application/json',
@@ -290,10 +357,12 @@ export const SERVICE_PROFILES: Readonly<Record<ServiceCode, ServiceProfile>> = {
       // заголовка X-Request-Id, а пример значения — 32 шестнадцатеричных знака.
       requestIdHeader: 'x-request-id',
       requestIdFormat: 'hex32',
-      // Единственный из трёх, кто документирует X-Ratelimit-Limit / -Remaining /
-      // -Reset и отдаёт их на каждом ответе.
-      rateLimitHeaders: true,
+      // Единственный, кто документирует все три — X-Ratelimit-Limit / -Remaining /
+      // -Reset — и отдаёт их на каждом ответе.
+      rateLimitHeaders: ['limit', 'remaining', 'reset'],
       retryHeader: 'x-ratelimit-retry',
+      paginationHeaderPrefix: null,
+      nativeCors: false,
     },
     webhook: {
       contentType: 'application/json',
@@ -321,9 +390,136 @@ export const SERVICE_PROFILES: Readonly<Record<ServiceCode, ServiceProfile>> = {
       description: 'Заголовок Authorization с токеном, без префикса Bearer',
     },
   },
+
+  apify: {
+    code: 'apify',
+    title: 'Apify API',
+    letter: 'A',
+    shortCode: 'APF',
+    apiVersion: 'API v2',
+    replacesUrl: 'api.apify.com',
+    mountPath: '/apify',
+    // #1672EB — токен --color-primary-action из собственной дизайн-системы Apify.
+    brandToken: 'brand-apify',
+    rateLimit: {
+      // Базовый лимит — 60 запросов в секунду на ресурс; ровно это число приходит
+      // в x-ratelimit-limit на /v2/store и на карточке актора. Глобальный потолок
+      // (250 000 запросов в минуту на пользователя) в моке не воспроизводим:
+      // до него не доберётся ни одна отладочная нагрузка, а ведро на него
+      // означало бы держать четверть миллиона токенов ради ненаступающего события.
+      limit: 60,
+      windowMs: 1_000,
+      burst: 60,
+      statusCode: 429,
+      // Паузу Apify не сообщает: заголовка Retry-After в ответах нет, а его
+      // собственные клиенты (apify-client для Python и JS) отступают по своей
+      // экспоненте — 500 мс, 1 с, 2 с, 4 с. Подсказывать паузу от имени сервиса,
+      // который её не даёт, значит научить читать несуществующий заголовок.
+      retryAfterSeconds: null,
+      description:
+        'До 60 запросов в секунду на ресурс; 200 для записей key-value store, ' +
+        '400 для запусков и датасетов. Отдаётся только X-RateLimit-Limit',
+      classes: [
+        {
+          name: 'runs-and-datasets',
+          // Документированные 400 в секунду. Карточка самого актора сюда НЕ входит:
+          // живой ответ на /v2/acts/{id} отдал x-ratelimit-limit: 60. Класс охватывает
+          // ресурсы запусков и датасетов, в том числе вложенные в актора и в задачу.
+          pathPattern: /^\/v2\/(actor-runs|datasets|actor-tasks\/[^/]+\/runs?|acts?\/[^/]+\/(runs?|builds)|actors\/[^/]+\/(runs?|builds))/,
+          limit: 400,
+          windowMs: 1_000,
+          burst: 400,
+          description: 'Запуски акторов, сборки и датасеты — 400 запросов в секунду',
+        },
+        {
+          name: 'key-value-store',
+          pathPattern: /^\/v2\/key-value-stores/,
+          limit: 200,
+          windowMs: 1_000,
+          burst: 200,
+          description: 'Чтение и запись записей key-value store — 200 запросов в секунду',
+        },
+        {
+          name: 'user',
+          // 90 — не из документации, а из живого ответа /v2/users/me.
+          pathPattern: /^\/v2\/users/,
+          limit: 90,
+          windowMs: 1_000,
+          burst: 90,
+          description: 'Профиль пользователя — 90 запросов в секунду',
+        },
+      ],
+    },
+    native: {
+      // Живой ответ: application/json; charset=utf-8 — с charset, как у Битрикс24.
+      contentType: 'application/json; charset=utf-8',
+      // Идентификатора запроса Apify не отдаёт: в живых ответах его нет ни под одним
+      // из принятых имён, и в спецификации он не описан.
+      requestIdHeader: null,
+      requestIdFormat: null,
+      // Только limit. Ни -remaining, ни -reset в живых ответах нет.
+      rateLimitHeaders: ['limit'],
+      retryHeader: null,
+      // Списковые ответы дублируют конверт data в x-apify-pagination-*, и сам Apify
+      // перечисляет эти пять заголовков в своём Access-Control-Expose-Headers.
+      paginationHeaderPrefix: 'x-apify-pagination-',
+      // access-control-allow-origin: * — Apify единственный из четырёх, кто разрешает
+      // вызовы из браузера. Пометка «CORS добавлен песочницей» здесь была бы неправдой.
+      nativeCors: true,
+    },
+    webhook: {
+      contentType: 'application/json',
+      // «webhook HTTP requests have a timeout of 2 minutes».
+      timeoutMs: 120_000,
+      // «First retry: after approximately 1 minute, second: 2 minutes, third: 4 minutes…
+      // eleventh retry: after approximately 32 hours». Чистая экспонента с основанием 2.
+      retryDelaysMs: [
+        60_000, 120_000, 240_000, 480_000, 960_000, 1_920_000,
+        3_840_000, 7_680_000, 15_360_000, 30_720_000, 61_440_000,
+      ],
+      successRule: 'status_2xx',
+      expectedResponseBody: null,
+      // Подписи нет: Apify предлагает вместо неё секрет в самом адресе вебхука.
+      signature: 'none',
+      signatureHeader: null,
+      maxBatchSize: 1,
+      suspendsAfterFailures: false,
+      notes:
+        'Тело — {userId, createdAt, eventType, eventData, resource}; resource повторяет ответ ' +
+        'соответствующего метода API на момент события. Заголовки X-Apify-Webhook, ' +
+        'X-Apify-Webhook-Dispatch-Id и X-Apify-Request-Origin система выставляет сама и ' +
+        'перезаписывает пользовательские. Доставка может повториться — обработчик обязан ' +
+        'быть идемпотентным.',
+    },
+    routing: 'method-and-path',
+    nativeAuth: {
+      kind: 'header',
+      headers: ['Authorization'],
+      description: 'Заголовок Authorization: Bearer <token> либо параметр token= в адресе',
+    },
+  },
 } as const
 
 export const SERVICE_LIST: readonly ServiceProfile[] = SERVICE_CODES.map((c) => SERVICE_PROFILES[c])
+
+/**
+ * Класс лимита для конкретного пути: ёмкость, скорость и имя ведра.
+ *
+ * Сервису без классов всегда возвращается его общий профиль — имя класса при этом
+ * пустое, и ключ ведра остаётся прежним, каким был до появления классов.
+ */
+export function rateLimitClassFor(
+  service: ServiceCode,
+  path: string,
+): { name: string; limit: number; windowMs: number; burst: number } {
+  const profile = SERVICE_PROFILES[service].rateLimit
+  for (const cls of profile.classes ?? []) {
+    if (cls.pathPattern.test(path)) {
+      return { name: cls.name, limit: cls.limit, windowMs: cls.windowMs, burst: cls.burst }
+    }
+  }
+  return { name: '', limit: profile.limit, windowMs: profile.windowMs, burst: profile.burst }
+}
 
 /** Разбирает путь вида /wb/api/v3/orders в код сервиса и остаток пути. */
 export function matchMountPath(pathname: string): { service: ServiceCode; rest: string } | null {

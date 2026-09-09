@@ -153,5 +153,5 @@ $ apistend trigger ONCRMDEALUPDATE --count 60 --rate 900
 
 :::next
 - [Журнал доставок](/docs/sobytiya/zhurnal-dostavok) — куда смотреть после серии
-- [Вебхуки](/docs/sobytiya/vebhuki) — таймауты и лестницы повторов трёх сервисов
+- [Вебхуки](/docs/sobytiya/vebhuki) — таймауты и лестницы повторов у каждого сервиса
 :::

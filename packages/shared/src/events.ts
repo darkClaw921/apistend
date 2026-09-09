@@ -1,15 +1,17 @@
 import type { ServiceCode } from './services.ts'
 
 /**
- * Каталог исходящих событий трёх сервисов.
+ * Каталог исходящих событий четырёх сервисов.
  *
- * Форматы сняты с официальной документации, а не придуманы. Три сервиса ведут себя
+ * Форматы сняты с официальной документации, а не придуманы. Сервисы ведут себя
  * принципиально по-разному, и мок обязан это воспроизводить — иначе продукт научит
  * разработчика неверному поведению:
  *
  *   Bitrix24 — form-urlencoded, в теле ТОЛЬКО идентификатор объекта, повторов нет;
  *   Ozon     — JSON, дискриминатор message_type, успех = 200 И тело {"result": true};
- *   WB       — JSON-конверт {sellerId, requestId, events[]}, подпись HMAC в X-Hub-Signature.
+ *   WB       — JSON-конверт {sellerId, requestId, events[]}, подпись HMAC в X-Hub-Signature;
+ *   Apify    — JSON {userId, createdAt, eventType, eventData, resource}, подписи нет,
+ *              одиннадцать повторов по удваивающейся лестнице от минуты до 32 часов.
  */
 
 export interface EventDefinition {
@@ -184,12 +186,103 @@ export const EVENTS: readonly EventDefinition[] = [
       idempotencyKey: `idm-${(9000 + n).toString(16)}`,
     }),
   },
+
+  // ─────────── Apify ───────────
+  // Событие несёт и eventData (идентификаторы), и resource — полный объект,
+  // «который вы получили бы от соответствующего метода API в момент события».
+  // Оба поля документация прямо называет избыточными по отношению друг к другу
+  // и оставленными ради обратной совместимости; мок обязан слать оба, иначе
+  // шаблон вида {{resource.status}} у пользователя развернётся в пустоту.
+  {
+    code: 'ACTOR.RUN.SUCCEEDED', title: 'Запуск актора завершён успешно', serviceCode: 'apify',
+    sample: (n, now) => apifyRunSample(n, now, 'SUCCEEDED'),
+  },
+  {
+    code: 'ACTOR.RUN.FAILED', title: 'Запуск актора завершился ошибкой', serviceCode: 'apify',
+    sample: (n, now) => apifyRunSample(n, now, 'FAILED'),
+  },
+  {
+    code: 'ACTOR.RUN.CREATED', title: 'Запуск актора создан', serviceCode: 'apify',
+    // У только что созданного запуска нет ни времени завершения, ни статистики.
+    sample: (n, now) => apifyRunSample(n, now, 'RUNNING'),
+  },
+  {
+    code: 'ACTOR.RUN.ABORTED', title: 'Запуск актора прерван', serviceCode: 'apify',
+    sample: (n, now) => apifyRunSample(n, now, 'ABORTED'),
+  },
+  {
+    code: 'ACTOR.RUN.TIMED_OUT', title: 'Запуск актора не уложился в срок', serviceCode: 'apify',
+    // Статус в теле пишется через дефис, а в коде события — через подчёркивание.
+    // Расхождение боевое, и воспроизводим мы именно его.
+    sample: (n, now) => apifyRunSample(n, now, 'TIMED-OUT'),
+  },
+  {
+    code: 'ACTOR.BUILD.SUCCEEDED', title: 'Сборка актора завершена успешно', serviceCode: 'apify',
+    sample: (n, now) => apifyBuildSample(n, now, 'SUCCEEDED'),
+  },
+  {
+    code: 'ACTOR.BUILD.FAILED', title: 'Сборка актора завершилась ошибкой', serviceCode: 'apify',
+    sample: (n, now) => apifyBuildSample(n, now, 'FAILED'),
+  },
 ]
+
+/** Идентификаторы Apify — 17 знаков в его собственном алфавите. */
+function apifyId(seed: number, salt: string): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  let h = 2_166_136_261
+  for (const ch of `${salt}:${seed}`) h = Math.imul(h ^ ch.charCodeAt(0), 16_777_619) >>> 0
+  let out = ''
+  for (let i = 0; i < 17; i++) {
+    h = Math.imul(h ^ (h >>> 13), 16_777_619) >>> 0
+    out += alphabet[h % alphabet.length]
+  }
+  return out
+}
+
+function apifyRunSample(n: number, now: Date, status: string): Record<string, unknown> {
+  const actorId = apifyId(n, 'act')
+  const runId = apifyId(n, 'run')
+  const startedAt = new Date(now.getTime() - 16_000)
+  const finished = status !== 'RUNNING'
+  return {
+    // eventData — то, что документация перечисляет для событий запуска.
+    eventData: { actorId, actorRunId: runId },
+    // resource — ответ метода «Get Actor run» на момент события.
+    resource: {
+      id: runId,
+      actId: actorId,
+      status,
+      startedAt: startedAt.toISOString(),
+      finishedAt: finished ? now.toISOString() : null,
+      defaultDatasetId: apifyId(n, 'dataset'),
+      defaultKeyValueStoreId: apifyId(n, 'kvs'),
+      defaultRequestQueueId: apifyId(n, 'rq'),
+      buildNumber: `0.1.${n % 20}`,
+    },
+  }
+}
+
+function apifyBuildSample(n: number, now: Date, status: string): Record<string, unknown> {
+  const actorId = apifyId(n, 'act')
+  const buildId = apifyId(n, 'build')
+  return {
+    eventData: { actorId, actorBuildId: buildId },
+    resource: {
+      id: buildId,
+      actId: actorId,
+      status,
+      startedAt: new Date(now.getTime() - 42_000).toISOString(),
+      finishedAt: now.toISOString(),
+      buildNumber: `0.1.${n % 20}`,
+    },
+  }
+}
 
 export const EVENTS_BY_SERVICE: Readonly<Record<ServiceCode, readonly EventDefinition[]>> = {
   bitrix24: EVENTS.filter((e) => e.serviceCode === 'bitrix24'),
   ozon: EVENTS.filter((e) => e.serviceCode === 'ozon'),
   wildberries: EVENTS.filter((e) => e.serviceCode === 'wildberries'),
+  apify: EVENTS.filter((e) => e.serviceCode === 'apify'),
 }
 
 export function findEvent(code: string): EventDefinition | undefined {
@@ -275,6 +368,25 @@ export function buildEventPayload(
     // Единого конверта нет: message_type лежит рядом с полезными полями.
     return {
       body: JSON.stringify({ message_type: event.code, ...data }),
+      contentType: 'application/json',
+    }
+  }
+
+  if (event.serviceCode === 'apify') {
+    // Конверт по умолчанию из документации: пять полей верхнего уровня.
+    // eventData и resource приходят из sample готовыми — они разной формы
+    // у запусков и у сборок, и собирать их здесь значило бы дублировать эту разницу.
+    const { eventData, resource } = data as { eventData: unknown; resource: unknown }
+    return {
+      body: JSON.stringify({
+        // userId владельца вебхука. В песочнице это идентификатор пользователя
+        // APIStend в алфавите Apify — своего аккаунта у нас там нет и быть не может.
+        userId: apifyId(options.sellerId, 'user'),
+        createdAt: options.now.toISOString(),
+        eventType: event.code,
+        eventData,
+        resource,
+      }),
       contentType: 'application/json',
     }
   }

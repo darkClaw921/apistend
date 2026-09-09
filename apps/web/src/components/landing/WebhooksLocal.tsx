@@ -229,7 +229,7 @@ export function WebhooksLocal({ eventTypes }: { eventTypes: number }) {
                   className="flex flex-wrap items-center gap-x-[10px] gap-y-[2px] font-mono text-[11px]"
                 >
                   <span className="tabular shrink-0 text-code-muted">{line.time}</span>
-                  {/* Метки сервиса в макете нет. Коды событий у трёх сервисов
+                  {/* Метки сервиса в макете нет. Коды событий у разных сервисов
                       непохожи, и без метки строка читается как каша. */}
                   {shortCode ? <span className="shrink-0 text-code-muted">{shortCode}</span> : null}
                   <span className="min-w-0 flex-1 truncate text-code-text">{line.eventCode}</span>

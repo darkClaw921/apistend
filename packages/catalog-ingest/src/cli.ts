@@ -13,6 +13,7 @@ import type { OpenApiDoc } from './openapi.ts'
 import { ingestWildberries } from './wildberries.ts'
 import { ingestOzon } from './ozon.ts'
 import { ingestBitrix24 } from './bitrix24.ts'
+import { ingestApify } from './apify.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '../../..')
@@ -34,6 +35,11 @@ const INGESTORS: Ingestor[] = [
     code: 'ozon',
     title: 'Ozon Seller API',
     run: () => ingestOzon(join(repoRoot, 'specs/ozon')),
+  },
+  {
+    code: 'apify',
+    title: 'Apify API v2',
+    run: () => ingestApify(join(repoRoot, 'specs/apify')),
   },
   {
     code: 'bitrix24',

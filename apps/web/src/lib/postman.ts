@@ -58,6 +58,9 @@ function authHeaders(service: string): PostmanHeader[] {
   if (service === 'wildberries') {
     return [{ key: 'Authorization', value: KEY_VAR, type: 'text' }]
   }
+  if (service === 'apify') {
+    return [{ key: 'Authorization', value: `Bearer ${KEY_VAR}`, type: 'text' }]
+  }
   return []
 }
 
