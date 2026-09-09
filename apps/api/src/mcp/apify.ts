@@ -7,7 +7,8 @@ import { engine } from '../gateway.ts'
 import { requestId } from '../lib/ids.ts'
 import { actorSnapshot, findActor, searchActors, type ActorSnapshotEntry } from './apify-actors.ts'
 import { actorOutputSource, sampleFromActorOutput, type ActorOutputSource } from './actor-output.ts'
-import { recordRun, runById, runByDatasetId } from './run-registry.ts'
+import { recordedRuns, recordRun, runById, runByDatasetId } from './run-registry.ts'
+import { runCost } from './run-cost.ts'
 
 /**
  * Мок MCP-сервера Apify.
@@ -60,6 +61,94 @@ function mockId(prefix: string, seed: string): string {
 }
 
 /**
+ * Инструменты боевого сервера, которых нет в снимке.
+ *
+ * Снимок `specs/apify/mcp-tools.json` — это набор, который mcp.apify.com отдал
+ * на дату снятия по умолчанию. `get-actor-run-list` в него не попал, а у боевого
+ * сервера он есть, и клиенты им пользуются: фактическую стоимость прогона
+ * (`usageTotalUsd`) отдаёт только список запусков, в карточке одного запуска
+ * этого поля нет.
+ *
+ * Имя, описание и схема входа взяты у боевого сервера дословно, как и всё
+ * остальное здесь. Схему выхода он для этого инструмента не объявляет, поэтому
+ * её здесь нет: придуманная нами, она стала бы законом для клиента — SDK
+ * валидирует ответ по объявленной схеме и отбросил бы законный ответ боевого
+ * сервера, если наша догадка разошлась бы с ним хоть в одном поле.
+ *
+ * При следующем снятии снимка с токеном инструмент придёт из него сам и это
+ * объявление можно будет убрать.
+ */
+const EXTRA_TOOLS: readonly McpTool[] = [
+  {
+    name: 'get-actor-run-list',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        offset: {
+          type: 'number',
+          default: 0,
+          description:
+            'Number of array elements that should be skipped at the start. The default value is 0.',
+        },
+        limit: {
+          type: 'number',
+          default: 10,
+          maximum: 10,
+          description:
+            'Maximum number of array elements to return. The default value (as well as the maximum) is 10.',
+        },
+        desc: {
+          type: 'boolean',
+          default: false,
+          description:
+            'If true or 1 then the runs are sorted by the startedAt field in descending order. ' +
+            'Default: sorted in ascending order.',
+        },
+        status: {
+          type: 'string',
+          enum: [
+            'READY', 'RUNNING', 'SUCCEEDED', 'FAILED',
+            'TIMING-OUT', 'TIMED-OUT', 'ABORTING', 'ABORTED',
+          ],
+          description: 'Return only runs with the provided status.',
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+    description:
+      'List Actor runs for the authenticated user with optional filtering and sorting.\n' +
+      'The results will include run details (including defaultDatasetId and defaultKeyValueStoreId) ' +
+      'and can be filtered by status.\n' +
+      'Valid statuses: READY (not allocated), RUNNING (executing), SUCCEEDED (finished), ' +
+      'FAILED (failed), TIMING-OUT, TIMED-OUT, ABORTING, ABORTED.\n\n' +
+      'USAGE:\n' +
+      '- Use when you need to browse or filter recent Actor runs.\n\n' +
+      'USAGE EXAMPLES:\n' +
+      '- user_input: List my last 10 runs (newest first)\n' +
+      '- user_input: Show only SUCCEEDED runs',
+  },
+]
+
+/**
+ * Сколько «длился» запуск песочницы.
+ *
+ * Запуска не было, но время нужно: из него считаются compute units, а из них —
+ * стоимость. Двенадцать секунд — правдоподобная длительность короткого прогона
+ * скрапера, и она постоянна, чтобы стоимость одного и того же вызова не плавала.
+ */
+const RUN_TIME_SECS = 12
+
+/** Потолок страницы списка запусков — как объявлено у боевого инструмента. */
+const RUN_LIST_LIMIT = 10
+
+/** Идентификатор «пользователя» песочницы: у боевых записей запуска он есть. */
+const SANDBOX_USER_ID = 'apistendSandbox0'
+
+/** Полный набор инструментов песочницы: снимок плюс то, чего в нём не оказалось. */
+const ALL_TOOLS: readonly McpTool[] = [...vendored.tools, ...EXTRA_TOOLS]
+
+/**
  * Инструменты, которым нужна живая сеть.
  *
  * Поиск по документации и загрузка страниц — не мок, а обращение наружу.
@@ -81,10 +170,10 @@ const NEEDS_LIVE_NETWORK = new Set([
  */
 function selectTools(req: FastifyRequest): readonly McpTool[] {
   const raw = (req.query as Record<string, unknown> | undefined)?.tools
-  if (typeof raw !== 'string' || raw.trim().length === 0) return vendored.tools
+  if (typeof raw !== 'string' || raw.trim().length === 0) return ALL_TOOLS
 
   const wanted = new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))
-  return vendored.tools.filter((t) => {
+  return ALL_TOOLS.filter((t) => {
     if (wanted.has(t.name)) return true
     // Категории документации Apify: actors, docs, runs, storage, tasks.
     if (wanted.has('actors') && /actor/.test(t.name)) return true
@@ -294,8 +383,11 @@ const SANDBOX_INSTRUCTIONS = [
   '',
   '## Runs and datasets',
   'A run made with `call-actor` is remembered: `get-dataset-items` for its',
-  '`datasetId` and `get-actor-run` for its `runId` return that same run. Ids not',
-  'produced by this sandbox fall back to the generic mock of the REST method.',
+  '`datasetId` and `get-actor-run` for its `runId` return that same run, and',
+  '`get-actor-run-list` lists the runs of this sandbox. Ids not produced here are',
+  'refused rather than answered with a generic sample.',
+  'The actual cost of a run (`usageTotalUsd`) is only in the run list, as in',
+  'production; it is computed from the real store price of the Actor.',
   '',
   '## What refuses',
   'Tools that need the live network (`search-apify-docs`, `fetch-apify-docs`,',
@@ -418,14 +510,16 @@ export const apifyMcpServer: McpServerDefinition = {
         const items = output.items
         const now = new Date()
         const source = actorOutputSource(actor)
+        const startedAt = new Date(now.getTime() - RUN_TIME_SECS * 1000).toISOString()
+        const cost = runCost({ actor, itemCount: items.length, runTimeSecs: RUN_TIME_SECS })
         const run = {
           runId,
           actorId: actor.id,
           actorName: actor.name,
           status: 'SUCCEEDED',
-          startedAt: new Date(now.getTime() - 12_000).toISOString(),
+          startedAt,
           finishedAt: now.toISOString(),
-          stats: { runTimeSecs: 12 },
+          stats: { runTimeSecs: RUN_TIME_SECS, computeUnits: cost.computeUnits },
           storages: runStorages(datasetId, keyValueStoreId, items),
           summary:
             `Actor ${actor.name} finished with status SUCCEEDED and produced ` +
@@ -463,9 +557,27 @@ export const apifyMcpServer: McpServerDefinition = {
               ]
             : []),
         ].join('\n')
+        // Тот же запуск в форме RunShort из OpenAPI Apify: её отдаёт список
+        // запусков, и только там есть фактическая стоимость прогона.
+        const short = {
+          id: runId,
+          actId: actor.id,
+          userId: SANDBOX_USER_ID,
+          actorTaskId: null,
+          status: 'SUCCEEDED',
+          startedAt,
+          finishedAt: now.toISOString(),
+          buildId: mockId('build', seed),
+          buildNumber: actor.buildNumber ?? '0.0.1',
+          meta: { origin: 'API' },
+          usageTotalUsd: cost.usageTotalUsd,
+          defaultKeyValueStoreId: keyValueStoreId,
+          defaultDatasetId: datasetId,
+          defaultRequestQueueId: mockId('queue', seed),
+        }
         // Запуск запоминается: следующий вызов агента — get-dataset-items по
         // этому датасету, и он обязан вернуть те же строки, а не образец REST.
-        recordRun({ run, datasetId, items })
+        recordRun({ run, short, datasetId, items })
         return result(text, run)
       }
 
@@ -540,6 +652,22 @@ export const apifyMcpServer: McpServerDefinition = {
           nextStep: `Call get-dataset-items with datasetId "${recorded.datasetId}" to read the results.`,
         }
         return result(JSON.stringify(aborted, null, 2), aborted)
+      }
+
+      case 'get-actor-run-list': {
+        // Запуски этой песочницы, в форме RunShort из OpenAPI Apify — с
+        // фактической стоимостью, которой в карточке одного запуска нет.
+        const status = typeof args.status === 'string' ? args.status : null
+        const all = recordedRuns()
+          .map((entry) => entry.short)
+          .filter((entry) => (status ? entry.status === status : true))
+        // По умолчанию — по возрастанию startedAt, как и объявлено во входе.
+        const sorted = args.desc === true || args.desc === 1 ? [...all].reverse() : all
+        const offset = numberArg(args.offset) ?? 0
+        const limit = Math.min(numberArg(args.limit) ?? RUN_LIST_LIMIT, RUN_LIST_LIMIT)
+        const page = sorted.slice(offset, offset + limit)
+        const body = { total: sorted.length, offset, limit, desc: args.desc === true, count: page.length, items: page }
+        return result(JSON.stringify(body, null, 2), body)
       }
 
       case 'get-key-value-store-record': {

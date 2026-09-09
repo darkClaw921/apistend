@@ -410,6 +410,62 @@ describe('мок mcp.apify.com', () => {
     expect(data.status).toBe('SUCCEEDED')
   })
 
+  it('get-actor-run-list есть в наборе и отдаёт фактическую стоимость прогона', async () => {
+    // У боевого сервера этот инструмент есть, в снимок он не попал. Клиент
+    // берёт из него usageTotalUsd: в карточке одного запуска стоимости нет,
+    // и без списка списывалась бы оценка вместо факта.
+    const tools = await rpc('/apify/mcp', 'tools/list')
+    const names = (tools.frame as { result: { tools: Array<{ name: string }> } }).result.tools
+      .map((t) => t.name)
+    expect(names).toContain('get-actor-run-list')
+
+    // Тариф настоящий: apify/instagram-scraper стоит 0,0023 $ за элемент датасета.
+    const run = await rpc('/apify/mcp', 'tools/call', {
+      name: 'call-actor',
+      arguments: { actor: 'apify/instagram-scraper', input: { resultsLimit: 4 } },
+    })
+    const runId = (run.frame as { result: { structuredContent: Run } }).result.structuredContent.runId
+
+    const list = await rpc('/apify/mcp', 'tools/call', {
+      name: 'get-actor-run-list',
+      arguments: { desc: true, limit: 10 },
+    })
+    const body = (list.frame as {
+      result: { structuredContent: { total: number; items: Array<Record<string, unknown>> } }
+    }).result.structuredContent
+    const entry = body.items.find((x) => x.id === runId)
+    expect(entry, 'запуск песочницы обязан быть в списке запусков').toBeDefined()
+    expect(entry!.usageTotalUsd).toBeCloseTo(4 * 0.0023, 6)
+    expect(entry!.defaultDatasetId).toHaveLength(17)
+  })
+
+  it('список запусков фильтруется по статусу и режется страницей', async () => {
+    await rpc('/apify/mcp', 'tools/call', {
+      name: 'call-actor',
+      arguments: { actor: 'memo23/wildberries-scraper', input: { queries: ['чайник'] } },
+    })
+    const failed = await rpc('/apify/mcp', 'tools/call', {
+      name: 'get-actor-run-list',
+      arguments: { status: 'FAILED' },
+    })
+    expect(
+      (failed.frame as { result: { structuredContent: { items: unknown[] } } })
+        .result.structuredContent.items,
+    ).toEqual([])
+
+    const page = await rpc('/apify/mcp', 'tools/call', {
+      name: 'get-actor-run-list',
+      arguments: { limit: 1 },
+    })
+    const body = (page.frame as {
+      result: { structuredContent: { items: unknown[]; limit: number; total: number } }
+    }).result.structuredContent
+    expect(body.items).toHaveLength(1)
+    // Потолок страницы — десять, как объявлено у боевого инструмента.
+    expect(body.limit).toBe(1)
+    expect(body.total).toBeGreaterThan(0)
+  })
+
   it('инструмент, которому нужна живая сеть, честно отказывает', async () => {
     const res = await rpc('/apify/mcp', 'tools/call', {
       name: 'fetch-apify-docs',

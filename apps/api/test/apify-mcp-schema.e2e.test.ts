@@ -29,6 +29,17 @@ const vendored = JSON.parse(
   readFileSync(join(here, '../../../specs/apify/mcp-tools.json'), 'utf8'),
 ) as { tools: Array<{ name: string; outputSchema?: Record<string, unknown> }> }
 
+/**
+ * Спецификация REST того же Apify.
+ *
+ * Список запусков отдаёт записи в форме RunShort, и проверять их надо по ней:
+ * своя копия формы разошлась бы с боевой ровно там, где это важнее всего, —
+ * в поле фактической стоимости.
+ */
+const openapi = JSON.parse(
+  readFileSync(join(here, '../../../specs/apify/openapi.json'), 'utf8'),
+) as Record<string, unknown>
+
 const ACCEPT = 'application/json, text/event-stream'
 let api: Awaited<ReturnType<typeof buildServer>>
 let key = ''
@@ -37,6 +48,7 @@ let userId = ''
 // strict выключен: схемы сняты с боевого сервера как есть, и придираться к их
 // оформлению не наша задача — наша задача им соответствовать.
 const ajv = new Ajv({ strict: false, allErrors: true })
+ajv.addSchema(openapi, 'apify-openapi')
 
 interface Frame {
   result?: { structuredContent?: unknown; isError?: boolean; content?: Array<{ text: string }> }
@@ -160,6 +172,20 @@ describe('ответы мока совпадают с объявленными o
   it('report-problem', async () => {
     const frame = await callTool('report-problem', { message: 'мок вернул не то' })
     expectMatchesSchema('report-problem', frame.result?.structuredContent)
+  })
+
+  it('get-actor-run-list отдаёт записи в форме RunShort из спецификации Apify', async () => {
+    await callTool('call-actor', { actor: 'apify/instagram-scraper', input: { resultsLimit: 4 } })
+    const list = await callTool('get-actor-run-list', { desc: true, limit: 5 })
+    const body = list.result?.structuredContent as { items: Record<string, unknown>[] }
+    expect(body.items.length).toBeGreaterThan(0)
+
+    const validate = ajv.compile({ $ref: 'apify-openapi#/components/schemas/RunShort' })
+    for (const item of body.items) {
+      const ok = validate(item)
+      const errors = (validate.errors ?? []).map((e) => `${e.instancePath || '/'} ${e.message}`).join('; ')
+      expect(ok, `запись списка не соответствует RunShort — ${errors}`).toBe(true)
+    }
   })
 
   it('отказ приходит без structuredContent, а не с конвертом чужой формы', async () => {
