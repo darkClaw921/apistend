@@ -92,7 +92,7 @@ export function DocsChrome({
   return (
     <div className="min-h-screen bg-bg">
       <header className="sticky top-0 z-40 border-b border-nav-border bg-night">
-        <div className="mx-auto flex h-[64px] max-w-[1400px] items-center gap-[12px] px-[16px] lg:px-[24px]">
+        <div className="flex h-[64px] items-center gap-[12px] px-[16px] lg:px-[24px]">
           <button
             type="button"
             onClick={() => setMenuOpen(true)}
@@ -145,13 +145,13 @@ export function DocsChrome({
       </header>
 
       {/*
-        Ширина всей раскладки — 1400 px, и центрируется она ЦЕЛИКОМ: дерево,
-        текст и оглавление как один блок. Раньше внешний контейнер был шире (1600),
-        а колонка текста центрировалась ещё раз внутри оставшегося места — на широком
-        мониторе дерево отъезжало к левому краю, текст повисал далеко от него,
-        а справа оставалось пустое поле. Одно центрирование вместо двух.
+        Раскладка занимает всё окно: дерево разделов прижато к левому краю,
+        как в любой документации, а по центру оставшегося места идёт текст.
+        Ограничивать всю раскладку по ширине и центрировать её целиком нельзя —
+        на широком мониторе она повисает посреди экрана с пустыми полями по краям.
+        Ширину ограничивает только колонка текста, внутри main.
       */}
-      <div className="mx-auto flex max-w-[1400px] items-start px-0 lg:px-[24px]">
+      <div className="flex items-start">
         {/* Дерево на широком экране: своя прокрутка, шапка остаётся на месте. */}
         <aside className="sticky top-[64px] hidden h-[calc(100vh-64px)] w-[264px] shrink-0 overflow-y-auto scrollbar-thin border-r border-nav-border bg-nav-bg lg:block">
           <NavTree tree={tree} pathname={pathname} />
