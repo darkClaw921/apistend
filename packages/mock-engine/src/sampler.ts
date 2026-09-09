@@ -1,5 +1,7 @@
 import { sample } from 'openapi-sampler'
 import { Deterministic } from './deterministic.ts'
+import { hasProductKey, looksLikeProduct, productField, type Product } from './dataset.ts'
+import type { Page } from './page.ts'
 import {
   BRAND, CATEGORY, CITY, COMPANY_NAME, COMPANY_PREFIX, FIRST_NAME, LAST_NAME,
   ORDER_STATUS, POSTING_STATUS, PRODUCT, WAREHOUSE,
@@ -20,6 +22,10 @@ export interface FillContext {
   det: Deterministic
   /** Опорная дата: передаётся снаружи, чтобы ответ не зависел от текущего момента. */
   now: Date
+  /** Каталог товаров песочницы. Из него берутся артикулы, цены и воронка. */
+  pool: readonly Product[]
+  /** Запрошенная страница каталога: сколько товаров отдать и с какого начать. */
+  page: Page
 }
 
 const SAMPLER_OPTIONS = { skipReadOnly: false, skipWriteOnly: true, quiet: true } as const
@@ -53,7 +59,7 @@ function byContext(path: string, key: string, det: Deterministic): string {
 }
 
 /** Значение по имени поля. Возвращает undefined, если имя ничего не подсказывает. */
-function byFieldName(name: string, path: string, ctx: FillContext, type: 'string' | 'number'): unknown {
+export function byFieldName(name: string, path: string, ctx: FillContext, type: 'string' | 'number'): unknown {
   const n = name.toLowerCase()
   const { det, now } = ctx
   const key = path
@@ -108,7 +114,7 @@ function byFieldName(name: string, path: string, ctx: FillContext, type: 'string
  */
 const IDENTITY_TOKENS = new Set([
   'id', 'ids', 'uuid', 'guid', 'number', 'code', 'sku', 'barcode',
-  'article', 'nmid', 'chrtid', 'offerid', 'vendorcode', 'postingnumber', 'rid', 'srid',
+  'article', 'nmid', 'chrtid', 'offerid', 'vendorcode', 'postingnumber', 'rid', 'srid', 'sticker',
 ])
 
 /** Последний токен имени поля: warehouseId -> id, offer_id -> id, nmID -> id. */
@@ -122,38 +128,96 @@ function lastToken(name: string): string {
   return parts[parts.length - 1] ?? name.toLowerCase()
 }
 
-function isIdentityField(name: string): boolean {
+export function isIdentityField(name: string): boolean {
   return IDENTITY_TOKENS.has(lastToken(name)) || IDENTITY_TOKENS.has(name.toLowerCase())
 }
 
+/**
+ * Товар для элемента списка: каталог, смещённый на запрошенную страницу.
+ *
+ * Порядок один на все методы и не зависит от пути: два отчёта, вызванные с одной
+ * страницей, говорят про одни и те же товары. Разбежка по методам выглядела бы
+ * правдоподобнее, но сводила бы на нет весь смысл общего каталога — сверить
+ * воронку с ценами и остатками можно только по одному и тому же артикулу.
+ */
+function productAt(ctx: FillContext, index: number): Product {
+  return ctx.pool[(ctx.page.offset + index) % ctx.pool.length]!
+}
+
+/** Сколько товаров попадает в ответ: остаток каталога, обрезанный размером страницы. */
+export function pageSize(ctx: FillContext): number {
+  return Math.max(0, Math.min(ctx.page.limit, ctx.pool.length - ctx.page.offset))
+}
+
+/** Приводит значение из каталога к типу, который стоял в скелете ответа. */
+function coerce(value: number | string, like: 'string' | 'number'): unknown {
+  if (like === 'string') return String(value)
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) ? n : value
+}
+
 /** Рекурсивно заменяет заглушки сэмплера правдоподобными значениями. */
-function fill(node: unknown, path: string, key: string, ctx: FillContext, depth = 0, inArray = false): unknown {
+function fill(
+  node: unknown,
+  path: string,
+  key: string,
+  ctx: FillContext,
+  depth = 0,
+  inArray = false,
+  product: Product | null = null,
+  inRecord = false,
+): unknown {
   if (depth > 24) return node
 
   if (Array.isArray(node)) {
     // У массива-примера сэмплер даёт один элемент. Размножаем его детерминированно,
     // чтобы списки в интерфейсе не выглядели пустыми.
     if (node.length === 0) return node
-    const count = ctx.det.int(`${path}#len`, 2, 4)
     const first = node[0]
-    return Array.from({ length: count }, (_, i) => fill(first, `${path}[${i}]`, key, ctx, depth + 1, true))
+    // Список товаров разворачиваем по каталогу: столько записей, сколько товаров
+    // у продавца, и каждая — про свой товар. Если товар уже выбран снаружи, список
+    // вложен в запись о товаре (размеры, остатки по складам) и описывает его же —
+    // каталог там дал бы произведение каталога на самого себя.
+    const productList = product === null && ctx.pool.length > 0 && looksLikeProduct(first)
+    // Страница за концом каталога — пустой список: именно так клиент узнаёт,
+    // что обход закончен, и именно это на стенде и проверяют.
+    const count = productList ? pageSize(ctx) : ctx.det.int(`${path}#len`, 2, 4)
+    return Array.from({ length: count }, (_, i) =>
+      fill(
+        first,
+        `${path}[${i}]`,
+        key,
+        ctx,
+        depth + 1,
+        true,
+        productList ? productAt(ctx, i) : product,
+        inRecord,
+      ))
   }
 
   if (node !== null && typeof node === 'object') {
+    // Товар выбираем и для одиночного объекта: ответ «карточка по артикулу»
+    // обязан говорить про товар из каталога, а не про выдуманный.
+    const record = inRecord || hasProductKey(node)
+    const own = product ?? (ctx.pool.length > 0 && hasProductKey(node) ? productAt(ctx, 0) : null)
     const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      out[k] = fill(v, `${path}.${k}`, k, ctx, depth + 1, inArray)
+      out[k] = fill(v, `${path}.${k}`, k, ctx, depth + 1, inArray, own, record)
     }
     return out
   }
 
   const identityInList = inArray && key.length > 0 && isIdentityField(key)
 
-  if (typeof node === 'string' && (isPlaceholder(node) || identityInList)) {
-    return byFieldName(key, path, ctx, 'string')
-  }
-  if (typeof node === 'number' && (isPlaceholder(node) || identityInList)) {
-    return byFieldName(key, path, ctx, 'number')
+  if (typeof node === 'string' || typeof node === 'number') {
+    const like = typeof node === 'string' ? 'string' : 'number'
+    // Каталог сильнее примера из схемы: пример честно описывает форму поля,
+    // но говорит про чужой товар, а нам нужно, чтобы все методы отвечали про свой.
+    if (product) {
+      const fromCatalog = productField(key, product, inRecord)
+      if (fromCatalog !== undefined) return coerce(fromCatalog, like)
+    }
+    if (isPlaceholder(node) || identityInList) return byFieldName(key, path, ctx, like)
   }
   return node
 }

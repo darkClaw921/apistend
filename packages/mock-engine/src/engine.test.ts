@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import type { ServiceCode } from '@apistend/shared'
 import { MockEngine } from './engine.ts'
+import { productPool } from './dataset.ts'
+import { DEFAULT_LIMIT } from './page.ts'
 import type { MockRequest } from './engine.ts'
 
 const NOW = new Date('2026-09-07T12:00:00.000Z')
@@ -218,5 +220,157 @@ describe('весь каталог отвечает без падений', () =>
       }
     }
     expect(failures).toEqual([])
+  })
+})
+
+/**
+ * Каталог товаров — то, ради чего стенд отличается от песочницы площадки.
+ *
+ * У WB в песочнице методы отвечают верно по форме, но про разные товары: каталог про
+ * один артикул, воронка про другой, остатки про третий, а цены не отдаются вовсе.
+ * Транспорт на таком стенде проверить можно, экономику — нет. Эти тесты закрепляют
+ * обратное свойство: все методы говорят про один и тот же каталог, и цифры внутри
+ * товара сходятся между собой.
+ */
+describe('общий каталог товаров', () => {
+  const nmIds = (node: unknown, acc = new Set<number>()): Set<number> => {
+    if (Array.isArray(node)) node.forEach((x) => nmIds(x, acc))
+    else if (node !== null && typeof node === 'object') {
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+        if (/^nm_?id$/i.test(k) && typeof v === 'number') acc.add(v)
+        else nmIds(v, acc)
+      }
+    }
+    return acc
+  }
+
+  const call = (
+    httpMethod: string,
+    path: string,
+    query: Record<string, string> = {},
+    salt = 'medium',
+  ) => engine.handle(req({ httpMethod, path, query, salt })).body
+
+  const cards = (query: Record<string, string> = {}) =>
+    (call('POST', '/content/v2/get/cards/list', query) as {
+      cards: Array<Record<string, unknown>>
+      cursor: Record<string, unknown>
+    })
+
+  it('цены и скидки отдаются: без них не посчитать ни маржу, ни коридор цен', () => {
+    // Схема ответа записана ссылкой на общий компонент. Пока ссылку не разыменовывали,
+    // метод молча уезжал на generic-ярус и отдавал пустой объект.
+    const r = engine.handle(req({ httpMethod: 'GET', path: '/api/v2/list/goods/filter' }))
+    expect(r.responseSource).toBe('schema')
+    const goods = (r.body as { data: { listGoods: Array<Record<string, unknown>> } }).data.listGoods
+    expect(goods.length).toBeGreaterThan(1)
+    for (const g of goods) {
+      const size = (g.sizes as Array<{ price: number; discountedPrice: number }>)[0]!
+      expect(size.price).toBeGreaterThan(0)
+      expect(size.discountedPrice).toBeLessThanOrEqual(size.price)
+    }
+  })
+
+  it('воронка, заказы, остатки и финансы отвечают про товары из каталога', () => {
+    const pool = new Set(productPool('medium').map((p) => p.nmId))
+    const paths: Array<[string, string]> = [
+      ['POST', '/content/v2/get/cards/list'],
+      ['GET', '/api/v2/list/goods/filter'],
+      ['POST', '/api/analytics/v3/sales-funnel/products'],
+      ['POST', '/api/analytics/v1/order-feed'],
+      ['POST', '/api/analytics/v1/stocks-report/wb-warehouses'],
+      ['POST', '/api/analytics/v1/stocks-report/seller-warehouses'],
+      ['GET', '/api/v1/supplier/orders'],
+      ['GET', '/api/v1/supplier/sales'],
+      ['POST', '/api/finance/v1/sales-reports/detailed'],
+    ]
+    for (const [httpMethod, path] of paths) {
+      const ids = [...nmIds(call(httpMethod, path))]
+      expect(ids.length, path).toBeGreaterThan(0)
+      expect(ids.filter((id) => !pool.has(id)), path).toEqual([])
+    }
+  })
+
+  it('поля одной записи описывают один товар, а не собранного из кусков', () => {
+    const byNm = new Map(productPool('medium').map((p) => [p.nmId, p]))
+    const page = cards().cards
+    expect(page.length).toBe(DEFAULT_LIMIT)
+    for (const card of page) {
+      const p = byNm.get(card.nmID as number)!
+      expect(p, String(card.nmID)).toBeDefined()
+      expect(card.vendorCode).toBe(p.vendorCode)
+      expect(card.brand).toBe(p.brand)
+      expect(card.title).toBe(p.title)
+      expect(card.imtID).toBe(p.imtId)
+    }
+  })
+
+  it('воронка убывает: показы -> корзина -> заказы -> выкупы', () => {
+    for (const p of productPool('medium')) {
+      expect(p.openCount).toBeGreaterThanOrEqual(p.cartCount)
+      expect(p.cartCount).toBeGreaterThanOrEqual(p.orderCount)
+      expect(p.orderCount).toBeGreaterThanOrEqual(p.buyoutCount)
+      expect(p.orderCount - p.buyoutCount).toBe(p.cancelCount)
+      expect(p.orderSum).toBe(p.orderCount * p.discountedPrice)
+      expect(p.discountedPrice).toBe(Math.round((p.price * (100 - p.discountPercent)) / 100))
+    }
+  })
+
+  it('в каталоге не меньше сотни товаров при любом объёме датасета', () => {
+    for (const salt of ['min', 'medium', 'full']) {
+      const pool = productPool(salt)
+      expect(pool.length, salt).toBeGreaterThanOrEqual(100)
+      // Артикулы и коды не должны совпадать: на каталоге в сотни позиций случайные
+      // числа сталкиваются, и два разных товара получают один nmID.
+      expect(new Set(pool.map((p) => p.nmId)).size, salt).toBe(pool.length)
+      expect(new Set(pool.map((p) => p.vendorCode)).size, salt).toBe(pool.length)
+      expect(new Set(pool.map((p) => p.barcode)).size, salt).toBe(pool.length)
+      expect(new Set(pool.map((p) => p.chrtId)).size, salt).toBe(pool.length)
+    }
+  })
+
+  it('предмет и категория товара не расходятся', () => {
+    // Пока это были два независимых списка, «Портативная колонка» попадала
+    // в «Продукты питания»: списки цикличны и расходятся на первом же обороте.
+    const byTitle = new Map<string, string>()
+    for (const p of productPool('full')) {
+      const base = p.title.split(',')[0]!
+      const seen = byTitle.get(base)
+      if (seen === undefined) byTitle.set(base, p.category)
+      else expect(p.category, p.title).toBe(seen)
+    }
+    expect(byTitle.size).toBeGreaterThan(20)
+  })
+
+  it('каталог отдаётся страницами, а не целиком', () => {
+    const pool = productPool('medium')
+    expect(cards().cards.length).toBe(DEFAULT_LIMIT)
+    expect(cards({ limit: '5' }).cards.length).toBe(5)
+    // Общее количество — размер всего каталога: по нему клиент считает число страниц.
+    expect(cards().cursor.total).toBe(pool.length)
+
+    const first = cards({ limit: '10' }).cards.map((c) => c.nmID)
+    const second = cards({ limit: '10', offset: '10' }).cards.map((c) => c.nmID)
+    expect(second).not.toEqual(first)
+    expect(first.filter((id) => second.includes(id))).toEqual([])
+    // Страница за концом каталога пуста — так клиент узнаёт, что обход закончен.
+    expect(cards({ limit: '10', offset: String(pool.length) }).cards).toEqual([])
+  })
+
+  it('страница одна на все методы: отчёты сходятся по артикулам', () => {
+    const query = { limit: '10', offset: '30' }
+    const fromCards = new Set(cards(query).cards.map((c) => c.nmID as number))
+    const fromGoods = nmIds(call('GET', '/api/v2/list/goods/filter', query))
+    const fromFunnel = nmIds(call('POST', '/api/analytics/v3/sales-funnel/products', query))
+    expect([...fromGoods]).toEqual([...fromCards])
+    expect([...fromFunnel]).toEqual([...fromCards])
+  })
+
+  it('объём датасета меняет размер каталога, но не его устройство', () => {
+    expect(productPool('min').length).toBeLessThan(productPool('medium').length)
+    expect(productPool('medium').length).toBeLessThan(productPool('full').length)
+    // Каталог зависит только от объёма: иначе «тот же товар» в двух методах
+    // снова оказался бы разными товарами.
+    expect(productPool('medium')).toBe(productPool('medium'))
   })
 })
