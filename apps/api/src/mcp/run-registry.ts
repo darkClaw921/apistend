@@ -34,7 +34,7 @@ const runs = new LruCache<RecordedRun>(1_000)
 const datasets = new LruCache<RecordedRun>(1_000)
 
 export function recordRun(entry: RecordedRun): void {
-  runs.set(String(entry.run.id), entry)
+  runs.set(String(entry.run.runId), entry)
   datasets.set(entry.datasetId, entry)
 }
 

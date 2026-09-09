@@ -75,6 +75,9 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       apistend:
         specifier: workspace:*
         version: link:../../packages/cli

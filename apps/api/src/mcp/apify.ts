@@ -60,25 +60,6 @@ function mockId(prefix: string, seed: string): string {
 }
 
 /**
- * Инструменты, за которыми стоит метод каталога REST.
- *
- * Запуск и датасет сюда не входят: их отдаёт реестр запусков, а к движку они
- * обращаются только когда идентификатор пришёл со стороны — не от call-actor.
- */
-const REST_BACKED: Record<string, { method: string; path: (a: Record<string, unknown>) => string }> = {
-  'get-key-value-store-record': {
-    method: 'GET',
-    path: (a) =>
-      `/v2/key-value-stores/${encodeURIComponent(String(a.keyValueStoreId))}` +
-      `/records/${encodeURIComponent(String(a.recordKey))}`,
-  },
-  'abort-actor-run': {
-    method: 'POST',
-    path: (a) => `/v2/actor-runs/${encodeURIComponent(String(a.runId))}/abort`,
-  },
-}
-
-/**
  * Инструменты, которым нужна живая сеть.
  *
  * Поиск по документации и загрузка страниц — не мок, а обращение наружу.
@@ -137,12 +118,81 @@ const OUTPUT_SOURCE_NOTE: Record<ActorOutputSource, string> = {
     'Это не пустая выдача по запросу и не ошибка входа: менять вход бессмысленно._',
 }
 
-/** Ответ инструмента: текст для модели плюс структура для строгого клиента. */
+/**
+ * Ответ инструмента: текст для модели плюс структура для строгого клиента.
+ *
+ * `structuredContent` обязан соответствовать `outputSchema` инструмента — той
+ * самой, что снята с боевого сервера и уходит клиенту в tools/list. Официальный
+ * MCP SDK валидирует ответ по ней и при расхождении ОТБРАСЫВАЕТ его целиком:
+ * данные в ответе есть, а до вызывающего кода не доходят. Поэтому форма здесь
+ * не «удобная», а объявленная, и её держит тест на всех инструментах разом.
+ */
 function result(text: string, structured: unknown, isError = false): McpToolResult {
   return {
     content: [{ type: 'text', text }],
     structuredContent: structured,
     ...(isError ? { isError: true } : {}),
+  }
+}
+
+/**
+ * Отказ инструмента.
+ *
+ * Без `structuredContent`: у неудачи нет формы, объявленной в `outputSchema`,
+ * и конверт ошибки, положенный в это поле, клиент отверг бы вместе с текстом,
+ * который ему как раз и нужно прочитать.
+ */
+function failure(text: string): McpToolResult {
+  return { content: [{ type: 'text', text }], isError: true }
+}
+
+/** Карточка актора в форме, объявленной в outputSchema инструментов поиска. */
+function actorInfo(actor: ActorSnapshotEntry): Record<string, unknown> {
+  const [username = ''] = actor.name.split('/')
+  const pricing = actor.pricing[0]
+  return {
+    title: actor.title,
+    url: `https://apify.com/${actor.name}`,
+    id: actor.id,
+    fullName: actor.name,
+    developer: {
+      username,
+      isOfficialApify: username === 'apify',
+      url: `https://apify.com/${username}`,
+    },
+    description: actor.description,
+    categories: [...actor.categories],
+    isDeprecated: actor.isDeprecated,
+    ...(pricing?.model ? { pricing: { model: pricing.model } } : {}),
+    stats: {
+      ...(actor.stats.totalUsers !== null ? { totalUsers: actor.stats.totalUsers } : {}),
+      ...(actor.stats.totalUsers30Days !== null ? { monthlyUsers: actor.stats.totalUsers30Days } : {}),
+    },
+    ...(actor.stats.reviewRating !== null ? { rating: { average: actor.stats.reviewRating } } : {}),
+  }
+}
+
+/**
+ * Метаданные хранилищ запуска — блок `storages`, обязательный в схеме запуска.
+ *
+ * Ключ `default` есть всегда: так объявлено у боевого сервера, и клиент берёт
+ * идентификатор датасета именно оттуда.
+ */
+function runStorages(
+  datasetId: string,
+  keyValueStoreId: string,
+  items: readonly Record<string, unknown>[],
+): Record<string, unknown> {
+  const fields = [...new Set(items.flatMap((item) => Object.keys(item)))]
+  return {
+    datasets: {
+      default: {
+        id: datasetId,
+        itemCount: items.length,
+        ...(fields.length > 0 ? { fields } : {}),
+      },
+    },
+    keyValueStores: { default: { id: keyValueStoreId, keyCount: 0, keys: [] } },
   }
 }
 
@@ -309,17 +359,12 @@ export const apifyMcpServer: McpServerDefinition = {
           ...found.items.map(actorCard),
         ].join('\n')
         return result(text, {
-          total: found.total,
-          actors: found.items.map((a) => ({
-            id: a.id,
-            name: a.name,
-            title: a.title,
-            description: a.description,
-            url: `https://apify.com/${a.name}`,
-            categories: a.categories,
-            stats: a.stats,
-            pricing: a.pricing,
-          })),
+          actors: found.items.map(actorInfo),
+          query: keywords,
+          count: found.items.length,
+          instructions:
+            'Результаты отдала песочница APIStend вместо mcp.apify.com: это снимок ' +
+            'магазина Apify, а не живой поиск. Запуск актора здесь тоже не выполняется.',
         })
       }
 
@@ -330,11 +375,7 @@ export const apifyMcpServer: McpServerDefinition = {
         if (!actor) {
           // Боевой Apify на неизвестного актора отвечает ошибкой, а не пустотой,
           // и агент, обрабатывающий этот случай, обязан увидеть здесь то же самое.
-          return result(
-            `Actor "${wanted}" was not found.`,
-            { error: { type: 'record-not-found', message: `Actor "${wanted}" was not found.` } },
-            true,
-          )
+          return failure(`Actor "${wanted}" was not found.`)
         }
         const text = [
           actorCard(actor),
@@ -346,17 +387,10 @@ export const apifyMcpServer: McpServerDefinition = {
           ...(actor.readmeSummary ? ['', '### Summary', actor.readmeSummary] : []),
         ].join('\n')
         return result(text, {
-          id: actor.id,
-          name: actor.name,
-          title: actor.title,
-          description: actor.description,
-          inputSchema: actor.inputSchema,
-          outputSchema: actor.outputSchema,
-          datasetFields: actor.datasetFields,
-          defaultRunOptions: actor.defaultRunOptions,
-          exampleRunInput: actor.exampleRunInput,
-          pricing: actor.pricing,
-          stats: actor.stats,
+          actorInfo: actorInfo(actor),
+          ...(actor.readmeSummary ? { readme: actor.readmeSummary } : {}),
+          ...(actor.inputSchema ? { inputSchema: actor.inputSchema } : {}),
+          ...(actor.outputSchema ? { outputSchema: actor.outputSchema } : {}),
         })
       }
 
@@ -365,11 +399,7 @@ export const apifyMcpServer: McpServerDefinition = {
         const wanted = requireString(args, 'actor')
         const actor = findActor(wanted)
         if (!actor) {
-          return result(
-            `Actor "${wanted}" was not found.`,
-            { error: { type: 'record-not-found', message: `Actor "${wanted}" was not found.` } },
-            true,
-          )
+          return failure(`Actor "${wanted}" was not found.`)
         }
         const input = (args.input ?? {}) as Record<string, unknown>
         // Вход проверяется по НАСТОЯЩЕЙ схеме актора: именно здесь мок и полезен —
@@ -377,35 +407,41 @@ export const apifyMcpServer: McpServerDefinition = {
         // а не после платного запуска.
         const missing = requiredInputMissing(actor, input)
         if (missing.length > 0) {
-          return result(
-            `Invalid input: missing required field(s): ${missing.join(', ')}.`,
-            {
-              error: {
-                type: 'invalid-input',
-                message: `Missing required field(s): ${missing.join(', ')}`,
-                requiredFields: missing,
-              },
-            },
-            true,
-          )
+          return failure(`Invalid input: missing required field(s): ${missing.join(', ')}.`)
         }
 
         const seed = `${actor.name}|${JSON.stringify(input)}`
         const runId = mockId('run', seed)
         const datasetId = mockId('dataset', seed)
-        const items = sampleFromActorOutput(actor, input, seed)
+        const keyValueStoreId = mockId('kvs', seed)
+        const output = sampleFromActorOutput(actor, input, seed)
+        const items = output.items
         const now = new Date()
+        const source = actorOutputSource(actor)
         const run = {
-          id: runId,
-          actId: actor.id,
+          runId,
+          actorId: actor.id,
+          actorName: actor.name,
           status: 'SUCCEEDED',
           startedAt: new Date(now.getTime() - 12_000).toISOString(),
           finishedAt: now.toISOString(),
-          defaultDatasetId: datasetId,
-          defaultKeyValueStoreId: mockId('kvs', seed),
-          buildNumber: actor.buildNumber ?? '0.0.1',
+          stats: { runTimeSecs: 12 },
+          storages: runStorages(datasetId, keyValueStoreId, items),
+          summary:
+            `Actor ${actor.name} finished with status SUCCEEDED and produced ` +
+            `${items.length} item(s) in dataset ${datasetId}.`,
+          nextStep: `Call get-dataset-items with datasetId "${datasetId}" to read the results.`,
+          // Служебное поле песочницы. Имя с подчёркиванием — чтобы клиент, читающий
+          // боевую форму ответа, не принял его за поле Apify.
+          _apistend: {
+            sandbox: true,
+            outputSource: source,
+            // Значения полей: из общего каталога товаров песочницы или из того,
+            // что показал автор актора.
+            values: output.fromCatalog ? 'apistend-catalog' : 'actor-author',
+            ...(output.fromCatalog ? { matchedQuery: output.matchedQuery } : {}),
+          },
         }
-        const source = actorOutputSource(actor)
         const text = [
           `Actor \`${actor.name}\` finished with status SUCCEEDED.`,
           `- **Run ID:** ${runId}`,
@@ -417,58 +453,114 @@ export const apifyMcpServer: McpServerDefinition = {
           '```',
           '',
           OUTPUT_SOURCE_NOTE[source],
+          ...(output.fromCatalog
+            ? [
+                output.matchedQuery
+                  ? '_Значения полей — из общего каталога товаров APIStend, отобранного по ' +
+                    'поисковой фразе запроса. Те же артикулы отдают моки Wildberries и Ozon._'
+                  : '_Значения полей — из общего каталога товаров APIStend. По поисковой фразе ' +
+                    'запроса в нём совпадений не нашлось, поэтому товары взяты произвольные._',
+              ]
+            : []),
         ].join('\n')
         // Запуск запоминается: следующий вызов агента — get-dataset-items по
         // этому датасету, и он обязан вернуть те же строки, а не образец REST.
         recordRun({ run, datasetId, items })
-        // Служебное поле песочницы. Имя с подчёркиванием — чтобы клиент, читающий
-        // боевую форму ответа, не принял его за поле Apify.
-        return result(text, { run, datasetId, items, _apistend: { sandbox: true, outputSource: source } })
+        return result(text, run)
       }
 
       case 'report-problem': {
         // Обращение в поддержку Apify. Наружу оно из песочницы не уходит —
         // и делать вид, что ушло, нельзя: пользователь ждал бы ответа.
         requireString(args, 'message')
+        // reported объявлено как «always true», но здесь оно честно false:
+        // обращение никуда не ушло, и соврать в единственном поле ответа значило бы
+        // оставить пользователя ждать ответа, которого не будет.
         return result(
           'Обращение принято песочницей APIStend и в поддержку Apify НЕ отправлено: ' +
           'мок наружу не ходит. В бою этот инструмент создаёт обращение.',
-          { delivered: false, sandbox: true },
+          { reported: false },
         )
       }
 
       case 'get-actor-run': {
         const recorded = runById(requireString(args, 'runId'))
-        if (recorded) return result(JSON.stringify({ data: recorded.run }), { data: recorded.run })
-        return throughEngine('GET', `/v2/actor-runs/${encodeURIComponent(String(args.runId))}`, args)
+        if (recorded) return result(JSON.stringify(recorded.run, null, 2), recorded.run)
+        // Идентификатор не из этой песочницы: запуска с такими данными не было,
+        // и придумывать ему хранилища значило бы отдать агенту ссылку в никуда.
+        return failure(
+          `Run "${String(args.runId)}" was not started in this sandbox. ` +
+          'Start one with call-actor and use the runId it returns.',
+        )
       }
 
       case 'get-dataset-items': {
-        const recorded = runByDatasetId(requireString(args, 'datasetId'))
+        const datasetId = requireString(args, 'datasetId')
+        const recorded = runByDatasetId(datasetId)
         if (!recorded) {
-          return throughEngine(
-            'GET',
-            `/v2/datasets/${encodeURIComponent(String(args.datasetId))}/items`,
-            args,
+          return failure(
+            `Dataset "${datasetId}" does not belong to a run made in this sandbox. ` +
+            'Start one with call-actor and use the datasetId it returns.',
           )
         }
         // offset и limit — как у боевого инструмента: их и передаёт клиент,
         // разбирающий выдачу по частям.
         const offset = numberArg(args.offset) ?? 0
-        const limit = numberArg(args.limit)
-        const page = recorded.items.slice(offset, limit === undefined ? undefined : offset + limit)
-        return result(JSON.stringify(page), page)
+        const limit = numberArg(args.limit) ?? recorded.items.length
+        const page = recorded.items.slice(offset, offset + limit)
+        return result(JSON.stringify(page, null, 2), {
+          datasetId,
+          items: page,
+          itemCount: page.length,
+          totalItemCount: recorded.items.length,
+          offset,
+          limit,
+          summary: `Returned ${page.length} of ${recorded.items.length} item(s) from dataset ${datasetId}.`,
+          nextStep:
+            offset + page.length < recorded.items.length
+              ? `Call get-dataset-items again with offset ${offset + page.length}.`
+              : 'All items were returned; no further calls are needed.',
+        })
+      }
+
+      case 'abort-actor-run': {
+        const recorded = runById(requireString(args, 'runId'))
+        if (!recorded) {
+          return failure(
+            `Run "${String(args.runId)}" was not started in this sandbox. ` +
+            'Start one with call-actor and use the runId it returns.',
+          )
+        }
+        // Запуск в песочнице завершается мгновенно, прерывать нечего — и боевой
+        // Apify на прерывание завершённого запуска отвечает тем же: его текущим
+        // состоянием, а не выдуманным ABORTED.
+        const aborted = {
+          ...recorded.run,
+          summary: `Run ${recorded.run.runId} had already finished; nothing to abort.`,
+          nextStep: `Call get-dataset-items with datasetId "${recorded.datasetId}" to read the results.`,
+        }
+        return result(JSON.stringify(aborted, null, 2), aborted)
+      }
+
+      case 'get-key-value-store-record': {
+        const storeId = requireString(args, 'keyValueStoreId')
+        const key = requireString(args, 'recordKey')
+        const answer = throughEngine(
+          'GET',
+          `/v2/key-value-stores/${encodeURIComponent(storeId)}/records/${encodeURIComponent(key)}`,
+          args,
+        )
+        const value = answer.structuredContent
+        return result(answer.content[0]?.text ?? '', {
+          keyValueStoreId: storeId,
+          key,
+          value,
+          contentType: 'application/json',
+          summary: `Returned record "${key}" from key-value store ${storeId}.`,
+        })
       }
 
       default: {
-        const backing = REST_BACKED[name]
-        if (backing) {
-          for (const required of (vendored.tools.find((t) => t.name === name)?.inputSchema
-            .required ?? []) as string[]) {
-            requireString(args, required)
-          }
-          return throughEngine(backing.method, backing.path(args), args)
-        }
         throw new RpcError(RPC.METHOD_NOT_FOUND, `Tool "${name}" не реализован в песочнице`)
       }
     }

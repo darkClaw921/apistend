@@ -1,5 +1,6 @@
 import { Deterministic } from '@apistend/mock-engine'
 import type { ActorSnapshotEntry } from './apify-actors.ts'
+import { applyProduct, looksLikeProductRow, selectProducts } from './catalog-overlay.ts'
 
 /**
  * Результат запуска актора — по его собственному описанию выхода.
@@ -116,20 +117,6 @@ function requestedCount(input: Record<string, unknown>): number {
   return DEFAULT_ITEMS
 }
 
-/**
- * Элементы датасета, которые отдал бы запуск актора.
- *
- * Форму выхода ищем в двух местах, оба — слова самого автора:
- *   1) схема полей датасета из сборки — по ней и строится образец;
- *   2) примеры строк из readme, если схемы нет. Их отдаём КАК ЕСТЬ и не
- *      размножаем до запрошенного количества: три показанных автором строки —
- *      это три строки, а не заготовка, из которой можно нарезать тридцать.
- *
- * Пустой массив означает честное «форму выхода актор не описал» — у 326 акторов
- * снимка нет ни схемы, ни примеров. Придумывать за автора поля его результата —
- * ровно то, чего проект не делает: по такому полю пишут разбор ответа, и
- * несуществующее поле обошлось бы дороже отсутствующего.
- */
 /** Откуда взята форма выхода актора. Уходит в ответ инструмента: агенту важно, чему верить. */
 export type ActorOutputSource = 'dataset-schema' | 'readme-examples' | 'none'
 
@@ -140,25 +127,74 @@ export function actorOutputSource(actor: ActorSnapshotEntry): ActorOutputSource 
   return (actor.outputExamples?.length ?? 0) > 0 ? 'readme-examples' : 'none'
 }
 
+/** Что получилось: строки и то, откуда взялись их значения. */
+export interface ActorOutput {
+  readonly items: Record<string, unknown>[]
+  /** Подставлены ли значения из общего каталога товаров песочницы. */
+  readonly fromCatalog: boolean
+  /** Нашлось ли в каталоге хоть что-то по поисковой фразе входа. */
+  readonly matchedQuery: boolean
+}
+
+/**
+ * Элементы датасета, которые отдал бы запуск актора.
+ *
+ * Форму выхода ищем в двух местах, оба — слова самого автора:
+ *   1) схема полей датасета из сборки — по ней и строится образец;
+ *   2) примеры строк из readme, если схемы нет.
+ *
+ * Дальше форма проверяется на «это карточка товара»: название рядом с ценой,
+ * артикулом, рейтингом. Если да — значения берутся из общего каталога товаров
+ * песочницы, того же, из которого отвечают моки Wildberries и Ozon, и выдача
+ * начинает зависеть от `queries` и `maxItems`. Иначе (профили соцсетей, точки
+ * на карте, вакансии) остаётся то, что показал автор: подменять там нечего.
+ *
+ * Пустой массив означает честное «форму выхода актор не описал» — у 326 акторов
+ * снимка нет ни схемы, ни примеров. Придумывать за автора поля его результата —
+ * ровно то, чего проект не делает: по такому полю пишут разбор ответа, и
+ * несуществующее поле обошлось бы дороже отсутствующего.
+ */
 export function sampleFromActorOutput(
   actor: ActorSnapshotEntry,
   input: Record<string, unknown>,
   seed: string,
-): Record<string, unknown>[] {
-  if (actor.hasNoDataset) return []
-
-  const fields = (actor.datasetFields as { fields?: JsonSchema } | null)?.fields
-  if (!fields?.properties) {
-    const examples = actor.outputExamples ?? []
-    return examples.slice(0, requestedCount(input)).map((row) => ({ ...row }))
-  }
+): ActorOutput {
+  const empty = { items: [], fromCatalog: false, matchedQuery: false }
+  if (actor.hasNoDataset) return empty
 
   const count = requestedCount(input)
+  const fields = (actor.datasetFields as { fields?: JsonSchema } | null)?.fields
+
+  // Форма строки: сгенерированная по схеме либо показанная автором в readme.
+  // Из примеров берётся товарный — у скраперов маркетплейсов в readme рядом
+  // с карточкой товара лежат ещё отзыв и продавец, а спросили про товары.
+  const shape = fields?.properties
+    ? buildObject('', fields, new Deterministic(`${seed}|0`), 0)
+    : (actor.outputExamples ?? []).find(looksLikeProductRow) ?? null
+
+  if (shape && looksLikeProductRow(shape)) {
+    const det = new Deterministic(`${seed}|catalog`)
+    const selection = selectProducts(input, count, seed)
+    return {
+      items: selection.products.map((product) => applyProduct(shape, product, det)),
+      fromCatalog: true,
+      matchedQuery: selection.matched,
+    }
+  }
+
+  if (!fields?.properties) {
+    // Не товар: примеры автора отдаём как есть и не размножаем до запрошенного
+    // количества — три показанных автором строки это три строки, а не заготовка,
+    // из которой можно нарезать тридцать.
+    const examples = actor.outputExamples ?? []
+    return { ...empty, items: examples.slice(0, count).map((row) => ({ ...row })) }
+  }
+
   const items: Record<string, unknown>[] = []
   for (let i = 0; i < count; i++) {
     // Своя соль на каждый элемент: иначе все элементы выборки одинаковы,
     // и клиент, который дедуплицирует результат, получит один элемент вместо пяти.
     items.push(buildObject('', fields, new Deterministic(`${seed}|${i}`), 0))
   }
-  return items
+  return { ...empty, items }
 }
