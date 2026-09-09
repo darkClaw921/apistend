@@ -29,8 +29,8 @@ import { Check, CircleDashed, Zap } from 'lucide-react'
  *   apps/api/src/routes/webhooks.ts и панель на экране «Вебхуки», установка
  *   к себе — MIT и docker-compose.yml.
  * - «Без лимита на количество запросов». Лимиты как раз есть и применяются:
- *   apps/api/src/lib/rate-limit.ts, шлюз отдаёт 429/503 и заголовки
- *   x-ratelimit-*, и соседние секции про это прямо пишут. Правда в другом —
+ *   apps/api/src/lib/rate-limit.ts, шлюз отдаёт 429/503 (а у Wildberries ещё
+ *   и заголовки x-ratelimit-*), и соседние секции про это прямо пишут. Правда в другом —
  *   у нас нет квот и счёта за объём (auth.ts отдаёт usage.hasLimits: false).
  *
  * Главная правка — устройство секции. Разделения Free/Pro в продукте сегодня

@@ -1,5 +1,6 @@
 export * from './services.ts'
 export * from './errors.ts'
+export * from './native-headers.ts'
 export * from './catalog.ts'
 export * from './tunnel.ts'
 export * from './events.ts'

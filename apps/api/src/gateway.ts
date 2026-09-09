@@ -1,14 +1,15 @@
 import type { Prisma } from '@prisma/client'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Scenario, ServiceCode } from '@apistend/shared'
-import { SCENARIOS, SERVICE_LIST, SERVICE_PROFILES, isServiceCode, buildScenarioError, timeoutError } from '@apistend/shared'
+import { SCENARIOS, SERVICE_LIST, SERVICE_PROFILES, isServiceCode, buildScenarioError, timeoutError, nativeResponseHeaders } from '@apistend/shared'
 import { MockEngine } from '@apistend/mock-engine'
 import { extractRawKey, resolveApiKey } from './lib/api-key.ts'
 import { checkRateLimit } from './lib/rate-limit.ts'
+import { rateSnapshot, withLiveTime } from './lib/native-response.ts'
 import { enqueueRequestLog } from './lib/log-buffer.ts'
 import { recordKeyUsage } from './lib/key-usage.ts'
 import { maskSecretsInText } from './lib/keys.ts'
-import { requestId as newRequestId } from './lib/ids.ts'
+import { requestId as newRequestId, gatewayRequestId } from './lib/ids.ts'
 import { unauthorizedError } from '@apistend/shared'
 import { appTokenExpired, resolveAppToken, type AppContext } from './b24/tokens.ts'
 import { callAppMethod, buildTimeEnvelope, scopeForMethod } from './b24/app-methods.ts'
@@ -60,7 +61,23 @@ function rollRandomError(errorRatePercent: number): boolean {
   return errorRatePercent > 0 && Math.random() * 100 < errorRatePercent
 }
 
+/**
+ * Точный Content-Type ответа, который просит профиль сервиса.
+ *
+ * Fastify по своей инициативе дописывает `; charset=utf-8` к любому типу со словом
+ * json, если параметра нет. Для Битрикс24 это совпадает с боем, а для Ozon и WB —
+ * нет: они отдают голый application/json. Возвращаем заголовок к боевому виду
+ * в onSend, когда сериализация уже позади и дописывать больше некому.
+ */
+const wantedContentType = new WeakMap<FastifyRequest, string>()
+
 export function registerGateway(app: FastifyInstance): void {
+  app.addHook('onSend', async (req, reply, payload) => {
+    const wanted = wantedContentType.get(req)
+    if (wanted && reply.getHeader('content-type') !== wanted) reply.header('content-type', wanted)
+    return payload
+  })
+
   // Единый префикс: /v1/{service}/*
   app.all<{ Params: { service: string; '*': string } }>('/v1/:service/*', async (req, reply) => {
     const service = req.params.service
@@ -100,8 +117,13 @@ async function handle(
   rawPath: string,
 ): Promise<unknown> {
   const startedAt = process.hrtime.bigint()
-  const reqId = newRequestId()
+  const startedMs = Date.now()
+  // Идентификатор сразу в родном для сервиса формате: он уйдёт и в боевой заголовок,
+  // и в тело ошибки, и в журнал — везде одно и то же значение.
+  const reqId = gatewayRequestId(service)
   const profile = SERVICE_PROFILES[service]
+
+  wantedContentType.set(req, profile.native.contentType)
 
   // Открытый доступ из браузера — отличие песочницы от боя, и оно помечается.
   // Access-Control-* ставит CORS-плагин (см. isGatewayPath в server.ts).
@@ -126,7 +148,11 @@ async function handle(
     // Тело обязано совпадать с боевым до последнего поля, поэтому причина уходит
     // в служебный заголовок: иначе отладка превращается в гадание.
     const err = unauthorizedError(service, reqId)
-    reply.headers(err.headers).header('x-request-id', reqId)
+    // Лимит здесь не считается: субъекта, на котором его вести, ещё нет —
+    // значит и заголовков остатка быть не может. Отдаём то, что боевой сервис
+    // отдаёт вместе с 401: свой Content-Type и свой идентификатор запроса.
+    reply.headers(err.headers).headers(nativeResponseHeaders(service, { requestId: reqId }))
+    reply.header('x-apistend-request-id', reqId)
     reply.header('x-apistend-error', rawKey ? 'key-unknown-or-revoked' : 'key-missing')
     return reply.code(err.status).send(err.body)
   }
@@ -141,7 +167,8 @@ async function handle(
 
     if (!resolved.apiKey.services.includes(service)) {
       const err = buildScenarioError(service, 'invalid_token', reqId)
-      reply.headers(err.headers).header('x-request-id', reqId)
+      reply.headers(err.headers).headers(nativeResponseHeaders(service, { requestId: reqId }))
+      reply.header('x-apistend-request-id', reqId)
       // В заголовке — только код: HTTP разрешает в значениях лишь ASCII, и русский
       // текст ронял ответ целиком (ERR_INVALID_CHAR), подменяя конверт ошибки
       // сервиса внутренней ошибкой Fastify. Подробности — в теле и в журнале.
@@ -161,12 +188,42 @@ async function handle(
       : rawPath
 
   const rate = checkRateLimit(rateSubject, service, Date.now())
-  reply.header('x-ratelimit-limit', String(rate.limit))
-  reply.header('x-ratelimit-remaining', String(rate.remaining))
 
   let scenario = parseScenario(req.headers['x-mock-scenario'] as string | undefined)
   if (!rate.allowed) scenario = 'rate_limit'
   else if (scenario === 'success' && rollRandomError(sandbox.errorRate)) scenario = 'server_error'
+
+  // Лимит, вызванный заголовком X-Mock-Scenario, обязан выглядеть как настоящий:
+  // 429 при Remaining: 300 — состояние, невозможное в бою, и клиент, который
+  // на этих числах отлаживает свой откат, отладит его неверно.
+  const limited = scenario === 'rate_limit'
+  const snapshot = limited
+    ? (() => {
+        const retryInSeconds = profile.rateLimit.retryAfterSeconds ?? rate.retryInSeconds
+        return {
+          ...rateSnapshot(rate),
+          remaining: 0,
+          retryInSeconds,
+          // Восстановление не может наступить раньше, чем разрешён повтор:
+          // «остаток 0, полное восстановление через секунду» — состояние,
+          // из которого клиент сделает неверный вывод о том, когда ему можно.
+          resetInSeconds: Math.max(rate.resetInSeconds, retryInSeconds),
+        }
+      })()
+    : rateSnapshot(rate)
+
+  // Боевые заголовки сервиса — один раз на весь ответ, каким бы он ни вышел.
+  // Их состав задаёт профиль: X-Ratelimit-* документированы только у Wildberries,
+  // идентификатор запроса есть у WB и Ozon и отсутствует у Битрикс24.
+  reply.headers(nativeResponseHeaders(service, { requestId: reqId, rate: snapshot, limited }))
+  // Собственный идентификатор APIStend есть всегда: по нему запрос ищется
+  // в кабинете и в Management API даже там, где боевого заголовка не бывает.
+  reply.header('x-apistend-request-id', reqId)
+  if (limited && profile.native.retryHeader === null) {
+    // Сервис паузу не подсказывает — подсказываем от своего имени, не подделывая
+    // чужой заголовок: клиент, читающий x-apistend-*, знает, что говорит с моком.
+    reply.header('x-apistend-retry-after', String(snapshot.retryInSeconds))
+  }
 
   // Контекст приложения: состояние портала, а не сгенерированные данные.
   // app.info обязан отвечать про ЭТО приложение, placement.get — про виджеты,
@@ -176,7 +233,6 @@ async function handle(
     if (answer) {
       const payload = JSON.stringify(answer.body)
       reply
-        .header('x-request-id', reqId)
         .header('x-apistend-source', 'app-context')
         .header('x-apistend-app', appCtx.app.clientId)
       enqueueRequestLog({
@@ -199,7 +255,7 @@ async function handle(
         // Ответ зависит от состояния портала и движком не восстанавливается — храним.
         responseBody: payload.slice(0, 8_000),
       })
-      return reply.code(answer.status).type('application/json; charset=utf-8').send(payload)
+      return reply.code(answer.status).type(profile.native.contentType).send(payload)
     }
   }
 
@@ -223,7 +279,7 @@ async function handle(
     await sleep(30_000)
     const err = timeoutError(service, reqId)
     const timeoutPayload = JSON.stringify(err.body)
-    reply.headers(err.headers).header('x-request-id', reqId).header('x-apistend-scenario', 'timeout')
+    reply.headers(err.headers).header('x-apistend-scenario', 'timeout')
     // Таймаут — тоже вызов, и в журнале он нужен больше остальных: именно его
     // ищут, когда разбираются, почему интеграция висела полминуты. Раньше эта
     // ветка выходила до записи, и вызова в журнале не было вовсе.
@@ -246,7 +302,7 @@ async function handle(
       responseHeaders: {},
       responseBody: timeoutPayload,
     })
-    return reply.code(err.status).type('application/json; charset=utf-8').send(timeoutPayload)
+    return reply.code(err.status).type(profile.native.contentType).send(timeoutPayload)
   }
 
   // Задержка: явный X-Mock-Delay > задержка метода > настройка песочницы.
@@ -257,7 +313,14 @@ async function handle(
   await sleep(delay)
 
   // Движок уже отдал готовую строку — второй JSON.stringify под нагрузкой лишний.
-  const payload = result.serialized
+  // У Битрикс24 к ней добавляется живой конверт time: портал прикладывает его
+  // к КАЖДОМУ ответу, и клиентские библиотеки (тот же bitrix24-php-sdk) разбирают
+  // его как обязательное поле. Без него интеграция, работавшая в бою, падала бы
+  // на разборе ответа мока — ровно то, чего быть не должно.
+  const payload =
+    service === 'bitrix24' && result.responseSource !== 'error'
+      ? withLiveTime(result.serialized, startedMs)
+      : result.serialized
   const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000
 
   enqueueRequestLog({
@@ -288,9 +351,9 @@ async function handle(
     responseBody: result.responseSource === 'error' ? payload.slice(0, 8_000) : null,
   })
 
-  reply.headers(result.headers).header('x-request-id', reqId)
+  reply.headers(result.headers)
   // Отдаём готовую строку: Fastify не будет сериализовать объект ещё раз.
-  return reply.code(result.status).type('application/json; charset=utf-8').send(payload)
+  return reply.code(result.status).type(profile.native.contentType).send(payload)
 }
 
 /**

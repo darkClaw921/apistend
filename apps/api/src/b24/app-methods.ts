@@ -71,6 +71,10 @@ export function buildTimeEnvelope(startedAt: number): Record<string, unknown> {
     date_start: new Date(startedAt).toISOString().replace(/\.\d{3}Z$/, '+00:00'),
     date_finish: new Date().toISOString().replace(/\.\d{3}Z$/, '+00:00'),
     operating: 0,
+    // Заголовков лимита у Битрикс24 нет: остаток ресурсоёмкости клиент читает
+    // отсюда. Документация лимитов прямо предписывает ориентироваться
+    // на operating_reset_at — момент, когда счётчик operating обнулится.
+    operating_reset_at: Math.floor(Date.now() / 1000) + 600,
   }
 }
 

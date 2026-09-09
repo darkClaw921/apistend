@@ -123,7 +123,12 @@ type LogRow = Prisma.RequestLogGetPayload<{ select: typeof LOG_SELECT }>
 
 const logItem = z.object({
   id: z.string(),
-  /** req_8f3c21a0d7 — то, что видно в заголовке X-Request-Id ответа мока. */
+  /**
+   * Публичный идентификатор вызова — то же значение, что клиент увидел
+   * в ответе: у Wildberries это X-Request-Id, у Ozon x-o3-trace-id,
+   * у Битрикс24 своего заголовка нет, и там это req_8f3c21a0d7
+   * из X-APIStend-Request-Id.
+   */
   publicId: z.string(),
   timestamp: z.date(),
   serviceCode: z.string(),
@@ -430,8 +435,9 @@ export function registerV1LogsRoutes(app: FastifyInstance): void {
       summary: 'Карточка запроса',
       description:
         'Полная запись журнала: заголовки и тело запроса, заголовки и тело ответа. ' +
-        'Идентификатором служит и внутренний `id` из списка, и публичный `publicId` (`req_…`) ' +
-        'из заголовка `X-Request-Id` — искать по тому, что оказалось под рукой.\n\n' +
+        'Идентификатором служит и внутренний `id` из списка, и публичный `publicId` — ' +
+        'то самое значение, которое клиент увидел в ответе (`X-APIStend-Request-Id`, ' +
+        'он же `X-Request-Id` у Wildberries и `x-o3-trace-id` у Ozon).\n\n' +
         'Тело успешного ответа в журнале не хранится: оно детерминировано и восстанавливается ' +
         'тем же движком, что его сформировал, — байт в байт. Такой ответ помечен ' +
         '`responseBodyReproduced: true`. Если метод к этому времени выбыл из каталога, ' +

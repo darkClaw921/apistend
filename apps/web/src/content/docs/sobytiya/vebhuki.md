@@ -230,5 +230,5 @@ const ok = expected.length === got.length &&
 - [Доставка на localhost](/docs/sobytiya/dostavka-na-localhost) — как события попадают на вашу машину
 - [Журнал доставок](/docs/sobytiya/zhurnal-dostavok) — состояния доставки и повтор вручную
 - [CLI apistend](/docs/sobytiya/cli) — команды агента и отправка событий из терминала
-- [Заголовки честности](/docs/mok-api/zagolovki-chestnosti) — метаданные, которые шлюз добавляет к ответам моков
+- [Заголовки ответа](/docs/mok-api/zagolovki-chestnosti) — метаданные, которые шлюз добавляет к ответам моков
 :::

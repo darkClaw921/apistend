@@ -61,7 +61,9 @@ x-apistend-did-you-mean: /v3/product/info/list, /v3/product/list, /v4/product/in
 ## Лимиты и ошибки
 
 Профиль — около 50 запросов в секунду на аккаунт продавца, ёмкость ведра 50,
-при превышении `429` и `Retry-After: 1`.
+при превышении `429`. Заголовков лимита Ozon не отдаёт ни на успешном ответе,
+ни на 429 — их и в песочнице нет; рекомендуемая пауза приходит в собственном
+заголовке `X-APIStend-Retry-After`.
 
 Конверт ошибки — `rpcStatus`: `{"code": …, "message": …, "details": []}`.
 Поле `details` присутствует всегда, даже пустое: клиенты на строгих типах
@@ -95,5 +97,5 @@ x-apistend-did-you-mean: /v3/product/info/list, /v3/product/list, /v4/product/in
 
 :::next
 - [Wildberries](/docs/mok-api/wildberries) — тот же разбор для WB
-- [Заголовки честности](/docs/mok-api/zagolovki-chestnosti) — как отличить `schema` от `example`
+- [Заголовки ответа](/docs/mok-api/zagolovki-chestnosti) — как отличить `schema` от `example`
 :::

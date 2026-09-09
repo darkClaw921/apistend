@@ -57,13 +57,15 @@ curl -s localhost:8080/wb/api/v3/warehouses -H "Authorization: $KEY"
 
 ## Лимиты и ошибки
 
-Профиль — до 300 запросов в минуту, ёмкость ведра 300, при превышении `429`,
-`Retry-After: 20` и `X-Ratelimit-Retry: 20`.
+Профиль — до 300 запросов в минуту, ёмкость ведра 300, при превышении `429`
+и `X-Ratelimit-Retry: 20`. Wildberries — единственный из трёх, кто отдаёт
+заголовки лимита: `X-Ratelimit-Limit`, `-Remaining` и `-Reset` приходят
+с каждым ответом, `-Retry` добавляется к 429.
 
 Конверт ошибки самый подробный из трёх:
 
 ```json
-{"title":"Not Found","detail":"path not found","code":"NotFound","requestId":"req_19a5b88215","origin":"ag-gateway","status":404,"statusText":"not_found","timestamp":"2026-09-09T10:15:46.639Z"}
+{"title":"Not Found","detail":"path not found","code":"NotFound","requestId":"0dcf08a519c89fe14c98a7c727fd116f","origin":"ag-gateway","status":404,"statusText":"not_found","timestamp":"2026-09-09T10:15:46.639Z"}
 ```
 
 Поле `origin` различается: `ag-api` у ошибок сервиса, `ag-gateway` —
@@ -91,5 +93,5 @@ curl -s localhost:8080/wb/api/v3/warehouses -H "Authorization: $KEY"
 
 :::next
 - [Лимиты](/docs/mok-api/limity) — ведро, burst и заголовки
-- [Заголовки честности](/docs/mok-api/zagolovki-chestnosti) — происхождение каждого ответа
+- [Заголовки ответа](/docs/mok-api/zagolovki-chestnosti) — происхождение каждого ответа
 :::

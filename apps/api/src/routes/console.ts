@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify'
 import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
-import { SCENARIOS, SERVICE_CODES, SERVICE_PROFILES } from '@apistend/shared'
+import { SCENARIOS, SERVICE_CODES, SERVICE_PROFILES, nativeResponseHeaders } from '@apistend/shared'
 import { prisma } from '../db.ts'
 import { requireSandbox } from '../lib/guard.ts'
 import { engine } from '../gateway.ts'
-import { requestId as newRequestId } from '../lib/ids.ts'
+import { gatewayRequestId } from '../lib/ids.ts'
+import { rateSnapshot, withLiveTimeObject } from '../lib/native-response.ts'
 import { enqueueRequestLog } from '../lib/log-buffer.ts'
 import { checkRateLimit } from '../lib/rate-limit.ts'
 import { env } from '../env.ts'
@@ -81,8 +82,9 @@ export function registerConsoleRoutes(app: FastifyInstance): void {
       })
     }
 
-    const reqId = newRequestId()
+    const reqId = gatewayRequestId(input.serviceCode)
     const startedAt = process.hrtime.bigint()
+    const startedMs = Date.now()
 
     const rate = checkRateLimit(apiKey.id, input.serviceCode, Date.now())
     const scenario = rate.allowed ? input.scenario : 'rate_limit'
@@ -120,7 +122,29 @@ export function registerConsoleRoutes(app: FastifyInstance): void {
     const delay = input.delayMs ?? Math.min(ctx.sandbox.latencyMs, result.latencyMs)
     if (delay > 0) await new Promise((r) => setTimeout(r, delay))
 
-    const payload = result.serialized
+    // Консоль показывает ответ целиком, как его увидит клиентская библиотека:
+    // боевые заголовки сервиса поверх служебных заголовков APIStend и живой
+    // конверт time у Битрикс24. Иначе один и тот же вызов выглядел бы в консоли
+    // и в curl по-разному.
+    const headers = {
+      ...result.headers,
+      ...nativeResponseHeaders(input.serviceCode, {
+        requestId: reqId,
+        rate:
+          scenario === 'rate_limit'
+            ? { ...rateSnapshot(rate), remaining: 0 }
+            : rateSnapshot(rate),
+        limited: scenario === 'rate_limit',
+      }),
+      'x-apistend-request-id': reqId,
+    }
+    const body = withLiveTimeObject(
+      input.serviceCode,
+      result.responseSource === 'error',
+      result.body,
+      startedMs,
+    )
+    const payload = JSON.stringify(body ?? null)
     const durationMs = Math.round(Number(process.hrtime.bigint() - startedAt) / 1_000_000)
     const upstreamUrl = result.method ? `${result.method.upstreamHost}${input.path}` : null
 
@@ -145,7 +169,7 @@ export function registerConsoleRoutes(app: FastifyInstance): void {
       requestBody: input.body
         ? maskSecretsInText(JSON.stringify(input.body)).slice(0, 8_000)
         : null,
-      responseHeaders: result.headers,
+      responseHeaders: headers,
       // См. комментарий в gateway.ts: детерминированные тела не храним.
       responseBody: result.responseSource === 'error' ? payload.slice(0, 8_000) : null,
     })
@@ -155,8 +179,8 @@ export function registerConsoleRoutes(app: FastifyInstance): void {
       status: result.status,
       durationMs,
       sizeBytes: Buffer.byteLength(payload),
-      headers: result.headers,
-      body: result.body,
+      headers,
+      body,
       scenario,
       responseSource: result.responseSource,
       readiness: result.method?.readiness ?? null,

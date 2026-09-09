@@ -155,5 +155,5 @@ group: Начало
 
 :::next
 - [Совместимость и ограничения](/docs/nachalo/sovmestimost-i-ogranicheniya) — где мок совпадает с боем, а где заведомо нет
-- [Заголовки честности](/docs/mok-api/zagolovki-chestnosti) — как прочитать происхождение ответа
+- [Заголовки ответа](/docs/mok-api/zagolovki-chestnosti) — как прочитать происхождение ответа
 :::

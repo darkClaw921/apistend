@@ -47,7 +47,7 @@ export function bitrix24Error(key: B24ErrorKey, status: number, description?: st
   return {
     status,
     body: { error: code, error_description: description ?? defaultDescription },
-    headers: { 'content-type': 'application/json; charset=utf-8' },
+    headers: { 'content-type': SERVICE_PROFILES.bitrix24.native.contentType },
   }
 }
 
@@ -57,7 +57,7 @@ export function ozonError(status: number, grpcCode: number, message: string): Mo
   return {
     status,
     body: { code: grpcCode, message, details: [] },
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': SERVICE_PROFILES.ozon.native.contentType },
   }
 }
 
@@ -80,7 +80,7 @@ export function wildberriesError(
       statusText: title.toLowerCase().replace(/\s+/g, '_'),
       timestamp: new Date().toISOString(),
     },
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': SERVICE_PROFILES.wildberries.native.contentType },
   }
 }
 
@@ -118,10 +118,11 @@ export function buildScenarioError(
         return ozonError(401, OZON_GRPC.UNAUTHENTICATED, 'Client-Id and Api-Key headers are required')
       case 'not_found':
         return ozonError(404, OZON_GRPC.NOT_FOUND, 'Not Found')
-      case 'rate_limit': {
-        const res = ozonError(429, OZON_GRPC.RESOURCE_EXHAUSTED, 'Too Many Requests')
-        return { ...res, headers: { ...res.headers, 'retry-after': String(profile.rateLimit.retryAfterSeconds ?? 1) } }
-      }
+      case 'rate_limit':
+        // Retry-After сюда не подставляется: Ozon документирует сам лимит,
+        // но не заголовок с паузой, и в живых ответах его нет. Рекомендуемую
+        // паузу шлюз отдаёт своим x-apistend-retry-after — там ей и место.
+        return ozonError(429, OZON_GRPC.RESOURCE_EXHAUSTED, 'Too Many Requests')
       case 'server_error':
         return ozonError(500, OZON_GRPC.INTERNAL, 'Internal error')
     }
@@ -132,21 +133,12 @@ export function buildScenarioError(
       return wildberriesError(401, 'Unauthorized', 'invalid API access token: empty main token', requestId)
     case 'not_found':
       return wildberriesError(404, 'Not Found', 'path not found', requestId, 'ag-gateway')
-    case 'rate_limit': {
-      const res = wildberriesError(429, 'Too Many Requests', 'rate limit exceeded', requestId)
-      return {
-        ...res,
-        headers: {
-          ...res.headers,
-          // Ёмкость, а не средняя скорость: клиент по этому заголовку считает,
-          // сколько запросов может отправить сразу. Тот же смысл, что у шлюза.
-          'x-ratelimit-limit': String(profile.rateLimit.burst),
-          'x-ratelimit-remaining': '0',
-          'x-ratelimit-retry': String(profile.rateLimit.retryAfterSeconds ?? 20),
-          'retry-after': String(profile.rateLimit.retryAfterSeconds ?? 20),
-        },
-      }
-    }
+    case 'rate_limit':
+      // X-Ratelimit-* здесь не выставляются: остаток и паузу знает только шлюз,
+      // он же ведёт бакет, и он добавляет боевые заголовки к любому ответу WB —
+      // и успешному, и этому. Два владельца одного заголовка уже давали
+      // Limit: 2 при Remaining: 49.
+      return wildberriesError(429, 'Too Many Requests', 'rate limit exceeded', requestId)
     case 'server_error':
       return wildberriesError(500, 'Internal Server Error', 'internal error', requestId)
   }

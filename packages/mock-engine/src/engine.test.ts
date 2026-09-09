@@ -115,14 +115,44 @@ describe('конверты ошибок различаются по сервис
     expect(Array.isArray(b.details)).toBe(true)
   })
 
-  it('лимит: у Ozon 429 с Retry-After, у Wildberries 429 с X-Ratelimit-*', () => {
+  it('лимит: у Ozon и Wildberries 429, у Битрикс24 — 503', () => {
     const oz = engine.handle(req({ service: 'ozon', httpMethod: 'POST', path: '/v3/posting/fbs/list', scenario: 'rate_limit' }))
     expect(oz.status).toBe(429)
-    expect(oz.headers['retry-after']).toBeDefined()
 
     const wb = engine.handle(req({ httpMethod: 'GET', path: '/api/v3/warehouses', scenario: 'rate_limit' }))
     expect(wb.status).toBe(429)
-    expect(wb.headers['x-ratelimit-retry']).toBeDefined()
+
+    // Заголовков лимита движок не ставит никому: остаток знает только шлюз,
+    // он же ведёт ведро. Два владельца одного заголовка уже давали
+    // Limit: 2 при Remaining: 49.
+    expect(oz.headers['x-ratelimit-limit']).toBeUndefined()
+    expect(wb.headers['x-ratelimit-limit']).toBeUndefined()
+
+    const b24 = engine.handle(req({ service: 'bitrix24', httpMethod: 'POST', path: '/rest/crm.deal.list', scenario: 'rate_limit' }))
+    expect(b24.status).toBe(503)
+  })
+
+  it('Content-Type — как у боевого сервиса, а не один на всех', () => {
+    // Битрикс24 отдаёт charset, Ozon и WB — голый application/json. Клиентские
+    // библиотеки сверяют этот заголовок, и «почти такой же» тут не считается.
+    const b24 = engine.handle(req({ service: 'bitrix24', httpMethod: 'POST', path: '/rest/crm.deal.list' }))
+    expect(b24.headers['content-type']).toBe('application/json; charset=utf-8')
+
+    const wb = engine.handle(req({ httpMethod: 'GET', path: '/api/v3/warehouses' }))
+    expect(wb.headers['content-type']).toBe('application/json')
+  })
+
+  it('статичный конверт time из примеров Битрикс24 в ответ не попадает', () => {
+    // В документации он записан датами того дня, когда писали пример. Живой
+    // конверт приписывает шлюз — он один знает, сколько шёл запрос.
+    const examples = engine.catalog('bitrix24').filter((m) => m.responseSource === 'example').slice(0, 200)
+    expect(examples.length).toBeGreaterThan(0)
+    for (const m of examples) {
+      const r = engine.handle(req({ service: 'bitrix24', httpMethod: m.httpMethod, path: concrete(m.path) }))
+      if (r.body !== null && typeof r.body === 'object' && !Array.isArray(r.body)) {
+        expect(r.body, m.id).not.toHaveProperty('time')
+      }
+    }
   })
 })
 

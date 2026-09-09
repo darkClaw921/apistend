@@ -76,6 +76,44 @@ export interface WebhookProfile {
   readonly notes: string
 }
 
+/**
+ * Заголовки ответа боевого сервиса.
+ *
+ * Обещание продукта — «поменял базовый адрес, и всё работает» — держится не только
+ * на теле ответа: клиентские библиотеки читают заголовки. Поэтому набор заголовков
+ * тоже принадлежит профилю сервиса, а не шлюзу: у каждого сервиса он свой,
+ * и лишний чужой заголовок так же неверен, как отсутствующий свой.
+ *
+ * В этой структуре только то, что подтверждено документацией или живыми ответами.
+ * Ничего не додумываем: заголовок, которого в бою нет, учит клиента неправде
+ * ровно так же, как выдуманное поле в теле.
+ */
+export interface NativeHeadersProfile {
+  /**
+   * Content-Type успешного ответа — дословно, вместе с наличием или отсутствием charset.
+   * Битрикс24 отдаёт `; charset=utf-8`, Ozon и WB — голый application/json.
+   */
+  readonly contentType: string
+  /** Имя заголовка с идентификатором запроса. null — сервис его не отдаёт вовсе. */
+  readonly requestIdHeader: string | null
+  /**
+   * Как выглядит этот идентификатор в бою. Формат важен: он попадает и в тело
+   * ошибки (у WB поле requestId прямо названо дубликатом заголовка X-Request-Id),
+   * и в тикеты поддержки, и в регулярные выражения чужих парсеров.
+   */
+  readonly requestIdFormat: 'hex32' | 'hex16' | null
+  /**
+   * Отдаёт ли сервис X-Ratelimit-* на КАЖДОМ ответе.
+   *
+   * Документированы они только у Wildberries. У Битрикс24 остаток лимита живёт
+   * в теле, в конверте `time` (`operating`, `operating_reset_at`), а заголовков нет:
+   * шлюз, приписывающий их, учит клиента читать то, чего в бою не будет.
+   */
+  readonly rateLimitHeaders: boolean
+  /** Имя заголовка с паузой до повторной попытки при превышении лимита. */
+  readonly retryHeader: string | null
+}
+
 export interface ServiceProfile {
   readonly code: ServiceCode
   readonly title: string
@@ -95,6 +133,8 @@ export interface ServiceProfile {
   /** Токен цвета сервиса. Используется только как маркер: точка, буква логотипа. */
   readonly brandToken: `brand-${string}`
   readonly rateLimit: RateLimitProfile
+  /** Заголовки ответа, как их отдаёт боевой сервис. */
+  readonly native: NativeHeadersProfile
   readonly webhook: WebhookProfile
   /**
    * Значим ли HTTP-глагол при поиске метода.
@@ -132,6 +172,18 @@ export const SERVICE_PROFILES: Readonly<Record<ServiceCode, ServiceProfile>> = {
       statusCode: 503,
       retryAfterSeconds: null,
       description: 'Около 2 запросов в секунду, бакет 50. При превышении — 503 QUERY_LIMIT_EXCEEDED',
+    },
+    native: {
+      contentType: 'application/json; charset=utf-8',
+      // Портал не отдаёт идентификатора запроса в заголовке: в документации его нет,
+      // а в тикеты поддержки клиенты приносят конверт time из тела.
+      requestIdHeader: null,
+      requestIdFormat: null,
+      // Заголовков лимита у Битрикс24 нет вовсе — про остаток ресурса клиент узнаёт
+      // из полей time.operating и time.operating_reset_at, документация лимитов
+      // прямо предписывает ориентироваться на них.
+      rateLimitHeaders: false,
+      retryHeader: null,
     },
     webhook: {
       contentType: 'application/x-www-form-urlencoded',
@@ -173,6 +225,17 @@ export const SERVICE_PROFILES: Readonly<Record<ServiceCode, ServiceProfile>> = {
       statusCode: 429,
       retryAfterSeconds: 1,
       description: 'Около 50 запросов в секунду на аккаунт продавца',
+    },
+    native: {
+      contentType: 'application/json',
+      // x-o3-trace-id — сквозной идентификатор платформы O3: он описан в OpenAPI
+      // самого Ozon (Performance API, заголовки ответа) и приходит в живых ответах.
+      requestIdHeader: 'x-o3-trace-id',
+      requestIdFormat: 'hex16',
+      // Ozon документирует сам лимит (около 50 запросов в секунду), но не заголовки
+      // с остатком, и в ответах их нет. Приписывать их — учить клиента читать пустоту.
+      rateLimitHeaders: false,
+      retryHeader: null,
     },
     webhook: {
       contentType: 'application/json',
@@ -220,6 +283,17 @@ export const SERVICE_PROFILES: Readonly<Record<ServiceCode, ServiceProfile>> = {
       statusCode: 429,
       retryAfterSeconds: 20,
       description: 'До 300 запросов в минуту (Маркетплейс, персональный токен), заголовки X-Ratelimit-*',
+    },
+    native: {
+      contentType: 'application/json',
+      // Спецификация WB прямо называет поле requestId в теле ошибки дубликатом
+      // заголовка X-Request-Id, а пример значения — 32 шестнадцатеричных знака.
+      requestIdHeader: 'x-request-id',
+      requestIdFormat: 'hex32',
+      // Единственный из трёх, кто документирует X-Ratelimit-Limit / -Remaining /
+      // -Reset и отдаёт их на каждом ответе.
+      rateLimitHeaders: true,
+      retryHeader: 'x-ratelimit-retry',
     },
     webhook: {
       contentType: 'application/json',

@@ -29,7 +29,14 @@ export interface RateVerdict {
   allowed: boolean
   limit: number
   remaining: number
+  /**
+   * Секунды до полного восстановления всплеска — ровно тот смысл, который
+   * документация Wildberries вкладывает в X-Ratelimit-Reset: «через сколько секунд
+   * допустимый всплеск восстановится до значения X-Ratelimit-Limit».
+   */
   resetInSeconds: number
+  /** Секунды до следующего разрешённого запроса — смысл X-Ratelimit-Retry. */
+  retryInSeconds: number
 }
 
 export function checkRateLimit(apiKeyId: string, service: ServiceCode, now = Date.now()): RateVerdict {
@@ -59,7 +66,10 @@ export function checkRateLimit(apiKeyId: string, service: ServiceCode, now = Dat
     // а не среднюю скорость: клиент по нему считает, сколько может отправить сразу.
     limit: burst,
     remaining: Math.max(0, Math.floor(bucket.tokens)),
-    resetInSeconds: Math.max(1, Math.ceil((1 - bucket.tokens) / perMs / 1000)),
+    // Полное восстановление ведра, а не появление одного токена: клиент по этому
+    // числу понимает, когда снова сможет работать в полную силу.
+    resetInSeconds: Math.max(0, Math.ceil((burst - bucket.tokens) / perMs / 1000)),
+    retryInSeconds: Math.max(1, Math.ceil((1 - bucket.tokens) / perMs / 1000)),
   }
 }
 

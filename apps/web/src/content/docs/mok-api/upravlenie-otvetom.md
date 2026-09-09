@@ -46,21 +46,27 @@ HTTP/1.1 503 Service Unavailable
 
 ```
 HTTP/1.1 429 Too Many Requests
-retry-after: 1
+content-type: application/json
+x-o3-trace-id: ac95155fa992e856
+x-apistend-retry-after: 1
 
 {"code":8,"message":"Too Many Requests","details":[]}
 ```
+
+Заголовка с паузой у Ozon нет — рекомендуемую даёт `X-APIStend-Retry-After`.
 
 == Wildberries
 
 ```
 HTTP/1.1 429 Too Many Requests
+content-type: application/json
+x-request-id: 36170ddaa809e86093bdbecb84fd2482
 x-ratelimit-limit: 300
 x-ratelimit-remaining: 0
+x-ratelimit-reset: 20
 x-ratelimit-retry: 20
-retry-after: 20
 
-{"title":"Too Many Requests","detail":"rate limit exceeded","code":"TooManyRequests","requestId":"req_c4f3a56fe7","origin":"ag-api","status":429,"statusText":"too_many_requests","timestamp":"2026-09-09T10:15:55.763Z"}
+{"title":"Too Many Requests","detail":"rate limit exceeded","code":"TooManyRequests","requestId":"36170ddaa809e86093bdbecb84fd2482","origin":"ag-api","status":429,"statusText":"too_many_requests","timestamp":"2026-09-09T10:15:55.763Z"}
 ```
 :::
 
@@ -137,6 +143,6 @@ curl -s -X POST localhost:8080/wb/api/v3/stocks/777 -d '{"skus":["999","888"]}' 
   три секунды.
 
 :::next
-- [Заголовки честности](/docs/mok-api/zagolovki-chestnosti) — как прочитать происхождение ответа
+- [Заголовки ответа](/docs/mok-api/zagolovki-chestnosti) — как прочитать происхождение ответа
 - [Лимиты](/docs/mok-api/limity) — ведро, burst и коды превышения
 :::

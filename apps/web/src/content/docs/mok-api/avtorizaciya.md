@@ -85,7 +85,7 @@ Wildberries шлёт токен без префикса `Bearer`; шлюз пр�
 Ответ Wildberries на запрос без ключа — родной конверт сервиса, код 401:
 
 ```json
-{"title":"Unauthorized","detail":"invalid API access token: empty main token","code":"Unauthorized","requestId":"req_a5eb998114","origin":"ag-api","status":401,"statusText":"unauthorized","timestamp":"2026-09-09T10:15:46.623Z"}
+{"title":"Unauthorized","detail":"invalid API access token: empty main token","code":"Unauthorized","requestId":"0dcf08a519c89fe14c98a7c727fd116f","origin":"ag-api","status":401,"statusText":"unauthorized","timestamp":"2026-09-09T10:15:46.623Z"}
 ```
 
 У Bitrix24 в той же ситуации — `{"error":"NO_AUTH_FOUND"}` с кодом 401,
