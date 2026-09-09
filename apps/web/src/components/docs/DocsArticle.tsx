@@ -19,11 +19,12 @@ export function DocsArticle({ page }: { page: DocPage }) {
   return (
     <main className="min-w-0 flex-1 px-[16px] py-[28px] sm:px-[28px] lg:px-[44px]">
       {/*
-        Без mx-auto: раскладку центрирует общий контейнер (DocsChrome), а здесь
-        текст держится рядом с деревом разделов. Второе центрирование отрывало
-        колонку от дерева и оставляло справа пустоту.
+        Колонка текста вместе с оглавлением центрируется в том, что осталось
+        от окна после дерева разделов. Ширина ограничена здесь и только здесь:
+        строка длиннее 760 px читается заметно хуже, а растягивать текст
+        на всю ширину монитора незачем.
       */}
-      <div className="flex max-w-[1120px] gap-[44px]">
+      <div className="mx-auto flex max-w-[1120px] gap-[44px]">
         <article className="min-w-0 max-w-[760px] flex-1">
           {page.group ? (
             <p className="mb-[8px] text-[11px] font-semibold tracking-[0.6px] text-text-tertiary uppercase">
