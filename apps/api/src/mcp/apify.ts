@@ -7,6 +7,7 @@ import { engine } from '../gateway.ts'
 import { requestId } from '../lib/ids.ts'
 import { actorSnapshot, findActor, searchActors, type ActorSnapshotEntry } from './apify-actors.ts'
 import { sampleFromActorOutput } from './actor-output.ts'
+import { recordRun, runById, runByDatasetId } from './run-registry.ts'
 
 /**
  * Мок MCP-сервера Apify.
@@ -58,16 +59,13 @@ function mockId(prefix: string, seed: string): string {
   return out
 }
 
-/** Инструменты, за которыми стоит метод каталога REST. */
+/**
+ * Инструменты, за которыми стоит метод каталога REST.
+ *
+ * Запуск и датасет сюда не входят: их отдаёт реестр запусков, а к движку они
+ * обращаются только когда идентификатор пришёл со стороны — не от call-actor.
+ */
 const REST_BACKED: Record<string, { method: string; path: (a: Record<string, unknown>) => string }> = {
-  'get-actor-run': {
-    method: 'GET',
-    path: (a) => `/v2/actor-runs/${encodeURIComponent(String(a.runId))}`,
-  },
-  'get-dataset-items': {
-    method: 'GET',
-    path: (a) => `/v2/datasets/${encodeURIComponent(String(a.datasetId))}/items`,
-  },
   'get-key-value-store-record': {
     method: 'GET',
     path: (a) =>
@@ -145,6 +143,12 @@ function throughEngine(httpMethod: string, path: string, body: unknown): McpTool
   return result(answer.serialized, answer.body, answer.responseSource === 'error')
 }
 
+/** Число из аргументов инструмента: клиенты присылают и `2`, и `"2"`. */
+function numberArg(value: unknown): number | undefined {
+  const n = typeof value === 'string' ? Number(value) : value
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined
+}
+
 function requireString(args: Record<string, unknown>, name: string): string {
   const value = args[name]
   if (typeof value !== 'string' || value.length === 0) {
@@ -173,7 +177,7 @@ function actorCard(actor: ActorSnapshotEntry): string {
 function noSnapshot(): never {
   throw new RpcError(
     RPC.INTERNAL_ERROR,
-    'Снимок акторов не собран: запустите APIFY_TOKEN=… node scripts/vendor-apify-actors.mjs. ' +
+    'Снимок акторов не собран: запустите node scripts/vendor-apify-actors.mjs. ' +
     'Выдумывать акторов мок не станет.',
   )
 }
@@ -334,6 +338,9 @@ export const apifyMcpServer: McpServerDefinition = {
           JSON.stringify(items.slice(0, 3), null, 2),
           '```',
         ].join('\n')
+        // Запуск запоминается: следующий вызов агента — get-dataset-items по
+        // этому датасету, и он обязан вернуть те же строки, а не образец REST.
+        recordRun({ run, datasetId, items })
         return result(text, { run, datasetId, items })
       }
 
@@ -346,6 +353,29 @@ export const apifyMcpServer: McpServerDefinition = {
           'мок наружу не ходит. В бою этот инструмент создаёт обращение.',
           { delivered: false, sandbox: true },
         )
+      }
+
+      case 'get-actor-run': {
+        const recorded = runById(requireString(args, 'runId'))
+        if (recorded) return result(JSON.stringify({ data: recorded.run }), { data: recorded.run })
+        return throughEngine('GET', `/v2/actor-runs/${encodeURIComponent(String(args.runId))}`, args)
+      }
+
+      case 'get-dataset-items': {
+        const recorded = runByDatasetId(requireString(args, 'datasetId'))
+        if (!recorded) {
+          return throughEngine(
+            'GET',
+            `/v2/datasets/${encodeURIComponent(String(args.datasetId))}/items`,
+            args,
+          )
+        }
+        // offset и limit — как у боевого инструмента: их и передаёт клиент,
+        // разбирающий выдачу по частям.
+        const offset = numberArg(args.offset) ?? 0
+        const limit = numberArg(args.limit)
+        const page = recorded.items.slice(offset, limit === undefined ? undefined : offset + limit)
+        return result(JSON.stringify(page), page)
       }
 
       default: {

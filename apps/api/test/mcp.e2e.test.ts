@@ -254,6 +254,62 @@ describe('мок mcp.apify.com', () => {
     expect(Date.parse(a.run.finishedAt)).toBeGreaterThan(Date.parse(a.run.startedAt))
   })
 
+  it('актор без схемы датасета отдаёт строки, показанные автором в readme', async () => {
+    // У memo23/wildberries-scraper storages.dataset пуст, зато в readme автор
+    // показал строки результата — ради них readme и снимается.
+    const res = await rpc('/apify/mcp', 'tools/call', {
+      name: 'call-actor',
+      arguments: { actor: 'memo23/wildberries-scraper', input: { queries: ['кроссовки'] } },
+    })
+    const structured = (res.frame as {
+      result: { structuredContent: { items: Record<string, unknown>[] } }
+    }).result.structuredContent
+    expect(structured.items.length).toBeGreaterThan(0)
+    // Карточка товара, а не образец из спецификации: имя, цена, продавец.
+    const product = structured.items[0]!
+    expect(product).toHaveProperty('name')
+    expect(product).toHaveProperty('priceSale')
+    expect(product).toHaveProperty('supplierName')
+  })
+
+  it('датасет запуска отдаёт те же строки, что вернул сам запуск', async () => {
+    // Обычный путь агента: запустил актора, в следующем вызове забрал датасет.
+    // До реестра запусков второй вызов уходил в мок REST и отвечал образцом
+    // из спецификации — разрывом там, где боевой Apify его не даёт.
+    const run = await rpc('/apify/mcp', 'tools/call', {
+      name: 'call-actor',
+      arguments: { actor: 'memo23/wildberries-scraper', input: { queries: ['кроссовки'] } },
+    })
+    const structured = (run.frame as {
+      result: { structuredContent: { datasetId: string; run: { id: string }; items: unknown[] } }
+    }).result.structuredContent
+
+    const items = await rpc('/apify/mcp', 'tools/call', {
+      name: 'get-dataset-items',
+      arguments: { datasetId: structured.datasetId },
+    })
+    expect((items.frame as { result: { structuredContent: unknown } }).result.structuredContent)
+      .toEqual(structured.items)
+
+    // Первая строка по limit — та же, что первая строка запуска.
+    const first = await rpc('/apify/mcp', 'tools/call', {
+      name: 'get-dataset-items',
+      arguments: { datasetId: structured.datasetId, limit: 1 },
+    })
+    expect((first.frame as { result: { structuredContent: unknown[] } }).result.structuredContent)
+      .toEqual(structured.items.slice(0, 1))
+
+    // И сам запуск виден по своему идентификатору.
+    const info = await rpc('/apify/mcp', 'tools/call', {
+      name: 'get-actor-run',
+      arguments: { runId: structured.run.id },
+    })
+    const data = (info.frame as { result: { structuredContent: { data: { id: string; status: string } } } })
+      .result.structuredContent.data
+    expect(data.id).toBe(structured.run.id)
+    expect(data.status).toBe('SUCCEEDED')
+  })
+
   it('инструмент, которому нужна живая сеть, честно отказывает', async () => {
     const res = await rpc('/apify/mcp', 'tools/call', {
       name: 'fetch-apify-docs',
@@ -263,7 +319,7 @@ describe('мок mcp.apify.com', () => {
     expect(error.message).toContain('живой сети')
   })
 
-  it('get-dataset-items отвечает тем же телом, что и REST-шлюз', async () => {
+  it('чужой датасет, не из запуска, отвечает тем же телом, что и REST-шлюз', async () => {
     const viaMcp = await rpc('/apify/mcp', 'tools/call', {
       name: 'get-dataset-items',
       arguments: { datasetId: 'abc123' },

@@ -13,11 +13,18 @@
  *   • сборка     — GET /v2/acts/{id}/builds/{buildId}, из неё actorDefinition:
  *       input                    — схема входа (её же показывает интерфейс Apify),
  *       output                   — схема выхода, если объявлена,
- *       storages.dataset.fields  — схема полей датасета, то есть форма результата.
+ *       storages.dataset.fields  — схема полей датасета, то есть форма результата;
+ *   • примеры строк результата из readme сборки — но не сам readme.
  *
- * Что НЕ снимается: readme, changelog и исходники сборки. Это мегабайты текста,
- * к интерфейсу актора они отношения не имеют, а readmeSummary карточки для
- * описания достаточно.
+ * Зачем понадобился readme. Форму датасета описал далеко не каждый автор: в
+ * снимке на 1 200 акторов поля объявлены у 429. Остальные показывают результат
+ * иначе — куском JSON в readme, под заголовком «Output». Это тоже слова автора
+ * о собственном акторе, только другой формой, и без них мок обязан отдавать
+ * пустой массив там, где боевой запуск вернул бы карточки товаров.
+ *
+ * Что НЕ снимается: сам readme целиком, changelog и исходники сборки. Это
+ * мегабайты текста, к интерфейсу актора они отношения не имеют, а readmeSummary
+ * карточки для описания достаточно.
  *
  * Все 57 тысяч акторов магазина не снимаются намеренно: это 114 тысяч запросов
  * и сотни мегабайт, из которых для отладки нужны единицы.
@@ -29,10 +36,11 @@
  *      верхушка отдаёт мировой топ (Instagram, TikTok, Google Maps), и ни одного
  *      актора под задачу российского продавца в снимок бы не попало.
  *
- * Токен читается ТОЛЬКО из переменной окружения APIFY_TOKEN и никуда не пишется:
- * ни в снимок, ни в манифест, ни в лог.
+ * Токен читается ТОЛЬКО из переменной окружения APIFY_TOKEN, необязателен и
+ * никуда не пишется: ни в снимок, ни в манифест, ни в лог.
  *
- *   APIFY_TOKEN=… node scripts/vendor-apify-actors.mjs [сколько]
+ *   node scripts/vendor-apify-actors.mjs [сколько]
+ *   APIFY_TOKEN=… node scripts/vendor-apify-actors.mjs [сколько]   # выше лимит
  *
  * Снимок сохраняется сжатым (actors.json.gz): в разжатом виде тысяча акторов —
  * это десятки мегабайт почти целиком из схем входа, а gzip сжимает их в разы.
@@ -45,11 +53,12 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+/**
+ * Токен необязателен: карточки, сборки и магазин у публичных акторов открыты
+ * и анонимно — снимок собирается из того же, что видит любой посетитель
+ * apify.com. С токеном выше лимит запросов, только и всего.
+ */
 const token = process.env.APIFY_TOKEN
-if (!token) {
-  console.error('Нужна переменная окружения APIFY_TOKEN. В репозиторий токен не кладём.')
-  process.exit(1)
-}
 
 const WANTED = Number(process.argv[2] ?? 1000)
 
@@ -78,7 +87,7 @@ const CONCURRENCY = 8
 
 async function api(path) {
   const response = await fetch(`${API}${path}`, {
-    headers: { authorization: `Bearer ${token}` },
+    headers: token ? { authorization: `Bearer ${token}` } : {},
   })
   if (!response.ok) throw new Error(`${response.status} на ${path}`)
   const json = await response.json()
@@ -156,6 +165,61 @@ async function fetchSelection(limit) {
   return [...byId.values()].slice(0, limit)
 }
 
+/** Сколько примеров строк результата берём у одного актора и какого размера. */
+const MAX_OUTPUT_EXAMPLES = 5
+const MAX_EXAMPLE_BYTES = 8_192
+
+/**
+ * Примеры строк результата, показанные автором в readme.
+ *
+ * Нужны там, где форма датасета не объявлена: у большинства акторов магазина
+ * `storages.dataset` пуст, а результат показан куском JSON под заголовком
+ * «Output». Берём именно эти куски — и отделяем их от примеров ВХОДА, которых
+ * в том же readme обычно больше:
+ *
+ *   1) заголовок раздела над блоком: «Output», «Result», «Sample dataset» —
+ *      прямое указание автора, что ниже результат, а не вход;
+ *   2) ключи объекта: если половина и больше совпадает со свойствами схемы
+ *      входа, это вход, как бы ни назывался раздел.
+ *
+ * Ничего не достраиваем и не чиним: блок, который не разбирается как JSON,
+ * пропускается целиком. Домысленный пример хуже отсутствующего — по нему
+ * агент напишет разбор полей, которых у боевого актора нет.
+ */
+function outputExamplesFromReadme(readme, inputSchema) {
+  if (typeof readme !== 'string' || readme.length === 0) return []
+
+  const inputKeys = new Set(Object.keys(inputSchema?.properties ?? {}))
+  const examples = []
+  // Заголовок, ближайший сверху к блоку кода, — по нему и судим о разделе.
+  const blocks = [...readme.matchAll(/```json\s*\n([\s\S]*?)```/g)]
+  for (const block of blocks) {
+    const before = readme.slice(0, block.index)
+    const heading = [...before.matchAll(/^#{1,6}\s*(.+)$/gm)].pop()?.[1] ?? ''
+    const saysOutput = /output|result|dataset|sample|результат/i.test(heading)
+
+    let parsed
+    try {
+      parsed = JSON.parse(block[1])
+    } catch {
+      continue
+    }
+    const rows = Array.isArray(parsed) ? parsed : [parsed]
+    for (const row of rows) {
+      if (row === null || typeof row !== 'object' || Array.isArray(row)) continue
+      const keys = Object.keys(row)
+      if (keys.length === 0) continue
+      const fromInput = keys.filter((k) => inputKeys.has(k)).length
+      if (fromInput * 2 >= keys.length) continue
+      if (!saysOutput && inputKeys.size > 0 && fromInput > 0) continue
+      if (JSON.stringify(row).length > MAX_EXAMPLE_BYTES) continue
+      examples.push(row)
+      if (examples.length >= MAX_OUTPUT_EXAMPLES) return examples
+    }
+  }
+  return examples
+}
+
 /**
  * Схемы одного актора.
  *
@@ -170,7 +234,8 @@ async function fetchActor(item) {
   if (!buildId) return { actor, definition: null }
   try {
     const build = await api(`/acts/${actor.id}/builds/${buildId}`)
-    return { actor, definition: build.actorDefinition ?? null }
+    // readme берём из сборки: в actorDefinition он тоже есть, но не у всех.
+    return { actor, definition: build.actorDefinition ?? null, readme: build.readme ?? build.actorDefinition?.readme ?? null }
   } catch {
     // Сборка приватная или удалена — актор остаётся без схем, но в снимке есть.
     return { actor, definition: null }
@@ -247,11 +312,14 @@ for (const entry of raw) {
     // Схема выхода: объявленная явно и/или выведенная из полей датасета.
     outputSchema: definition?.output ?? null,
     datasetFields: definition?.storages?.dataset ?? null,
+    // Строки результата, показанные автором в readme. Пусто — автор их не показал.
+    outputExamples: outputExamplesFromReadme(entry.readme, definition?.input),
   })
 }
 
 const withInput = actors.filter((a) => a.inputSchema !== null).length
 const withOutput = actors.filter((a) => a.outputSchema !== null || a.datasetFields !== null).length
+const withOutputExamples = actors.filter((a) => a.outputExamples.length > 0).length
 
 const snapshot = {
   capturedAt: new Date().toISOString(),
@@ -261,12 +329,14 @@ const snapshot = {
     'Адресный поиск по русским площадкам плюс добор верхушкой магазина по ' +
     'популярности. Весь магазин (57 тысяч акторов) не снимается: это сотни ' +
     'мегабайт ради единиц, с которыми реально пишут интеграции. Схемы входа ' +
-    'и выхода взяты из actorDefinition последней сборки. Readme и исходники ' +
+    'и выхода взяты из actorDefinition последней сборки. Из readme сборки взяты ' +
+    'только примеры строк результата — сам readme, changelog и исходники ' +
     'не снимаются.',
   searchQueries: RU_QUERIES,
   actorCount: actors.length,
   withInputSchema: withInput,
   withOutputSchema: withOutput,
+  withOutputExamples,
   actors,
 }
 
@@ -294,6 +364,7 @@ const meta = {
   actorCount: snapshot.actorCount,
   withInputSchema: snapshot.withInputSchema,
   withOutputSchema: snapshot.withOutputSchema,
+  withOutputExamples: snapshot.withOutputExamples,
 }
 const metaText = `${JSON.stringify(meta, null, 2)}\n`
 writeFileSync(join(outDir, 'actors-meta.json'), metaText)
