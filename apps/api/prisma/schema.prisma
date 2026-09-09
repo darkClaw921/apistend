@@ -74,6 +74,15 @@ model Sandbox {
   latencyMs Int        @default(250)
   // Доля случайных ошибок, 0–50 %.
   errorRate Int        @default(5)
+  /**
+   * Открыт ли доступ к песочнице по MCP для ИИ-агента.
+   *
+   * Выключено по умолчанию, и это не осторожность ради осторожности: агент,
+   * получивший ключ, может вызывать моки и читать журнал запросов — то есть
+   * видеть тела запросов, которые писал человек. Такое включают осознанно,
+   * а не обнаруживают включённым.
+   */
+  mcpEnabled Boolean  @default(false)
   lastResetAt DateTime @default(now())
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt

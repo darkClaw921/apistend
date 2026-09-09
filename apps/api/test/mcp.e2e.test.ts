@@ -77,6 +77,9 @@ beforeAll(async () => {
       project: 'e2e',
       latencyMs: 0,
       errorRate: 0,
+      // Доступ по MCP по умолчанию выключен и включается в настройках.
+      // Здесь проверяются сами инструменты, а выключатель — в mcp-settings.e2e.
+      mcpEnabled: true,
     },
   })
   const generated = generateKey('server')

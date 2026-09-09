@@ -134,6 +134,16 @@ async function sandboxOf(req: FastifyRequest) {
   if (!resolved) {
     throw new RpcError(RPC.INVALID_PARAMS, 'Ключ неизвестен или отозван.')
   }
+  if (!resolved.sandbox.mcpEnabled) {
+    // Отказ намеренно объясняет, где включить: агент передаст это человеку,
+    // а «доступ запрещён» без продолжения заставило бы искать причину вслепую.
+    throw new RpcError(
+      RPC.INVALID_PARAMS,
+      'Доступ по MCP для этой песочницы выключен. Включите его в кабинете APIStend, ' +
+      'раздел «Настройки» → «Доступ для ИИ-агента». Открытая часть — каталог методов — ' +
+      'работает и без включения: list_services, search_catalog, describe_method.',
+    )
+  }
   return resolved
 }
 

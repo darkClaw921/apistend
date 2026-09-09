@@ -12,6 +12,7 @@ import { MCP_EXPOSED_HEADERS } from './mcp/transport.ts'
 import { registerAuthRoutes } from './routes/auth.ts'
 import { registerCatalogRoutes } from './routes/catalog.ts'
 import { registerKeyRoutes } from './routes/keys.ts'
+import { registerSettingsRoutes } from './routes/settings.ts'
 import { registerConsoleRoutes } from './routes/console.ts'
 import { registerLogRoutes } from './routes/logs.ts'
 import { registerWebhookRoutes } from './routes/webhooks.ts'
@@ -232,6 +233,7 @@ export async function buildServer() {
   registerAuthRoutes(app)
   registerCatalogRoutes(app)
   registerKeyRoutes(app)
+  registerSettingsRoutes(app)
   registerConsoleRoutes(app)
   registerLogRoutes(app)
   registerWebhookRoutes(app)
