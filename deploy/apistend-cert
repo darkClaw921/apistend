@@ -29,6 +29,8 @@ DOMAIN="${APISTEND_DOMAIN:-apistend.ru}"
 EMAIL="${APISTEND_CERT_EMAIL:-admin@${DOMAIN}}"
 HOOK="/usr/local/bin/apistend-beget-dns-hook"
 ENV_FILE="/etc/apistend/beget.env"
+ACME_HOOK="/usr/local/bin/apistend-acme-dns-hook"
+ACME_DNS_CREDS="/etc/apistend/acme-dns.json"
 WEBROOT="/var/www/html"
 
 # Имена для режима names. Только те поддомены, которые действительно
@@ -46,8 +48,47 @@ require_root() {
 case "${1:-}" in
   wildcard)
     require_root
-    [ -x "$HOOK" ] || die "нет hook-скрипта $HOOK — сначала выполните apistend-cert install-hook"
-    [ -f "$ENV_FILE" ] || die "нет $ENV_FILE с BEGET_LOGIN и BEGET_PASSWORD: без доступа к DNS маску выпустить нельзя"
+
+    # Два пути к одной цели. Способ выбирается явно вторым аргументом, а без него —
+    # автоматически, и тогда ключ от API идёт первым: он не зависит ни от чего,
+    # кроме себя, тогда как acme-dns работает только после того, как в зоне
+    # появилась ссылка CNAME, а этого шага может ещё не быть.
+    via="${2:-auto}"
+    case "$via" in
+      beget) ;;
+      acme-dns) ;;
+      auto)
+        if [ -f "$ENV_FILE" ] && [ -x "$HOOK" ]; then via=beget
+        elif [ -f "$ACME_DNS_CREDS" ] && [ -x "$ACME_HOOK" ]; then via=acme-dns
+        else die "нечем подтвердить владение доменом: нужен либо $ENV_FILE (API Beget), либо $ACME_DNS_CREDS (acme-dns)"
+        fi
+        ;;
+      *) die "неизвестный способ «$via», ожидались beget или acme-dns" ;;
+    esac
+
+    if [ "$via" = "acme-dns" ]; then
+      [ -f "$ACME_DNS_CREDS" ] && [ -x "$ACME_HOOK" ] || die "acme-dns не настроен: нет $ACME_DNS_CREDS или $ACME_HOOK"
+
+      # Проверяем делегирование ДО обращения к Let's Encrypt.
+      #
+      # Без ссылки CNAME проверка всё равно провалится, но провалится она уже
+      # после запроса сертификата — а неудачные проверки Let's Encrypt считает
+      # и ограничивает. Дешевле спросить у DNS самому.
+      expected=$(python3 -c 'import json;print(json.load(open("'"$ACME_DNS_CREDS"'"))["fulldomain"])')
+      actual=$(dig +short CNAME "_acme-challenge.$DOMAIN" | sed 's/\.$//')
+      if [ "$actual" != "$expected" ]; then
+        die "в зоне нет ссылки на acme-dns: _acme-challenge.$DOMAIN должен быть CNAME на $expected (сейчас: ${actual:-запись отсутствует})"
+      fi
+
+      auth_hook="$ACME_HOOK auth"
+      cleanup_hook="$ACME_HOOK cleanup"
+      echo "apistend-cert: подтверждение через собственный acme-dns"
+    else
+      [ -f "$ENV_FILE" ] && [ -x "$HOOK" ] || die "нет $ENV_FILE с BEGET_LOGIN и BEGET_PASSWORD либо hook-скрипта $HOOK"
+      auth_hook="$HOOK auth"
+      cleanup_hook="$HOOK cleanup"
+      echo "apistend-cert: подтверждение через API Beget"
+    fi
 
     # --cert-name задаёт имя набора файлов. Оно же станет именем конфигурации
     # продления, поэтому меняться между выпусками не должно: иначе рядом появится
@@ -57,8 +98,8 @@ case "${1:-}" in
       --cert-name "$DOMAIN" \
       --preferred-challenges dns-01 \
       --manual \
-      --manual-auth-hook "$HOOK auth" \
-      --manual-cleanup-hook "$HOOK cleanup" \
+      --manual-auth-hook "$auth_hook" \
+      --manual-cleanup-hook "$cleanup_hook" \
       --deploy-hook "systemctl reload nginx" \
       -d "$DOMAIN" -d "*.$DOMAIN"
     ;;
@@ -96,6 +137,11 @@ case "${1:-}" in
     [ -f "$src" ] || die "рядом нет beget-dns-hook.py"
     install -m 0755 "$src" "$HOOK"
     echo "apistend-cert: hook установлен в $HOOK"
+    acme_src="$(dirname "$(readlink -f "$0")")/acme-dns-hook.sh"
+    if [ -f "$acme_src" ]; then
+      install -m 0755 "$acme_src" "$ACME_HOOK"
+      echo "apistend-cert: hook acme-dns установлен в $ACME_HOOK"
+    fi
     ;;
 
   status)
@@ -106,7 +152,10 @@ case "${1:-}" in
     cat >&2 <<'USAGE'
 apistend-cert <команда>
 
-  wildcard      выпустить сертификат на домен и *.домен (dns-01, нужен /etc/apistend/beget.env)
+  wildcard [способ]
+                выпустить сертификат на домен и *.домен (dns-01).
+                Способ: beget (ключ от API) или acme-dns (делегированная зона);
+                без аргумента выбирается тот, что настроен
   names [имена] выпустить сертификат на перечисленные имена (http-01, секретов не требует)
   renew         продлить всё выпущенное (вызывается по расписанию certbot.timer)
   install-hook  положить beget-dns-hook.py в /usr/local/bin
