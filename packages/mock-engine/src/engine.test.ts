@@ -398,11 +398,11 @@ describe('даты фикстур живут относительно сегод
   })
 
   it('расстояния между датами сохраняются', () => {
-    // В примере заказы стоят 4, 6 и 9 марта: разрыв в двое и в пятеро суток.
-    // Сдвиг общий, поэтому разрывы обязаны остаться теми же.
-    const dates = datesOf(call('/api/v1/supplier/orders').serialized).map((d) => Date.parse(d))
+    // В примере отзывы датированы 12 и 20 августа и 26 сентября: разрыв в восемь
+    // и в тридцать семь суток. Сдвиг общий, поэтому разрывы обязаны остаться теми же.
+    const dates = datesOf(call('/api/v1/feedbacks').serialized).map((d) => Date.parse(d))
     const gaps = dates.slice(1).map((d, i) => Math.round((d - dates[i]!) / 86_400_000))
-    expect(gaps).toEqual([2, 3])
+    expect(gaps).toEqual([8, 37])
   })
 
   it('срок действия уезжает в будущее, а не схлопывается в сегодня', () => {
@@ -507,5 +507,157 @@ describe('справочники и постраничный обход', () => 
     expect(characteristic).toBeDefined()
     // Проекция каталога подменяла имя характеристики названием карточки.
     expect(characteristic.name).not.toBe(cards[0]!.title)
+  })
+})
+
+
+describe('журнал заказов: события во времени, а не одна дата', () => {
+  const now = new Date()
+  const wb = (path: string, httpMethod: string, query: Record<string, string> = {}, body: unknown = null) =>
+    JSON.parse(
+      engine.handle({
+        service: 'wildberries', httpMethod, path, query, headers: {}, body,
+        requestId: 'r', scenario: 'success', now, salt: 'medium',
+      }).serialized,
+    ) as any
+
+  const day = (offset: number) =>
+    new Date(now.getTime() - offset * 86_400_000).toISOString().slice(0, 10)
+
+  it('заказы разложены по дням окна, а не стоят одной датой', () => {
+    const orders = wb('/api/v1/supplier/orders', 'GET', { dateFrom: day(89) }) as Array<Record<string, string>>
+    const days = new Set(orders.map((o) => o.date!.slice(0, 10)))
+    // В примере из документации все заказы датированы 4 марта 2022 года: витрина
+    // за последние 90 дней строилась по одной точке.
+    expect(orders.length).toBeGreaterThan(50)
+    expect(days.size).toBeGreaterThan(30)
+    expect([...days].every((d) => d >= day(90))).toBe(true)
+  })
+
+  it('dateFrom сужает выдачу, а не игнорируется', () => {
+    const wide = wb('/api/v1/supplier/orders', 'GET', { dateFrom: day(89) }) as unknown[]
+    const narrow = wb('/api/v1/supplier/orders', 'GET', { dateFrom: day(7) }) as unknown[]
+    const narrower = wb('/api/v1/supplier/orders', 'GET', { dateFrom: day(2) }) as unknown[]
+    // Три разных значения давали один и тот же ответ — инкрементальную выгрузку
+    // на таком стенде проверить нечем.
+    expect(wide.length).toBeGreaterThan(narrow.length)
+    expect(narrow.length).toBeGreaterThan(narrower.length)
+  })
+
+  it('исходы смешанные: без выкупов не считается процент выкупа', () => {
+    const orders = wb('/api/v1/supplier/orders', 'GET', { dateFrom: day(30) }) as Array<Record<string, boolean>>
+    const cancels = orders.filter((o) => o.isCancel === true).length
+    expect(cancels).toBeGreaterThan(0)
+    // Раньше isCancel: true стоял у всех — половина воронки не считалась вовсе.
+    expect(cancels).toBeLessThan(orders.length)
+  })
+
+  it('в продажи попадают выкупы и возвраты, но не отмены', () => {
+    const sales = wb('/api/v1/supplier/sales', 'GET', { dateFrom: day(60) }) as Array<Record<string, any>>
+    expect(sales.length).toBeGreaterThan(0)
+    // Возврат уносит выплату обратно и нумеруется с R — по этому клиент его и узнаёт.
+    expect(sales.some((s) => Number(s.forPay) < 0)).toBe(true)
+    expect(sales.some((s) => Number(s.forPay) > 0)).toBe(true)
+    expect(sales.every((s) => Number(s.forPay) !== 0)).toBe(true)
+    expect(sales.some((s) => String(s.saleID).startsWith('R'))).toBe(true)
+  })
+
+  it('лента заказов знает все свои статусы, а не один', () => {
+    const feed = wb('/api/analytics/v1/order-feed', 'POST', {}, {})
+    const statuses = new Set((feed.data.orders as Array<Record<string, string>>).map((o) => o.status))
+    expect(statuses.size).toBeGreaterThan(1)
+    expect([...statuses].every((s) => ['created', 'buyout', 'cancel', 'return'].includes(String(s)))).toBe(true)
+  })
+
+  it('заказы покрывают каталог, а не первые двадцать карточек', () => {
+    const orders = wb('/api/v1/supplier/orders', 'GET', { dateFrom: day(89) }) as Array<Record<string, number>>
+    const nmIds = new Set(orders.map((o) => o.nmId))
+    const cards = wb('/content/v2/get/cards/list', 'POST', {}, { settings: { cursor: { limit: 100 } } })
+      .cards as Array<Record<string, number>>
+    // Товар из каталога должен находиться и в статистике: иначе юнит-экономику
+    // по своей карточке не посчитать.
+    expect(nmIds.size).toBeGreaterThan(100)
+    expect(cards.filter((c) => nmIds.has(c.nmID!)).length).toBeGreaterThan(cards.length / 2)
+  })
+
+  it('журнал детерминирован в пределах суток', () => {
+    const a = engine.handle({
+      service: 'wildberries', httpMethod: 'GET', path: '/api/v1/supplier/orders',
+      query: { dateFrom: day(10) }, headers: {}, body: null, requestId: 'r',
+      scenario: 'success', now: new Date('2026-05-05T09:00:00Z'), salt: 'medium',
+    }).serialized
+    const b = engine.handle({
+      service: 'wildberries', httpMethod: 'GET', path: '/api/v1/supplier/orders',
+      query: { dateFrom: day(10) }, headers: {}, body: null, requestId: 'r',
+      scenario: 'success', now: new Date('2026-05-05T21:30:00Z'), salt: 'medium',
+    }).serialized
+    expect(a).toBe(b)
+  })
+})
+
+describe('аналитика отвечает за запрошенный период', () => {
+  const now = new Date()
+  const wb = (path: string, body: unknown) => JSON.parse(
+    engine.handle({
+      service: 'wildberries', httpMethod: 'POST', path, query: {}, headers: {}, body,
+      requestId: 'r', scenario: 'success', now, salt: 'medium',
+    }).serialized,
+  ) as any
+
+  const day = (offset: number) => new Date(now.getTime() - offset * 86_400_000).toISOString().slice(0, 10)
+
+  it('воронка возвращает период запроса, а не интервал из документации', () => {
+    const body = wb('/api/analytics/v3/sales-funnel/products', {
+      currentPeriod: { start: day(30), end: day(0) },
+    })
+    const period = body.data.products[0].statistic.selected.period
+    // Отвечала интервалом 2023-06-01…2024-03-01 независимо от запроса.
+    expect(period.start.slice(0, 10)).toBe(day(30))
+    expect(period.end.slice(0, 10)).toBe(day(0))
+  })
+
+  it('чем шире период, тем больше заказов', () => {
+    const forDays = (days: number) => wb('/api/analytics/v3/sales-funnel/products', {
+      currentPeriod: { start: day(days), end: day(0) },
+    }).data.products[0].statistic.selected.orderCount as number
+    const week = forDays(7)
+    const quarter = forDays(90)
+    // Пока цифры брались из карточки товара, неделя и квартал давали одно число,
+    // и выбор периода на витрине проверить было нечем.
+    expect(quarter).toBeGreaterThan(week)
+  })
+
+  it('история отдаёт ряд по дням, а не три точки с одной датой', () => {
+    const body = wb('/api/analytics/v3/sales-funnel/products/history', {
+      period: { start: day(14), end: day(0) },
+      nmIDs: [],
+    })
+    const history = body[0].history as Array<Record<string, any>>
+    const dates = history.map((h) => h.date as string)
+    expect(new Set(dates).size).toBe(dates.length)
+    expect(dates.length).toBeGreaterThan(10)
+    // Ряд с одинаковыми числами графиком не является.
+    expect(new Set(history.map((h) => h.orderCount)).size).toBeGreaterThan(1)
+  })
+
+  it('реклама считает позиции по товарам кабинета и по дням окна', () => {
+    const stats = JSON.parse(engine.handle({
+      service: 'wildberries', httpMethod: 'GET', path: '/adv/v3/fullstats',
+      query: { ids: '1', begin: day(14), end: day(0) }, headers: {}, body: null,
+      requestId: 'r', scenario: 'success', now, salt: 'medium',
+    }).serialized) as Array<Record<string, any>>
+
+    const pool = new Set(
+      (JSON.parse(engine.handle({
+        service: 'wildberries', httpMethod: 'POST', path: '/content/v2/get/cards/list',
+        query: {}, headers: {}, body: { settings: { cursor: { limit: 200 } } },
+        requestId: 'r', scenario: 'success', now, salt: 'medium',
+      }).serialized).cards as Array<Record<string, number>>).map((c) => c.nmID),
+    )
+    // Позиции считались по nm 221725278, которого в кабинете нет.
+    const booster = stats[0]!.boosterStats as Array<Record<string, number>>
+    expect(booster.every((b) => pool.has(b.nm!))).toBe(true)
+    const days = (stats[0]!.days as Array<Record<string, string>>).map((d) => d.date!.slice(0, 10))
+    expect(days.every((d) => d >= day(14) && d <= day(0))).toBe(true)
   })
 })

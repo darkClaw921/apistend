@@ -10,6 +10,8 @@ import { buildFromSchema } from './sampler.ts'
 import { projectExample } from './project.ts'
 import { productPool } from './dataset.ts'
 import { isDefaultPage, readPage } from './page.ts'
+import { endOfWindow, readWindow } from './window.ts'
+import { eventsInWindow, orderTimeline } from './timeline.ts'
 import { LruCache } from './cache.ts'
 import { dayBucket, shiftDatesToToday } from './dates.ts'
 
@@ -191,10 +193,11 @@ export class MockEngine {
     // тело завтра стало бы неправдой. Определённость остаётся в тех границах, в которых
     // она возможна: один и тот же вызов в пределах дня даёт один и тот же ответ.
     const cacheKey = `${method.id}|${req.salt}|${page.offset}:${page.limit}|${dayBucket(req.now)}`
-    // Кешируем только страницу по умолчанию. Ключей у произвольной пагинации столько,
-    // сколько клиент придумает смещений, и кеш из полезного превращается в способ
-    // занять память: собрать страницу заново стоит доли миллисекунды.
-    const cacheable = isDefaultPage(page)
+    // Кешируем только страницу по умолчанию и только запрос без своего периода.
+    // Ключей у произвольной пагинации столько, сколько клиент придумает смещений,
+    // а у периода — сколько придумает дат; кеш из полезного превратился бы в способ
+    // занять память. Собрать страницу заново стоит доли миллисекунды.
+    const cacheable = isDefaultPage(page) && !readWindow(req.query, req.body, req.now).explicit
     const cached = cacheable ? this.bodyCache.get(cacheKey) : undefined
     if (cached) {
       return {
@@ -211,12 +214,20 @@ export class MockEngine {
     const det = new Deterministic(`${req.salt}|${method.id}`)
     // Каталог зависит только от объёма датасета: иначе «тот же товар» в двух
     // методах снова оказался бы разными товарами.
-    const ctx = { det, now: req.now, pool: productPool(req.salt), page }
+    const pool = productPool(req.salt)
+    const window = readWindow(req.query, req.body, req.now)
+    // Журнал собирается лениво и только для методов, которым он нужен: методов
+    // статистики в каталоге десятки, а всего методов — две с половиной тысячи.
+    const events = () => eventsInWindow(orderTimeline(req.salt, pool, req.now), window.from, endOfWindow(window))
+    const ctx = { det, now: req.now, pool, page, window, events }
     const built = this.buildBody(index, method, ctx)
     // Даты — последним шагом, поверх любого яруса: и пример из документации,
     // и сгенерированное по схеме тело одинаково датированы днём, когда писали
     // спецификацию, а клиент считает витрину за последние 7–90 дней.
-    const body = shiftDatesToToday(built.body, req.now)
+    // Ярусы примера и схемы датируются внутри buildBody — до проекции. Здесь
+    // остаётся только generic-конверт: он собирается из профиля сервиса и дат
+    // документации не содержит вовсе.
+    const body = built.dated ? built.body : shiftDatesToToday(built.body, req.now)
 
     const serialized = JSON.stringify(body ?? null)
     if (cacheable) this.bodyCache.set(cacheKey, { body, serialized })
@@ -237,12 +248,19 @@ export class MockEngine {
     index: ServiceIndex,
     method: CatalogMethod,
     ctx: FillContext,
-  ): { body: unknown; source: 'example' | 'schema' | 'generic' } {
+  ): { body: unknown; source: 'example' | 'schema' | 'generic'; dated: boolean } {
     // Ярус 1: пример из спецификации. Форму берём из документации, товары — из каталога
     // песочницы: иначе каталог, заказы и финансы говорили бы про разные артикулы.
     if (method.responseExample !== null && method.responseExample !== undefined) {
       const example = stripStaticTime(index.bundle.serviceCode, method.responseExample)
-      return { body: projectExample(example, ctx), source: 'example' }
+      // Сдвиг — ДО проекции. Тело из документации датировано днём, когда её писали,
+      // и общий сдвиг переносит его в сегодняшний день целиком, сохраняя расстояния.
+      // Проекция затем ставит свои даты там, где они значат конкретное: событие
+      // журнала, день ряда, границы запрошенного периода. В обратном порядке
+      // сдвиг считался бы по нашим же свежим датам, выходил нулевым — и всё, чего
+      // проекция не коснулась, оставалось бы в позапрошлом году.
+      const projected = projectExample(shiftDatesToToday(example, ctx.now), ctx)
+      return { body: projected.value, source: 'example', dated: true }
     }
 
     // Ярус 2: схема + детерминированный филлер.
@@ -251,11 +269,18 @@ export class MockEngine {
         ? inlineSchema(index.spec, method)
         : { $ref: method.responseSchemaRef }
       const built = buildFromSchema(schema, index.spec, ctx, method.id)
-      if (built !== null) return { body: built, source: 'schema' }
+      // Проекция нужна и здесь. Схема даёт форму и товарные значения, но не знает
+      // ни о журнале заказов, ни о запрошенном периоде: сгенерированный по ней
+      // временной ряд — это три точки с одной датой, а «лента заказов» — список,
+      // где у всех записей один статус. Событиями и днями занимается проекция.
+      if (built !== null) {
+        const projected = projectExample(shiftDatesToToday(built, ctx.now), ctx)
+        return { body: projected.value, source: 'schema', dated: true }
+      }
     }
 
     // Ярус 3: generic. Схемы нет — врать нечем, отдаём честный пустой конверт.
-    return { body: genericBody(index.bundle.serviceCode, method), source: 'generic' }
+    return { body: genericBody(index.bundle.serviceCode, method), source: 'generic', dated: false }
   }
 
   /** Диагностика для /health: видно, работает ли кеш и не переполнен ли он. */

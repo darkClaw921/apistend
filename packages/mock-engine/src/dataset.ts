@@ -178,7 +178,9 @@ export function productField(name: string, p: Product, inRecord: boolean): numbe
   const n = name.toLowerCase().replace(/[_\s]/g, '')
 
   // Идентификаторы — однозначны в любом контексте.
-  if (n === 'nmid' || n === 'nmids' || n === 'nomenclature') return p.nmId
+  // `nm` — так артикул называется в статистике рекламы: без него позиции
+  // считались по товару из документации, которого в кабинете нет.
+  if (n === 'nmid' || n === 'nmids' || n === 'nomenclature' || n === 'nm') return p.nmId
   if (n === 'imtid') return p.imtId
   if (n === 'nmuuid') return p.nmUuid
   if (n === 'chrtid') return p.chrtId
@@ -252,7 +254,12 @@ export function productField(name: string, p: Product, inRecord: boolean): numbe
  */
 const CATEGORY_IDS: readonly string[] = [...new Set(CATALOG_ITEMS.map((i) => i.category))]
 
-const PRODUCT_KEYS = new Set(['nmid', 'nmids', 'vendorcode', 'supplierarticle', 'offerid', 'imtid', 'chrtid', 'sku'])
+// `nm` — имя артикула в статистике рекламы: по нему считаются позиции товара
+// в выдаче, и без него они считались по артикулу из документации, которого
+// в кабинете нет.
+const PRODUCT_KEYS = new Set([
+  'nmid', 'nmids', 'vendorcode', 'supplierarticle', 'offerid', 'imtid', 'chrtid', 'sku', 'nm',
+])
 
 /**
  * Похож ли объект на запись о товаре: по нему решаем, разворачивать ли список по каталогу.
@@ -324,4 +331,51 @@ export function subjectsOf(pool: readonly Product[]): readonly Product[] {
     out.push(p)
   }
   return out
+}
+
+/**
+ * Признаки записи об операции: заказ, продажа, возврат.
+ *
+ * Товарные поля у неё те же, что у карточки, — отличает её именно операционная
+ * часть: идентификатор заказа, признак отмены, цена сделки. Без такого разбора
+ * лента заказов разворачивалась бы по каталогу — по одной записи на товар, все
+ * одной датой, — а нужен поток событий во времени.
+ */
+const EVENT_KEYS = new Set([
+  'srid', 'odid', 'gnumber', 'saleid', 'iscancel', 'canceldate', 'canceldt', 'cancletype', 'canceltype',
+  'finishedprice', 'pricewithdisc', 'forpay', 'sticker', 'incomeid', 'orderuid', 'ordertype',
+  'sellerprice', 'ismp', 'destinationcity',
+])
+
+export function looksLikeEvent(node: unknown): boolean {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) return false
+  const keys = Object.keys(node).map((k) => k.toLowerCase().replace(/[_\s]/g, ''))
+  const hasEventKey = keys.some((k) => EVENT_KEYS.has(k))
+  const hasDate = keys.some((k) => DATE_KEYS.has(k))
+  return hasEventKey && hasDate && hasProductKey(node)
+}
+
+/** Поля-даты, по которым запись попадает в шкалу времени. */
+const DATE_KEYS = new Set([
+  'date', 'lastchangedate', 'createdat', 'updatedat', 'saledate', 'orderdate', 'orderedat', 'dt',
+])
+
+/**
+ * Точка временного ряда: дата и показатели воронки, без товарных полей.
+ *
+ * Такой список разворачивается не по каталогу и не по журналу, а по дням окна:
+ * клиенту нужен график, и три записи с одной датой графиком не являются.
+ */
+const SERIES_KEYS = new Set([
+  'opencount', 'opencardcount', 'cartcount', 'addtocartcount', 'ordercount', 'ordersum',
+  'buyoutcount', 'buyoutsum', 'buyoutpercent', 'cancelcount', 'addtowishlistcount', 'visitors',
+  // Реклама ведёт свой ряд по дням: показы, клики и расход за сутки кампании.
+  'views', 'clicks', 'ctr', 'cpc', 'atbs', 'shks',
+])
+
+export function looksLikeSeriesPoint(node: unknown): boolean {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) return false
+  const keys = Object.keys(node).map((k) => k.toLowerCase().replace(/[_\s]/g, ''))
+  if (!keys.some((k) => DATE_KEYS.has(k))) return false
+  return keys.some((k) => SERIES_KEYS.has(k))
 }
