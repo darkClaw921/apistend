@@ -114,7 +114,7 @@ export default async function LandingPage() {
   return (
     <div className="min-h-screen bg-night">
       <LandingNav />
-      <Hero totalMethods={totalMethods} featured={featured} />
+      <Hero totalMethods={totalMethods} services={services} />
       <StatusStrip services={services} totalMethods={totalMethods} eventTypes={eventTypes} />
       <Compatible />
       <Services services={services} />

@@ -34,6 +34,15 @@ export interface ServiceSummary {
   snapshotDate: string | null
   rateLimit: string
   nativeAuth: string
+  /** Живые счётчики витрины: считаются по журналу запросов, кешируются на 30 секунд. */
+  usage?: {
+    requestsTotal: number
+    requestsDay: number
+    /** Разработчиков, обращавшихся к сервису за 30 дней. */
+    users: number
+    /** Из них те, чей запрос был в последние пять минут. */
+    usersOnline: number
+  }
 }
 
 export interface CatalogListItem {
