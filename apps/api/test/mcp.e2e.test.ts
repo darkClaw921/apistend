@@ -164,7 +164,10 @@ describe('транспорт совпадает с боевым mcp.apify.com', 
   })
 
   it('DELETE завершает сессию с кодом 200', async () => {
-    const res = await api.inject({ method: 'DELETE', url: '/apify/mcp' })
+    // С ключом: боевой сервер отвечает 401 и на DELETE, пока токена нет.
+    const res = await api.inject({
+      method: 'DELETE', url: '/apify/mcp', headers: { authorization: `Bearer ${key}` },
+    })
     expect(res.statusCode).toBe(200)
   })
 
@@ -515,6 +518,58 @@ describe('мок mcp.apify.com', () => {
   })
 })
 
+describe('мок требует ключ и держит поток — как боевой сервер', () => {
+  it('без ключа 401 на любом методе, в форме боевого ответа', async () => {
+    // Снято с mcp.apify.com: он отвечает 401 и на GET, и на POST, и на DELETE,
+    // ещё не заглянув в тело запроса.
+    for (const method of ['POST', 'DELETE'] as const) {
+      const res = await api.inject({
+        method,
+        url: '/apify/mcp',
+        headers: { 'content-type': 'application/json', accept: ACCEPT },
+        ...(method === 'POST' ? { payload: { jsonrpc: '2.0', id: 1, method: 'ping' } } : {}),
+      })
+      expect(res.statusCode).toBe(401)
+      expect(res.headers['content-type']).toContain('application/json')
+      expect(JSON.parse(res.body)).toMatchObject({ error: 'invalid_token' })
+      expect(res.headers['www-authenticate']).toContain('error="invalid_token"')
+    }
+
+    // На GET боевой отвечает человекочитаемым абзацем, а не конвертом.
+    const get = await api.inject({ method: 'GET', url: '/apify/mcp', headers: { accept: 'text/event-stream' } })
+    expect(get.statusCode).toBe(401)
+    expect(get.headers['content-type']).toContain('text/plain')
+    expect(get.body).toContain('sandbox key')
+  })
+
+  it('GET с ключом открывает поток, а не отвечает «метод не поддерживается»', async () => {
+    // Клиент MCP открывает этот поток сразу после initialize. Ответ 405
+    // отправлял его в цикл переподключения: за день это три с половиной тысячи
+    // запросов, из которых полторы тысячи — один и тот же список инструментов.
+    const server = await buildServer()
+    await server.listen({ port: 0, host: '127.0.0.1' })
+    const address = server.server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+    const controller = new AbortController()
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/apify/mcp`, {
+        headers: { accept: 'text/event-stream', authorization: `Bearer ${key}` },
+        signal: controller.signal,
+      })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain('text/event-stream')
+      expect(res.headers.get('mcp-session-id')).toBeTruthy()
+
+      const chunk = await res.body!.getReader().read()
+      // Комментарий SSE: поток открыт и жив, но сообщений мок не выдумывает.
+      expect(new TextDecoder().decode(chunk.value)).toContain(': open')
+    } finally {
+      controller.abort()
+      await server.close()
+    }
+  })
+})
+
 describe('вызовы MCP видны в журнале песочницы', () => {
   it('каждый вызов записан с именем инструмента', async () => {
     const { flushRequestLogs } = await import('../src/lib/log-buffer.ts')
@@ -549,15 +604,16 @@ describe('вызовы MCP видны в журнале песочницы', () 
     expect(own?.serviceCode).toBe('apistend')
   })
 
-  it('вызов без ключа песочницы не теряется молча', async () => {
+  it('вызов собственного сервера без ключа помечен в ответе', async () => {
+    // У APIStend открытая часть работает и без ключа, но записать такой вызов
+    // некому: запись журнала живёт при песочнице. Молчать об этом нельзя —
+    // иначе «вызовы есть, а журнал пуст» снова остаётся без объяснения.
     const res = await api.inject({
       method: 'POST',
-      url: '/apify/mcp',
+      url: '/mcp',
       headers: { 'content-type': 'application/json', accept: ACCEPT },
       payload: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
     })
-    // Приписать такой вызов некому: запись журнала живёт при песочнице.
-    // Но и молчать нельзя — иначе «вызовы есть, а журнал пуст» без объяснения.
     expect(res.statusCode).toBe(200)
     expect(res.headers['x-apistend-log']).toBe('skipped-no-sandbox-key')
   })

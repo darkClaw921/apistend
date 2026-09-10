@@ -85,6 +85,14 @@ export interface McpServerDefinition {
   readonly instructions?: string
   /** Под каким кодом сервиса вызовы этого сервера попадают в журнал песочницы. */
   readonly logServiceCode: string
+  /**
+   * Требует ли сервер ключ песочницы на любой запрос.
+   *
+   * У мока mcp.apify.com — да, как у боевого: он отвечает 401 и на GET,
+   * и на POST, и на DELETE. У собственного сервера APIStend открытая часть
+   * (каталог методов) работает и без ключа — это описано в его документации.
+   */
+  readonly requiresKey: boolean
   /** Чей интерфейс подменяет сервер — в журнале это колонка «боевой адрес». */
   readonly upstreamUrl: string
   /** Список инструментов для конкретного запроса: он зависит от параметра tools. */
@@ -128,16 +136,30 @@ export async function handleMcpRequest(
   reply: FastifyReply,
   server: McpServerDefinition,
 ): Promise<unknown> {
+  // Ключ проверяется раньше метода и раньше разбора тела — так же, как у боевого
+  // сервера: он отвечает 401 и на GET, и на POST, и на DELETE, ещё не заглянув
+  // внутрь запроса.
+  const resolved = server.requiresKey ? await sandboxOf(req) : null
+  if (server.requiresKey && !resolved) return unauthorized(req, reply)
+
   if (req.method === 'DELETE') {
     // Завершение сессии. Состояния между запросами мок не держит вовсе,
     // поэтому удалять нечего — но код ответа обязан совпадать с боевым.
     return reply.code(200).send()
   }
 
+  if (req.method === 'GET') {
+    // Поток «сервер → клиент». Мок инициативных сообщений не шлёт, но поток
+    // обязан открыться и держаться: клиент MCP открывает его сразу после
+    // initialize, и ответ «метод не поддерживается» отправляет его в цикл
+    // переподключения — на боевом сервере трафик за день дошёл до трёх с
+    // половиной тысяч запросов, из которых полторы тысячи были одним и тем же
+    // списком инструментов по 80 КБ.
+    return openEventStream(req, reply, server)
+  }
+
   if (req.method !== 'POST') {
-    // GET открывает поток «сервер → клиент». Мок инициативных сообщений
-    // не шлёт, и держать ради этого висящее соединение незачем.
-    reply.header('allow', 'POST, DELETE')
+    reply.header('allow', 'GET, POST, DELETE')
     return reply.code(405).type('application/json').send({
       jsonrpc: '2.0',
       error: { code: RPC.TRANSPORT, message: 'Method Not Allowed: use POST or DELETE' },
@@ -204,6 +226,86 @@ export async function handleMcpRequest(
     // Порядок ключей тот же, что у боевого сервера: result, jsonrpc, id.
     .send(sseFrame(sessionId, payload))
 }
+
+/**
+ * Отказ без ключа — в форме боевого сервера.
+ *
+ * Тексты свои: подделывать ссылки Apify на его консоль было бы враньём —
+ * ключ здесь выдаёт APIStend. А конверт, заголовок WWW-Authenticate и код
+ * совпадают дословно: клиент, который разбирает именно их, не должен
+ * заметить разницы.
+ */
+function unauthorized(req: FastifyRequest, reply: FastifyReply): FastifyReply {
+  // Только ASCII: заголовок WWW-Authenticate ходит в latin1, и многоточие или
+  // кавычки-ёлочки в нём превращают ответ в 500 на ровном месте.
+  const description =
+    'Missing or invalid access token. Pass an APIStend sandbox key in the ' +
+    'Authorization: Bearer stend_sk_... header. Manage keys at https://apistend.ru/keys'
+  reply.header(
+    'www-authenticate',
+    `Bearer realm="OAuth", error="invalid_token", error_description="${description}"`,
+  )
+  if (req.method === 'GET') {
+    // На GET боевой сервер отвечает человекочитаемым абзацем, а не конвертом:
+    // этот запрос приходит из браузера чаще, чем из клиента.
+    return reply.code(401).type('text/plain; charset=utf-8').send(
+      'This is the MCP server of the APIStend sandbox. To use it, pass your sandbox key. ' +
+      'Create one on the «Ключи и токены» screen and pass it in the ' +
+      'Authorization: Bearer stend_sk_… header.',
+    )
+  }
+  return reply.code(401).type('application/json; charset=utf-8').send({
+    error: 'invalid_token',
+    error_description: description,
+  })
+}
+
+/**
+ * Открытый поток «сервер → клиент».
+ *
+ * Держится, пока клиент не отключится: раз в двадцать пять секунд уходит
+ * комментарий SSE — он не сообщение протокола, но не даёт прокси и клиенту
+ * счесть соединение мёртвым. Сообщений по своей инициативе мок не шлёт: их
+ * неоткуда взять, и выдумывать события сервера значило бы кормить клиента
+ * тем, чего не происходило.
+ */
+function openEventStream(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  server: McpServerDefinition,
+): FastifyReply {
+  const sessionId = sessionOf(req)
+  reply.raw.writeHead(200, {
+    'content-type': 'text/event-stream',
+    'cache-control': 'no-cache, no-transform',
+    connection: 'keep-alive',
+    'x-accel-buffering': 'no',
+    'mcp-session-id': sessionId,
+    'mcp-protocol-version': server.protocolVersion,
+  })
+  reply.raw.write(': open\n\n')
+
+  const heartbeat = setInterval(() => {
+    if (reply.raw.writableEnded) return
+    reply.raw.write(': ping\n\n')
+  }, HEARTBEAT_MS)
+  // Поток не вечный: висящее соединение стоит дескриптора, а клиент MCP
+  // переоткрывает его сам — это штатная часть протокола.
+  const life = setTimeout(() => reply.raw.end(), STREAM_LIFETIME_MS)
+  const stop = () => {
+    clearInterval(heartbeat)
+    clearTimeout(life)
+  }
+  reply.raw.on('close', stop)
+  reply.raw.on('finish', stop)
+  return reply
+}
+
+/** Как часто напоминаем о себе в открытом потоке. */
+const HEARTBEAT_MS = 25_000
+
+/** Сколько живёт открытый поток, пока клиент молчит. */
+const STREAM_LIFETIME_MS = 10 * 60_000
 
 /**
  * Вызов по MCP — такой же вызов песочницы, как и запрос к шлюзу.
