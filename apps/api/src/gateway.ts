@@ -185,8 +185,15 @@ async function handle(
   const rate = checkRateLimit(rateSubject, service, Date.now(), path)
 
   let scenario = parseScenario(req.headers['x-mock-scenario'] as string | undefined)
+  // Сбой, выпавший по настройке песочницы, — не то же самое, что сбой стенда.
+  // Клиент, разбирающий ответ, обязан их различать: на первый он ретраит
+  // осознанно, второй означает, что чинить надо мок.
+  let injectedError = false
   if (!rate.allowed) scenario = 'rate_limit'
-  else if (scenario === 'success' && rollRandomError(sandbox.errorRate)) scenario = 'server_error'
+  else if (scenario === 'success' && rollRandomError(sandbox.errorRate)) {
+    scenario = 'server_error'
+    injectedError = true
+  }
 
   // Лимит, вызванный заголовком X-Mock-Scenario, обязан выглядеть как настоящий:
   // 429 при Remaining: 300 — состояние, невозможное в бою, и клиент, который
@@ -214,6 +221,18 @@ async function handle(
   // Собственный идентификатор APIStend есть всегда: по нему запрос ищется
   // в кабинете и в Management API даже там, где боевого заголовка не бывает.
   reply.header('x-apistend-request-id', reqId)
+  if (injectedError) {
+    // Сколько именно выставлено — тоже в ответе: увидев эту долю, разработчик
+    // поймёт, почему «стенд нестабилен», и выключит её одним переключателем,
+    // а не станет обкладывать свой код повторами.
+    reply.header('x-apistend-error-rate', String(sandbox.errorRate))
+  }
+  if (injectedError) {
+    // Сколько именно выставлено — тоже в ответе: увидев эту долю, разработчик
+    // поймёт, почему «стенд нестабилен», и выключит её одним переключателем,
+    // а не будет обкладывать код повторами.
+    reply.header('x-apistend-error-rate', String(sandbox.errorRate))
+  }
   if (limited && profile.native.retryHeader === null) {
     // Сервис паузу не подсказывает — подсказываем от своего имени, не подделывая
     // чужой заголовок: клиент, читающий x-apistend-*, знает, что говорит с моком.
