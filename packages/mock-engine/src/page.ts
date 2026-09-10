@@ -31,10 +31,24 @@ export interface Page {
 export const DEFAULT_LIMIT = 20
 
 /**
- * Потолок страницы. Дальше растёт только размер тела: тысяча карточек — это мегабайты
- * на запрос, и такой ответ бьёт не по правдоподобию, а по памяти и кешу.
+ * Потолок страницы.
+ *
+ * Тысяча — столько же, сколько разрешают боевые методы Wildberries со списками
+ * (`limit` до 1000 в спецификации). Прежние двести молча обрезали ответ: клиент
+ * просил тысячу цен, получал двести и считал, что на остальные карточки цены
+ * не заведены — притом что они есть, и постраничный обход их находил.
  */
-const MAX_LIMIT = 200
+const MAX_LIMIT = 1_000
+
+/**
+ * Потолок карточной выдачи Wildberries.
+ *
+ * Курсорная форма `settings.cursor.limit` — это метод контента, и у него свой
+ * документированный предел в сто карточек. Карточка тяжёлая: характеристики,
+ * размеры, фотографии, — и тысяча таких записей превращает ответ в мегабайты
+ * там, где боевой сервис их не отдаёт.
+ */
+const CURSOR_MAX_LIMIT = 100
 
 // «size» и «count» в список не входят намеренно: в товарных запросах так называют
 // размер товара и количество штук, а не размер страницы, — один такой параметр
@@ -49,7 +63,8 @@ export function readPage(query: Record<string, string | string[]>, body: unknown
   collect(body, found, 0, false)
 
   const requestedLimit = found.get('limit')
-  const limit = clamp(requestedLimit ?? DEFAULT_LIMIT, 1, MAX_LIMIT)
+  const ceiling = found.has('cursorLimit') ? CURSOR_MAX_LIMIT : MAX_LIMIT
+  const limit = clamp(requestedLimit ?? DEFAULT_LIMIT, 1, ceiling)
   const explicitOffset = found.get('offset')
   const page = found.get('page')
   // Курсор Wildberries: клиент возвращает артикул последней полученной карточки,
@@ -90,6 +105,11 @@ function collect(node: unknown, out: Map<string, number>, depth: number, inCurso
     // Артикул засчитывается как курсор ТОЛЬКО внутри объекта cursor: тем же именем
     // называют и фильтр «дай карточку по артикулу», и он не про пагинацию.
     if (inCursor && key === 'nmid' && !out.has('cursorNmId')) out.set('cursorNmId', num)
+    // Отмечаем курсорную форму: у неё свой потолок страницы.
+    else if (inCursor && key === 'limit' && !out.has('cursorLimit')) {
+      out.set('cursorLimit', num)
+      if (!out.has('limit')) out.set('limit', num)
+    }
     else if (LIMIT_KEYS.has(key) && !out.has('limit')) out.set('limit', num)
     else if (OFFSET_KEYS.has(key) && !out.has('offset')) out.set('offset', num)
     else if (PAGE_KEYS.has(key) && !out.has('page')) out.set('page', num)
