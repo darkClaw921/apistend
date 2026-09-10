@@ -12,6 +12,7 @@ import { productPool } from './dataset.ts'
 import { isDefaultPage, readPage } from './page.ts'
 import { endOfWindow, readWindow } from './window.ts'
 import { eventsInWindow, orderTimeline } from './timeline.ts'
+import { advertCampaigns, readAdvertIds, requestedCampaigns } from './adverts.ts'
 import { LruCache } from './cache.ts'
 import { dayBucket, shiftDatesToToday } from './dates.ts'
 
@@ -197,7 +198,11 @@ export class MockEngine {
     // Ключей у произвольной пагинации столько, сколько клиент придумает смещений,
     // а у периода — сколько придумает дат; кеш из полезного превратился бы в способ
     // занять память. Собрать страницу заново стоит доли миллисекунды.
-    const cacheable = isDefaultPage(page) && !readWindow(req.query, req.body, req.now).explicit
+    // Кешируем только запрос без своего периода и без выбранных кампаний:
+    // и то и другое меняет тело, а в ключе кеша их нет.
+    const cacheable = isDefaultPage(page)
+      && !readWindow(req.query, req.body, req.now).explicit
+      && readAdvertIds(req.query, req.body).length === 0
     const cached = cacheable ? this.bodyCache.get(cacheKey) : undefined
     if (cached) {
       return {
@@ -219,7 +224,13 @@ export class MockEngine {
     // Журнал собирается лениво и только для методов, которым он нужен: методов
     // статистики в каталоге десятки, а всего методов — две с половиной тысячи.
     const events = () => eventsInWindow(orderTimeline(req.salt, pool, req.now), window.from, endOfWindow(window))
-    const ctx = { det, now: req.now, pool, page, window, events }
+    // Кампании — тоже лениво: они нужны десятку рекламных методов из двух с
+    // половиной тысяч, и собирать их на каждом ответе каталога незачем.
+    const campaigns = () => requestedCampaigns(
+      advertCampaigns(req.salt, pool, req.now),
+      readAdvertIds(req.query, req.body),
+    )
+    const ctx = { det, now: req.now, pool, page, window, events, campaigns }
     const built = this.buildBody(index, method, ctx)
     // Даты — последним шагом, поверх любого яруса: и пример из документации,
     // и сгенерированное по схеме тело одинаково датированы днём, когда писали

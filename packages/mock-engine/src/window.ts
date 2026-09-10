@@ -52,10 +52,28 @@ export function readWindow(
 
 function collect(node: unknown, out: Map<'from' | 'to', Date>, depth: number): void {
   if (depth > 3 || node === null || typeof node !== 'object') return
-  if (Array.isArray(node)) return
+  // Тело запроса бывает массивом: статистика медиакампаний принимает список
+  // «кампания и её период». Не заглянув внутрь, метод отвечал бы за своё окно.
+  if (Array.isArray(node)) {
+    for (const item of node) collect(item, out, depth + 1)
+    return
+  }
   for (const [rawKey, rawValue] of Object.entries(node as Record<string, unknown>)) {
     const key = rawKey.toLowerCase().replace(/[_\s-]/g, '')
     const value = Array.isArray(rawValue) ? rawValue[0] : rawValue
+    // Пара дат массивом: статистика медиакампаний принимает период именно так —
+    // `dates: ["2026-09-04", "2026-09-10"]`. Без разбора этой формы метод
+    // отвечал за свой интервал, а не за тот, что спросили.
+    if (Array.isArray(rawValue) && (key === 'dates' || key === 'period' || key === 'interval')) {
+      const parsed = rawValue.map(toDate).filter((d): d is Date => d !== null).sort(
+        (a, b) => a.getTime() - b.getTime(),
+      )
+      if (parsed.length > 0) {
+        if (!out.has('from')) out.set('from', parsed[0]!)
+        if (!out.has('to')) out.set('to', parsed[parsed.length - 1]!)
+      }
+      continue
+    }
     if (value !== null && typeof value === 'object') {
       // Внутрь заходим только там, где период и лежит: `filter.dateFrom` — период,
       // а `settings.cursor.updatedAt` — курсор пагинации, и путать их нельзя.

@@ -641,25 +641,117 @@ describe('аналитика отвечает за запрошенный пер
     expect(new Set(history.map((h) => h.orderCount)).size).toBeGreaterThan(1)
   })
 
-  it('реклама считает позиции по товарам кабинета и по дням окна', () => {
+  it('реклама отвечает по запрошенным кампаниям, а не по чужим', () => {
+    const wbGet = (path: string, query: Record<string, string>) => JSON.parse(engine.handle({
+      service: 'wildberries', httpMethod: 'GET', path, query, headers: {}, body: null,
+      requestId: 'r', scenario: 'success', now, salt: 'medium',
+    }).serialized) as any
+
+    const campaigns = wbGet('/adv/v1/adverts', { limit: '50' }) as Array<Record<string, number>>
+    expect(campaigns.length).toBeGreaterThan(2)
+    const ids = campaigns.slice(0, 2).map((c) => c.advertId!)
+
+    const stats = wbGet('/adv/v3/fullstats', {
+      ids: ids.join(','), beginDate: day(14), endDate: day(0),
+    }) as Array<Record<string, any>>
+    // Клиент берёт идентификаторы из списка кампаний; ответ про другие кампании
+    // он привязать не может — расход уходит в никуда вместе с ДРР и CTR.
+    expect(stats.map((s) => s.advertId)).toEqual(ids)
+
+    // Чужой идентификатор не выдумывается: кампании нет — и статистики нет.
+    expect(wbGet('/adv/v3/fullstats', { ids: '999999999', beginDate: day(7), endDate: day(0) }))
+      .toEqual([])
+  })
+
+  it('расход сходится по всем уровням: карточки, дни, итог кампании', () => {
+    const campaigns = JSON.parse(engine.handle({
+      service: 'wildberries', httpMethod: 'GET', path: '/adv/v1/adverts', query: { limit: '50' },
+      headers: {}, body: null, requestId: 'r', scenario: 'success', now, salt: 'medium',
+    }).serialized) as Array<Record<string, number>>
+    const active = campaigns.find((c) => c.status === 9)!
+
     const stats = JSON.parse(engine.handle({
       service: 'wildberries', httpMethod: 'GET', path: '/adv/v3/fullstats',
-      query: { ids: '1', begin: day(14), end: day(0) }, headers: {}, body: null,
-      requestId: 'r', scenario: 'success', now, salt: 'medium',
+      query: { ids: String(active.advertId), beginDate: day(14), endDate: day(0) },
+      headers: {}, body: null, requestId: 'r', scenario: 'success', now, salt: 'medium',
     }).serialized) as Array<Record<string, any>>
 
-    const pool = new Set(
-      (JSON.parse(engine.handle({
-        service: 'wildberries', httpMethod: 'POST', path: '/content/v2/get/cards/list',
-        query: {}, headers: {}, body: { settings: { cursor: { limit: 200 } } },
+    const campaign = stats[0]!
+    const days = campaign.days as Array<Record<string, any>>
+    expect(days.length).toBe(15)
+
+    // Сложил карточки — получил день площадки; сложил площадки — день кампании;
+    // сложил дни — итог в шапке. Пока уровни считались сами по себе, сверка
+    // расхода с расходом по карточкам расходилась на порядки.
+    const sumDays = Number(days.reduce((a, d) => a + d.sum, 0).toFixed(2))
+    expect(sumDays).toBeCloseTo(campaign.sum, 1)
+    expect(days.reduce((a, d) => a + d.views, 0)).toBe(campaign.views)
+
+    const firstDay = days[0]!
+    const apps = firstDay.apps as Array<Record<string, any>>
+    expect(apps.reduce((a, x) => a + x.views, 0)).toBe(firstDay.views)
+    const nms = apps[0]!.nms as Array<Record<string, any>>
+    expect(nms.reduce((a, x) => a + x.views, 0)).toBe(apps[0]!.views)
+
+    // Показатели согласованы между собой: кликов не больше показов, CTR — их
+    // отношение. В ответе стоял CTR 107 % при кликах больше показов.
+    for (const d of days) {
+      expect(d.clicks).toBeLessThanOrEqual(d.views)
+      if (d.views > 0) expect(d.ctr).toBeCloseTo((d.clicks / d.views) * 100, 1)
+      if (d.clicks > 0) expect(d.cpc).toBeCloseTo(d.sum / d.clicks, 1)
+    }
+  })
+
+  it('расход разносится по карточкам кампании, а не по одной', () => {
+    const campaigns = JSON.parse(engine.handle({
+      service: 'wildberries', httpMethod: 'GET', path: '/adv/v1/adverts', query: { limit: '50' },
+      headers: {}, body: null, requestId: 'r', scenario: 'success', now, salt: 'medium',
+    }).serialized) as Array<Record<string, number>>
+    const active = campaigns.find((c) => c.status === 9)!
+    const stats = JSON.parse(engine.handle({
+      service: 'wildberries', httpMethod: 'GET', path: '/adv/v3/fullstats',
+      query: { ids: String(active.advertId), beginDate: day(6), endDate: day(0) },
+      headers: {}, body: null, requestId: 'r', scenario: 'success', now, salt: 'medium',
+    }).serialized) as Array<Record<string, any>>
+
+    const nmIds = new Set<number>()
+    const booster = new Set<number>()
+    for (const d of stats[0]!.days as Array<Record<string, any>>) {
+      for (const app of d.apps as Array<Record<string, any>>) {
+        for (const nm of app.nms as Array<Record<string, any>>) nmIds.add(nm.nmId)
+      }
+    }
+    for (const b of stats[0]!.boosterStats as Array<Record<string, number>>) booster.add(b.nm!)
+
+    // Все карточки были одним и тем же артикулом: ДРР появлялся у одного
+    // товара из трёхсот, сколько бы карточек ни вела кампания.
+    expect(nmIds.size).toBeGreaterThan(10)
+    const own = new Set(productPool('medium').map((p) => p.nmId))
+    expect([...nmIds].every((n) => own.has(n))).toBe(true)
+    expect([...booster].every((n) => own.has(n))).toBe(true)
+
+    // Даты позиций — в запрошенном окне, а не в сентябре прошлого года.
+    const dates = (stats[0]!.boosterStats as Array<Record<string, string>>).map((b) => b.date!)
+    expect(dates.every((d) => d >= day(6) && d <= day(0))).toBe(true)
+  })
+
+  it('кампании покрывают весь каталог, а не первые двадцать карточек', () => {
+    const campaigns = JSON.parse(engine.handle({
+      service: 'wildberries', httpMethod: 'GET', path: '/adv/v1/adverts', query: { limit: '50' },
+      headers: {}, body: null, requestId: 'r', scenario: 'success', now, salt: 'medium',
+    }).serialized) as Array<Record<string, number>>
+    const covered = new Set<number>()
+    for (const c of campaigns) {
+      const one = JSON.parse(engine.handle({
+        service: 'wildberries', httpMethod: 'GET', path: '/api/advert/v2/adverts',
+        query: { ids: String(c.advertId) }, headers: {}, body: null,
         requestId: 'r', scenario: 'success', now, salt: 'medium',
-      }).serialized).cards as Array<Record<string, number>>).map((c) => c.nmID),
-    )
-    // Позиции считались по nm 221725278, которого в кабинете нет.
-    const booster = stats[0]!.boosterStats as Array<Record<string, number>>
-    expect(booster.every((b) => pool.has(b.nm!))).toBe(true)
-    const days = (stats[0]!.days as Array<Record<string, string>>).map((d) => d.date!.slice(0, 10))
-    expect(days.every((d) => d >= day(14) && d <= day(0))).toBe(true)
+      }).serialized) as any
+      for (const nm of one.adverts[0]?.nm_settings ?? []) covered.add(nm.nm_id)
+    }
+    // «Кампаний: 0» на девяноста процентах каталога проверяет не интеграцию,
+    // а терпение того, кто её пишет.
+    expect(covered.size).toBeGreaterThan(200)
   })
 })
 
