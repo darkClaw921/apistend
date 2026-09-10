@@ -5,6 +5,7 @@ import {
   productField, subjectsOf, type Product,
 } from './dataset.ts'
 import { dayStats, daysOf, statsInWindow, type OrderEvent } from './timeline.ts'
+import { advertDayStats, advertTotals, type AdvertCampaign } from './adverts.ts'
 
 /**
  * Проекция каталога на пример из спецификации.
@@ -77,6 +78,25 @@ function walk(
       const subjects = subjectsOf(ctx.pool)
       return subjects.map((s, i) => walk(template, `${path}[${i}]`, s, true, depth + 1, ctx, inAttributes, event))
     }
+    // Кампании: список отдаёт ровно те, что спросил клиент. Он берёт их
+    // идентификаторы из списка кампаний, и статистика по чужим кампаниям
+    // для него бесполезна — привязать её не к чему.
+    if (event?.campaign === undefined && looksLikeCampaign(template)) {
+      const wanted = ctx.campaigns()
+      const page = wanted.slice(ctx.page.offset, ctx.page.offset + Math.max(pageSize(ctx), 1))
+      return page.map((campaign, i) =>
+        walk(template, `${path}[${i}]`, campaign.products[0] ?? product, true, depth + 1, ctx, inAttributes, { campaign }))
+    }
+    // Карточки внутри кампании: расход разносится именно по ним. Пока здесь
+    // стоял один и тот же артикул, ДРР появлялся у одной карточки из трёхсот.
+    if (event?.campaign && isProductListKey(lastKey(path))) {
+      const campaign = event.campaign
+      // Все карточки кампании: сумма по ним обязана сойтись с показателями дня.
+      // Часть из них в этот день просто не показывалась — у таких нули, и это
+      // обычное состояние, а не пропуск.
+      return campaign.products.map((p, i) =>
+        walk(template, `${path}[${i}]`, p, true, depth + 1, ctx, inAttributes, { ...event, product: p }))
+    }
     // Поток событий: заказы, продажи, возвраты. Разворачивается по журналу
     // песочницы, а не по каталогу, — иначе в ленте по одной записи на товар,
     // все одной датой, и ни выручки по дням, ни процента выкупа не посчитать.
@@ -95,12 +115,28 @@ function walk(
       return page.map((e, i) =>
         walk(template, `${path}[${i}]`, e.product, true, depth + 1, ctx, inAttributes, { event: e }))
     }
+    // Позиции в выдаче: по точке на день окна, карточки по кругу. Пока здесь
+    // стоял артикул из документации, позиции считались по товару, которого
+    // в кабинете нет.
+    if (event?.campaign && lastKey(path).toLowerCase() === 'boosterstats') {
+      const campaign = event.campaign
+      const days = advertDays(ctx)
+      return days.flatMap((day, i) =>
+        campaign.products.slice(0, BOOSTER_PRODUCTS).map((p, j) =>
+          walk(template, `${path}[${i * BOOSTER_PRODUCTS + j}]`, p, true, depth + 1, ctx, inAttributes,
+            { ...event, day, product: p })))
+    }
     // Временной ряд: по одной точке на день запрошенного окна. Товар берётся
     // тот же, что у записи, внутри которой ряд и лежит: график строят по товару.
     if (looksLikeSeriesPoint(template)) {
       const anchor = product ?? ctx.pool[ctx.page.offset % ctx.pool.length]!
-      return daysOf(ctx.window.from, endOfDay(ctx.window.to)).map((day, i) =>
-        walk(template, `${path}[${i}]`, anchor, true, depth + 1, ctx, inAttributes, { day, product: anchor }))
+      // День кампании считается по кампании целиком: карточка появится уровнем
+      // ниже, в `nms`, и день обязан быть суммой этих карточек, а не одной из них.
+      const inCampaign = event?.campaign !== undefined
+      const series = inCampaign ? advertDays(ctx) : daysOf(ctx.window.from, endOfDay(ctx.window.to))
+      return series.map((day, i) =>
+        walk(template, `${path}[${i}]`, anchor, true, depth + 1, ctx, inAttributes,
+          inCampaign ? { ...event, day, product: undefined } : { ...event, day, product: anchor }))
     }
     if (product === null && looksLikeProduct(template)) {
       const count = pageSize(ctx)
@@ -120,10 +156,31 @@ function walk(
     const anchor = cursor
       ? ctx.pool[(ctx.page.offset + pageSize(ctx) - 1) % ctx.pool.length]!
       : ctx.pool[ctx.page.offset % ctx.pool.length]!
+    // Одиночная кампания: «покажи кампанию по идентификатору» отвечает объектом,
+    // а не списком. Без привязки такой ответ рассказывал про кампанию, которой
+    // у клиента нет, — ровно как список и статистика до этого.
+    if (event?.campaign === undefined && looksLikeCampaign(node)) {
+      const one = ctx.campaigns()[0]
+      if (one) {
+        const out: Record<string, unknown> = {}
+        for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+          out[k] = walk(v, `${path}.${k}`, one.products[0] ?? product, true, depth + 1, ctx,
+            inAttributes || ATTRIBUTE_LISTS.has(k.toLowerCase()), { campaign: one })
+        }
+        return fixCounters(node as Record<string, unknown>, out, ctx)
+      }
+    }
+
     const own = product ?? (hasProductKey(node) ? anchor : null)
+    // Площадку читаем из самой записи и передаём детям: по ней считается доля
+    // дня, и без неё сумма по площадкам разошлась бы с днём.
+    const appType = (node as Record<string, unknown>).appType ?? (node as Record<string, unknown>).app_type
+    const childEvent = typeof appType === 'number' && event
+      ? { ...event, appType }
+      : event
     const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      out[k] = walk(v, `${path}.${k}`, own, record, depth + 1, ctx, inAttributes || ATTRIBUTE_LISTS.has(k.toLowerCase()), event)
+      out[k] = walk(v, `${path}.${k}`, own, record, depth + 1, ctx, inAttributes || ATTRIBUTE_LISTS.has(k.toLowerCase()), childEvent)
     }
     return fixCounters(node as Record<string, unknown>, out, ctx)
   }
@@ -139,6 +196,11 @@ function walk(
     }
     if (event) {
       const like = typeof node === 'string' ? 'string' : typeof node === 'number' ? 'number' : 'boolean'
+      const fromAdvert = advertField(key, event, ctx, like)
+      if (fromAdvert !== undefined) {
+        if (ctx.state && like === 'string') ctx.state.dated = true
+        return fromAdvert
+      }
       const fromEvent = eventField(key, event, ctx, like)
       if (fromEvent !== undefined) {
         if (ctx.state && like === 'string') ctx.state.dated = true
@@ -222,6 +284,15 @@ interface EventContext {
   readonly day?: Date
   /** Товар, к которому относится день ряда. */
   readonly product?: Product
+  /** Рекламная кампания, внутри которой мы находимся. */
+  readonly campaign?: AdvertCampaign
+  /**
+   * Площадка показа (сайт, Android, iOS).
+   *
+   * Читается из самой записи: статистика Wildberries разносит день по
+   * площадкам, и без этого разреза сумма по `apps` не сошлась бы с днём.
+   */
+  readonly appType?: number
 }
 
 /** Конец дня: окно, названное датой без времени, включает эти сутки целиком. */
@@ -391,4 +462,126 @@ function parentKey(path: string): string {
   const parts = path.split('.')
   const parent = parts[parts.length - 2] ?? ''
   return parent.replace(/\[\d+\]$/, '').toLowerCase()
+}
+
+/**
+ * Поисковая фраза по товару.
+ *
+ * Продавец ищет свой товар теми же словами, что и покупатель: предмет плюс
+ * уточнение. Фраза детерминирована — отчёт по кластерам обязан быть стабильным
+ * между вызовами.
+ */
+function searchPhrase(product: Product, ctx: FillContext): string {
+  const shapes = ['', ' купить', ' недорого', ' с доставкой', ' отзывы', ' оригинал']
+  const shape = shapes[ctx.det.int(`phrase|${product.nmId}`, 0, shapes.length - 1)]!
+  return `${product.subjectName.toLowerCase()}${shape}`
+}
+
+/** Сколько карточек кампании попадает в позиции выдачи за один день. */
+const BOOSTER_PRODUCTS = 3
+
+/**
+ * Окно рекламной статистики.
+ *
+ * Боевой метод без дат вообще не отвечает: `beginDate` и `endDate` у него
+ * обязательны. Клиенту, который их не прислал, отдаём последнюю неделю —
+ * и заодно не считаем девяносто дней по десятку кампаний ради ответа,
+ * которого никто не просил.
+ */
+function advertDays(ctx: FillContext): Date[] {
+  if (ctx.window.explicit) return daysOf(ctx.window.from, endOfDay(ctx.window.to))
+  const to = ctx.now
+  return daysOf(new Date(to.getTime() - 6 * 86_400_000), to)
+}
+
+/** Похожа ли запись на рекламную кампанию: по идентификатору кампании в ней. */
+function looksLikeCampaign(node: unknown): boolean {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) return false
+  const keys = Object.keys(node).map((k) => k.toLowerCase().replace(/[_\s]/g, ''))
+  if (keys.includes('advertid')) return true
+  if (keys.includes('id') && keys.includes('nmsettings')) return true
+  // Статистика медиакампаний: запись без идентификатора в корне, но с периодом
+  // и разбивкой по карточкам. Клиент просит её по тем же advertId.
+  return keys.includes('interval') && keys.includes('stats')
+}
+
+/** Список карточек внутри кампании: у разных версий метода он называется по-разному. */
+function isProductListKey(key: string): boolean {
+  const k = key.toLowerCase().replace(/[_\s]/g, '')
+  return k === 'nms' || k === 'nmsettings' || k === 'nmids' || k === 'products'
+    || k === 'unitedparams' || k === 'stats'
+}
+
+/**
+ * Поле рекламной статистики.
+ *
+ * Показатели считаются от показов вниз по воронке: клики не больше показов,
+ * CTR — их отношение, CPC — расход, делённый на клики. Пока каждое число
+ * приходило само по себе, в ответе стоял CTR 107 % при кликах больше показов —
+ * и клиент, который сверяет эти три величины, справедливо считал ответ сломанным.
+ */
+function advertField(
+  key: string,
+  ctx: EventContext,
+  fill: FillContext,
+  like: 'string' | 'number' | 'boolean',
+): unknown {
+  const campaign = ctx.campaign
+  if (!campaign) return undefined
+  const k = key.toLowerCase().replace(/[_\s]/g, '')
+
+  // Свойства самой кампании.
+  // `id` — идентификатор кампании только в самой записи о кампании: внутри
+  // карточки так называется её предмет, и подменять его номером кампании
+  // значит склеить две разные сущности в одну.
+  if (k === 'advertid' || (k === 'id' && like === 'number' && !ctx.product)) return campaign.advertId
+  if (k === 'campname' || k === 'campaignname' || (k === 'name' && !ctx.product)) {
+    // Внутри карточки `name` — это название товара, а не кампании: клиент
+    // печатает его в строке отчёта рядом с артикулом.
+    return like === 'string' ? campaign.name : undefined
+  }
+  // Поисковая фраза кластера — по товару, а не «Фраза 1»: клиент печатает её
+  // в отчёте, и одинаковые строки в нём читаются как ошибка выгрузки.
+  if (k === 'normquery' || k === 'query' || k === 'keyword' || k === 'searchtext') {
+    const product = ctx.product ?? campaign.products[0]
+    return like === 'string' && product ? searchPhrase(product, fill) : undefined
+  }
+  if (k === 'itemid' && ctx.product) return ctx.product.nmId
+  if (k === 'itemname' && ctx.product) return like === 'string' ? ctx.product.title : undefined
+  if (k === 'type' || k === 'adverttype') return campaign.type
+  if (k === 'status' || k === 'advertstatus') return campaign.status
+  if (k === 'paymenttype') return like === 'string' ? campaign.paymentType : undefined
+  if (k === 'dailybudget' || k === 'budget') return campaign.dailyBudget
+  if (k === 'createtime' || k === 'created' || k === 'createdat') {
+    return like === 'string' ? campaign.createdAt.toISOString() : undefined
+  }
+  if (k === 'starttime' || k === 'started' || k === 'startedat') {
+    return like === 'string' ? campaign.startedAt.toISOString() : undefined
+  }
+  if (k === 'endtime' || k === 'ended' || k === 'endedat' || k === 'deleted') {
+    return like === 'string' ? (campaign.endedAt ?? campaign.startedAt).toISOString() : undefined
+  }
+
+  if (like !== 'number') return undefined
+  // Показатели: за день, если мы внутри дня, иначе — итог за окно.
+  const stats = ctx.day
+    ? advertDayStats(campaign, ctx.day, ctx.product, ctx.appType)
+    : advertTotals(campaign, advertDays(fill), ctx.product, ctx.appType)
+
+  switch (k) {
+    case 'views': case 'impressions': return stats.views
+    case 'clicks': return stats.clicks
+    case 'ctr': return stats.ctr
+    case 'cpc': return stats.cpc
+    case 'cpm': return stats.views === 0 ? 0 : Number(((stats.sum / stats.views) * 1000).toFixed(2))
+    case 'sum': case 'expenses': case 'updsum': case 'spent': return stats.sum
+    case 'sumprice': return stats.sumPrice
+    case 'atbs': return stats.atbs
+    case 'orders': return stats.orders
+    case 'shks': return stats.shks
+    case 'cr': return stats.cr
+    case 'canceled': return stats.canceled
+    case 'avgposition': case 'avgpos': case 'position': return stats.avgPosition
+    default: return undefined
+  }
 }

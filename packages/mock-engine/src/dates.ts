@@ -34,6 +34,15 @@
  * заметить подмены ничем, кроме самой даты.
  */
 
+/**
+ * С какого года дата перестаёт описывать событие.
+ *
+ * 2100-01-01 в ответах означает «бессрочно», а не «первое января две тысячи
+ * сотого». Такие значения не двигаются вместе с остальными и не выбираются
+ * опорой сдвига.
+ */
+const FOREVER = Date.UTC(2090, 0, 1)
+
 /** Дата без времени: 2022-03-04. */
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/
 /** Дата со временем: 2022-03-04T12:30:00, с необязательными долями и зоной. */
@@ -136,7 +145,10 @@ function shiftNode(node: unknown, delta: number, depth = 0): unknown {
   }
   if (typeof node !== 'string') return node
   const parsed = parseDate(node)
-  return parsed ? format(parsed, parsed.ms + delta) : node
+  if (!parsed) return node
+  // «Бессрочно» остаётся бессрочным: сдвигать этот рубеж некуда и незачем.
+  if (parsed.ms >= FOREVER) return node
+  return format(parsed, parsed.ms + delta)
 }
 
 /**
@@ -153,10 +165,16 @@ export function shiftDatesToToday(body: unknown, now: Date): unknown {
   // Опора — самая поздняя дата из описывающих прошлое. Если таких нет вовсе
   // (ответ состоит из одних сроков действия), опираемся на самую раннюю:
   // приравнять к сегодня последнюю значило бы сделать срок уже истёкшим.
-  const past = found.filter((d) => !d.future)
+  // «Бессрочно» — не дата, а способ сказать «никогда не кончится»: в ответах
+  // Wildberries это 2100-01-01. Такой рубеж не описывает событие, и опираться
+  // на него нельзя: приравняв его к сегодня, весь ответ уезжает на три четверти
+  // века назад — заявка «создана» в 1926 году.
+  const real = found.filter((d) => d.ms < FOREVER)
+  if (real.length === 0) return body
+  const past = real.filter((d) => !d.future)
   const anchor = past.length > 0
     ? Math.max(...past.map((d) => d.ms))
-    : Math.min(...found.map((d) => d.ms))
+    : Math.min(...real.map((d) => d.ms))
 
   // Сегодняшняя полночь UTC: сдвиг целыми сутками сохраняет время внутри дня.
   const today = Math.floor(now.getTime() / DAY) * DAY

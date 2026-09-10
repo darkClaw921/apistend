@@ -4,6 +4,7 @@ import { hasProductKey, looksLikeProduct, productField, type Product } from './d
 import type { Page } from './page.ts'
 import type { Window } from './window.ts'
 import type { OrderEvent } from './timeline.ts'
+import type { AdvertCampaign } from './adverts.ts'
 import {
   BRAND, CATEGORY, CITY, COMPANY_NAME, COMPANY_PREFIX, FIRST_NAME, LAST_NAME,
   ORDER_STATUS, POSTING_STATUS, PRODUCT, WAREHOUSE,
@@ -35,6 +36,14 @@ export interface FillContext {
    * статистики, а платить за его сборку на каждом ответе каталога незачем.
    */
   events: () => readonly OrderEvent[]
+  /**
+   * Рекламные кампании песочницы — те, что спросил клиент.
+   *
+   * Клиент берёт идентификаторы из списка кампаний и просит по ним статистику.
+   * Ответ про другие кампании он привязать не может: расход уходит в никуда,
+   * а вместе с ним пропадают ДРР, клики, CTR и CPC.
+   */
+  campaigns: () => readonly AdvertCampaign[]
   /**
    * Отметка проекции: тело уже датировано относительно сегодняшнего дня.
    *
