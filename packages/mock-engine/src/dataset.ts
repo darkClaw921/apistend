@@ -116,7 +116,9 @@ function buildProduct(det: Deterministic, i: number): Product {
     ? `${item.title}, ${variant}`
     : `${item.title}, ${variant} (${generation + 1}-е поколение)`
 
-  const price = det.int(k('price'), 3, 250) * 100 - 1
+  // Цена — из вилки своего предмета: коврик стоит как коврик, а не как ноутбук.
+  // Иначе медиана по категории считается по числам, которые вместе не бывают.
+  const price = det.int(k('price'), item.price[0], item.price[1])
   const discountPercent = det.int(k('discount'), 5, 45)
   const discountedPrice = Math.round((price * (100 - discountPercent)) / 100)
 
