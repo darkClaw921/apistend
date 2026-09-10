@@ -52,7 +52,7 @@ export default function KeysPage() {
   // применяются к той, в которой человек сейчас работает.
   const sandbox = shell.me.sandboxes.find((s) => s.id === shell.sandboxId) ?? shell.me.sandboxes[0]
   const [latency, setLatency] = useState(sandbox?.latencyMs ?? 250)
-  const [errorRate, setErrorRate] = useState(sandbox?.errorRate ?? 5)
+  const [errorRate, setErrorRate] = useState(sandbox?.errorRate ?? 0)
   const [behaviourSaved, setBehaviourSaved] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
 
   const [revokeTarget, setRevokeTarget] = useState<ApiKeyItem | null>(null)
