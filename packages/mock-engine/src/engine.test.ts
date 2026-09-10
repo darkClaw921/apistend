@@ -940,3 +940,33 @@ describe('у каждой карточки есть все зависимые д
     expect(pool.every((p) => typeof p.stock === 'number')).toBe(true)
   })
 })
+
+
+describe('страница не обрезает ответ молча', () => {
+  const wb = (path: string, httpMethod: string, query: Record<string, string> = {}, body: unknown = null) =>
+    JSON.parse(engine.handle({
+      service: 'wildberries', httpMethod, path, query, headers: {}, body,
+      requestId: 'r', scenario: 'success', now: new Date(), salt: 'medium',
+    }).serialized) as any
+
+  it('цены приходят на весь каталог, а не на первые двести карточек', () => {
+    const pool = productPool('medium')
+    const goods = wb('/api/v2/list/goods/filter', 'GET', { limit: '1000' }).data.listGoods as Array<Record<string, any>>
+
+    // Клиент просил тысячу, получал двести и считал, что на остальную сотню
+    // карточек цены не заведены, — притом что они есть.
+    expect(goods).toHaveLength(pool.length)
+    expect(new Set(goods.map((g) => g.nmID)).size).toBe(pool.length)
+    // И цена у каждой не нулевая: пустая цена — это отсутствие ответа, а не ответ.
+    expect(goods.every((g) => Number(g.sizes?.[0]?.discountedPrice) > 0)).toBe(true)
+  })
+
+  it('карточная выдача держится документированного потолка в сто записей', () => {
+    // У метода контента свой предел, и он меньше общего: карточка тяжёлая, и
+    // боевой сервис тысячу их не отдаёт.
+    const cards = wb('/content/v2/get/cards/list', 'POST', {}, {
+      settings: { cursor: { limit: 1000 } },
+    }).cards as unknown[]
+    expect(cards).toHaveLength(100)
+  })
+})
