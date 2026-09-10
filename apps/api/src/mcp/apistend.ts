@@ -167,6 +167,10 @@ function requireService(args: Record<string, unknown>): ServiceCode {
 }
 
 export const apistendMcpServer: McpServerDefinition = {
+  // Собственный сервер — не подмена чужого сервиса, и в журнале он под своим
+  // именем: иначе его вызовы смешались бы с вызовами моков.
+  logServiceCode: 'apistend',
+  upstreamUrl: 'https://apistend.ru/mcp',
   protocolVersion: '2025-06-18',
   serverInfo: {
     name: 'apistend',

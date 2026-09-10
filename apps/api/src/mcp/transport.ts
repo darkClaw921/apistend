@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto'
+import type { Prisma } from '@prisma/client'
 import type { FastifyReply, FastifyRequest } from 'fastify'
+import { extractRawKey, resolveApiKey } from '../lib/api-key.ts'
+import { enqueueRequestLog } from '../lib/log-buffer.ts'
+import { maskHeaders, maskJson, maskText } from '../lib/mask-log.ts'
+import { requestId as newRequestId } from '../lib/ids.ts'
 
 /**
  * Транспорт MCP: Streamable HTTP поверх JSON-RPC 2.0.
@@ -78,6 +83,10 @@ export interface McpServerDefinition {
   readonly capabilities: Record<string, unknown>
   /** Текст instructions. Пустая строка означает «поля нет». */
   readonly instructions?: string
+  /** Под каким кодом сервиса вызовы этого сервера попадают в журнал песочницы. */
+  readonly logServiceCode: string
+  /** Чей интерфейс подменяет сервер — в журнале это колонка «боевой адрес». */
+  readonly upstreamUrl: string
   /** Список инструментов для конкретного запроса: он зависит от параметра tools. */
   tools(req: FastifyRequest): Promise<readonly McpTool[]> | readonly McpTool[]
   /** Вызов инструмента. Бросает RpcError, если инструмента нет или аргументы неверны. */
@@ -167,6 +176,7 @@ export async function handleMcpRequest(
     return reply.code(202).send()
   }
 
+  const startedAt = process.hrtime.bigint()
   let result: unknown
   try {
     result = await dispatch(req, server, message)
@@ -174,21 +184,93 @@ export async function handleMcpRequest(
     const rpc = error instanceof RpcError
       ? { code: error.code, message: error.message }
       : { code: RPC.INTERNAL_ERROR, message: (error as Error).message }
+    const payload = { jsonrpc: '2.0', id: message.id, error: rpc }
+    await logMcpCall(req, reply, server, message, payload, startedAt)
     return reply
       .code(200)
       .type('text/event-stream')
       .header('cache-control', 'no-cache, no-transform')
       .header('x-accel-buffering', 'no')
-      .send(sseFrame(sessionId, { jsonrpc: '2.0', id: message.id, error: rpc }))
+      .send(sseFrame(sessionId, payload))
   }
 
+  const payload = { result, jsonrpc: '2.0', id: message.id }
+  await logMcpCall(req, reply, server, message, payload, startedAt)
   return reply
     .code(200)
     .type('text/event-stream')
     .header('cache-control', 'no-cache, no-transform')
     .header('x-accel-buffering', 'no')
     // Порядок ключей тот же, что у боевого сервера: result, jsonrpc, id.
-    .send(sseFrame(sessionId, { result, jsonrpc: '2.0', id: message.id }))
+    .send(sseFrame(sessionId, payload))
+}
+
+/**
+ * Вызов по MCP — такой же вызов песочницы, как и запрос к шлюзу.
+ *
+ * Без журнала половина работы агента проходит мимо кабинета: разработчик видит
+ * два REST-вызова, а десяток обращений его агента к акторам — нет, и вопрос
+ * «почему запросы не отображаются, хотя они есть» задаётся ровно про это.
+ *
+ * Пишем только то, что принадлежит песочнице: запись журнала живёт при ней,
+ * и анонимный вызов приписать некому.
+ */
+async function logMcpCall(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  server: McpServerDefinition,
+  message: RpcRequest,
+  payload: Record<string, unknown>,
+  startedAt: bigint,
+): Promise<void> {
+  const resolved = await sandboxOf(req)
+  if (!resolved) {
+    // Молча пропустить нельзя: «вызовы есть, а в журнале пусто» — это первый
+    // вопрос, который задают. Заголовок называет причину сразу.
+    reply.header('x-apistend-log', 'skipped-no-sandbox-key')
+    return
+  }
+
+  const params = (message.params ?? {}) as Record<string, unknown>
+  const tool = typeof params.name === 'string' ? params.name : null
+  const body = JSON.stringify(payload)
+  enqueueRequestLog({
+    sandboxId: resolved.sandbox.id,
+    apiKeyId: resolved.apiKey.id,
+    publicId: newRequestId(),
+    // Код сервиса берётся у сервера: мок Apify пишется как apify, собственный
+    // сервер APIStend — как apistend, и в журнале их видно раздельно.
+    serviceCode: server.logServiceCode,
+    httpMethod: 'POST',
+    // В строке журнала сразу видно, что именно звал агент: не просто «/apify/mcp»,
+    // а «tools/call call-actor». По ней же работает поиск по журналу.
+    endpoint: `${req.url.split('?')[0]} ${message.method ?? '?'}${tool ? ` ${tool}` : ''}`,
+    statusCode: payload.error ? 400 : 200,
+    durationMs: Math.round(Number(process.hrtime.bigint() - startedAt) / 1_000_000),
+    sizeBytes: Buffer.byteLength(body),
+    upstreamUrl: server.upstreamUrl,
+    clientIp: req.ip,
+    scenario: 'success',
+    responseSource: 'mcp',
+    requestHeaders: maskHeaders(req.headers) as Prisma.InputJsonValue,
+    requestBody: maskText(JSON.stringify(req.body ?? null))?.slice(0, 8_000) ?? null,
+    responseHeaders: {},
+    // Ответ MCP не восстанавливается движком: он собран из снимка магазина
+    // и реестра запусков, и без сохранённого тела в журнале смотреть было бы нечего.
+    responseBody: maskText(body)?.slice(0, 8_000) ?? null,
+  })
+}
+
+/** Песочница вызова — по тому же ключу, каким пользуется REST-шлюз. */
+async function sandboxOf(req: FastifyRequest) {
+  const rawKey = extractRawKey(
+    req.headers as Record<string, string | string[] | undefined>,
+    (req.query ?? {}) as Record<string, unknown>,
+    '',
+    null,
+  )
+  if (!rawKey) return null
+  return resolveApiKey(rawKey)
 }
 
 async function dispatch(
