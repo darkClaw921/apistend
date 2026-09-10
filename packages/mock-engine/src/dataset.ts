@@ -315,6 +315,11 @@ const SUBJECT_KEYS = new Set(['subjectid', 'subjectname', 'subject'])
 export function looksLikeSubjectRecord(node: unknown): boolean {
   if (node === null || typeof node !== 'object' || Array.isArray(node)) return false
   if (hasProductKey(node)) return false
+  // Товар внутри записи — значит запись про товар, а не про предмет. У отзыва
+  // есть и subjectId, и вложенный productDetails с артикулом: без этой оговорки
+  // отзывы разворачивались по справочнику предметов, и ответ на вопрос об
+  // отзывах конкретной карточки был про чужие товары.
+  if (looksLikeProduct(node)) return false
   return Object.keys(node).some((k) => SUBJECT_KEYS.has(k.toLowerCase().replace(/[_\s]/g, '')))
 }
 

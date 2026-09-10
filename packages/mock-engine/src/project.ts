@@ -21,8 +21,14 @@ import { advertDayStats, advertTotals, type AdvertCampaign } from './adverts.ts'
  * структуры), остаётся ровно таким, как в документации.
  */
 
-/** Потолок событий в одном ответе: страховка от тела в мегабайты. */
-const EVENT_PAGE_MAX = 2_000
+/**
+ * Потолок событий в одном ответе.
+ *
+ * Выбран так, чтобы девяносто дней журнала помещались целиком: обрезка с начала
+ * окна оставляла бы клиента без свежих дней — он просил три месяца, получал
+ * первые две тысячи записей и не видел последних недель вовсе.
+ */
+const EVENT_PAGE_MAX = 3_000
 
 /** Счётчики, которые обязаны совпасть с длиной развёрнутого списка. */
 const COUNTER_KEYS = new Set(['total', 'totalcount', 'count', 'cnt'])
@@ -105,9 +111,15 @@ function walk(
       // попадают только состоявшиеся сделки и возвраты, а отменённый заказ
       // продажей не становится. Отличаем по полю самой записи.
       const salesOnly = hasKey(template, 'saleid')
-      const window = salesOnly
+      const all = salesOnly
         ? ctx.events().filter((e) => e.outcome === 'buyout' || e.outcome === 'return')
         : ctx.events()
+      // Клиент не назвал период — отдаём последний месяц, а не всю глубину
+      // журнала: у боевого метода `dateFrom` обязателен, и три месяца выгрузки
+      // в ответ на запрос без единого параметра никому не нужны.
+      const window = ctx.window.explicit
+        ? all
+        : all.filter((e) => e.settledAt.getTime() >= ctx.now.getTime() - 30 * 86_400_000)
       // Без явного limit отдаём всё окно: боевая статистика Wildberries так и
       // делает, и клиент строит по одному ответу график за все запрошенные дни.
       const size = ctx.page.explicitLimit ? pageSize(ctx) : Math.min(window.length, EVENT_PAGE_MAX)
@@ -139,6 +151,11 @@ function walk(
           inCampaign ? { ...event, day, product: undefined } : { ...event, day, product: anchor }))
     }
     if (product === null && looksLikeProduct(template)) {
+      // Спросили про конкретные карточки — отвечаем ими, а не страницей каталога.
+      if (ctx.selection.length > 0) {
+        return ctx.selection.map((p, i) =>
+          walk(template, `${path}[${i}]`, p, true, depth + 1, ctx, inAttributes, event))
+      }
       const count = pageSize(ctx)
       return Array.from({ length: count }, (_, i) =>
         walk(template, `${path}[${i}]`, ctx.pool[(ctx.page.offset + i) % ctx.pool.length]!, true, depth + 1, ctx, inAttributes, event))
@@ -153,9 +170,11 @@ function walk(
     // шаг в одну карточку на запрос — обход каталога из трёхсот товаров занял бы
     // триста запросов вместо пятнадцати.
     const cursor = lastKey(path) === 'cursor'
-    const anchor = cursor
-      ? ctx.pool[(ctx.page.offset + pageSize(ctx) - 1) % ctx.pool.length]!
-      : ctx.pool[ctx.page.offset % ctx.pool.length]!
+    // Опорная карточка одиночного ответа: спросили про конкретную — она и есть.
+    const anchor = ctx.selection[0]
+      ?? (cursor
+        ? ctx.pool[(ctx.page.offset + pageSize(ctx) - 1) % ctx.pool.length]!
+        : ctx.pool[ctx.page.offset % ctx.pool.length]!)
     // Одиночная кампания: «покажи кампанию по идентификатору» отвечает объектом,
     // а не списком. Без привязки такой ответ рассказывал про кампанию, которой
     // у клиента нет, — ровно как список и статистика до этого.
@@ -338,7 +357,7 @@ function eventField(
   const k = key.toLowerCase().replace(/[_\s]/g, '')
 
   if (ctx.day) {
-    const stats = dayStats(ctx.product ?? fill.pool[0]!, ctx.day)
+    const stats = dayStats(ctx.product ?? fill.pool[0]!, ctx.day, fill.timeline())
     if (DATE_FIELDS.has(k)) return like === 'string' ? stats.date : undefined
     if (like !== 'number') return undefined
     // Показатели дня, а не месяца: три точки с одинаковыми числами графиком
@@ -417,7 +436,7 @@ const DATE_FIELDS = new Set(['date', 'dt', 'day'])
 function windowStatsField(key: string, product: Product, ctx: FillContext): number | undefined {
   const k = key.toLowerCase().replace(/[_\s]/g, '')
   if (!WINDOW_STATS.has(k)) return undefined
-  const stats = statsInWindow(product, ctx.window.from, endOfDay(ctx.window.to))
+  const stats = statsInWindow(product, ctx.window.from, endOfDay(ctx.window.to), ctx.timeline())
   switch (k) {
     case 'opencount': case 'opencardcount': case 'viewcount': return stats.openCount
     case 'cartcount': case 'addtocartcount': return stats.cartCount
