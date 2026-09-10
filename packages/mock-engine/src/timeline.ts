@@ -24,6 +24,14 @@ import type { Product } from './dataset.ts'
 /** Глубина журнала. Витрины считают за 7, 30 и 90 дней — последнее и берём. */
 export const TIMELINE_DAYS = 90
 
+/**
+ * Доля возвратов.
+ *
+ * Семь процентов — обычная величина для маркетплейса: возврат случается редко,
+ * но случается у каждого, и по нему считают качество карточки и логистику.
+ */
+const RETURN_SHARE = 0.07
+
 /** Период, за который посчитаны показатели товара в каталоге. */
 export const BASE_PERIOD_DAYS = 30
 
@@ -110,14 +118,20 @@ export function orderTimeline(
   // встретится ни в заказах, ни в продажах, и «тот же товар во всех методах»
   // останется обещанием. Сверху: всё окно клиент забирает одним запросом, как
   // у боевого API, и ответ обязан остаться ответом, а не выгрузкой базы.
-  const perDay = Math.max(3, Math.round(pool.length / 40))
+  const perDay = Math.max(8, Math.round(pool.length / 10))
   const events: OrderEvent[] = []
 
+  // Товары раздаются по кругу, а не жеребьёвкой. При случайном выборе каждый
+  // девятый артикул за девяносто дней не получал ни одного заказа: клиент
+  // открывал карточку и видел «продаж нет» там, где их обязано быть хоть
+  // сколько-то. Круг гарантирует, что очередь доходит до каждого.
+  let cursor = 0
   for (let back = TIMELINE_DAYS - 1; back >= 0; back--) {
     const day = new Date(today.getTime() - back * 86_400_000)
     for (let i = 0; i < perDay; i++) {
       const k = `${dayKey(day)}|${i}`
-      const product = pool[det.int(`product|${k}`, 0, pool.length - 1)]!
+      const product = pool[cursor % pool.length]!
+      cursor += 1
       // Время внутри дня: заказы идут не в полночь, а в течение суток.
       const orderedAt = new Date(
         day.getTime() +
@@ -125,7 +139,11 @@ export function orderTimeline(
         det.int(`minute|${k}`, 0, 59) * 60_000 +
         det.int(`second|${k}`, 0, 59) * 1000,
       )
-      events.push(buildEvent(product, orderedAt, now, det, k))
+      // Первый заказ каждого товара — выкуп. Иначе у части каталога все заказы
+      // случайно оказывались отменами, и в продажах товара не было вовсе:
+      // ни выручки, ни процента выкупа по нему не посчитать.
+      const first = cursor <= pool.length
+      events.push(buildEvent(product, orderedAt, now, det, k, first))
     }
   }
 
@@ -142,12 +160,17 @@ function buildEvent(
   now: Date,
   det: Deterministic,
   k: string,
+  forceBuyout = false,
 ): OrderEvent {
   // Доли исходов — из воронки самого товара: тот же процент выкупа, который
   // клиент увидит в аналитике, обязан получиться и подсчётом по журналу.
   const orders = Math.max(1, product.orderCount)
   const buyoutShare = product.buyoutCount / orders
-  const cancelShare = Math.min(product.cancelCount / orders, 1 - buyoutShare)
+  // Возврат — отдельный исход, а не разновидность отмены. Пока он выводился
+  // остатком от выкупов и отмен, возвратов не случалось вовсе: доли складывались
+  // в единицу, и процент возврата по товару всегда выходил нулём.
+  const returnShare = RETURN_SHARE
+  const cancelShare = Math.max(0, 1 - buyoutShare - returnShare)
   const roll = det.float(`roll|${k}`, 0, 1)
 
   // Заказ младше суток ещё не решён: у боевого API он висит в статусе «оформлен».
@@ -155,11 +178,13 @@ function buildEvent(
   const settleDays = det.int(`settle|${k}`, 1, 5)
   const outcome: Outcome = ageMs < 86_400_000
     ? 'created'
-    : roll < buyoutShare
+    : forceBuyout
       ? 'buyout'
-      : roll < buyoutShare + cancelShare
-        ? 'cancel'
-        : 'return'
+      : roll < buyoutShare
+      ? 'buyout'
+        : roll < buyoutShare + cancelShare
+          ? 'cancel'
+          : 'return'
 
   const settledAt = outcome === 'created'
     ? orderedAt
@@ -240,27 +265,65 @@ export interface DayStats {
  * корзин, корзины больше заказов, выкупы меньше заказов. Ряд по дням строится
  * именно отсюда: клиенту нужен график, а не три одинаковые точки.
  */
-export function dayStats(product: Product, day: Date): DayStats {
+/**
+ * Индекс «товар и день → его заказы».
+ *
+ * Без него каждый показатель дня перебирал весь журнал: двадцать товаров на
+ * девяносто дней — это миллионы сравнений на один ответ, и аналитика отвечала
+ * секундами вместо миллисекунд. Индекс строится один раз на журнал и живёт
+ * ровно столько же — журнал неизменяем и меняется только со сменой суток.
+ */
+const dayIndexes = new WeakMap<object, Map<string, { orders: number; buyouts: number; cancels: number }>>()
+
+function dayIndex(events: readonly OrderEvent[]): Map<string, { orders: number; buyouts: number; cancels: number }> {
+  const cached = dayIndexes.get(events as object)
+  if (cached) return cached
+  const index = new Map<string, { orders: number; buyouts: number; cancels: number }>()
+  for (const e of events) {
+    const key = `${e.product.nmId}|${dayKey(e.orderedAt)}`
+    const cell = index.get(key) ?? { orders: 0, buyouts: 0, cancels: 0 }
+    cell.orders += 1
+    if (e.outcome === 'buyout') cell.buyouts += 1
+    if (e.outcome === 'cancel') cell.cancels += 1
+    index.set(key, cell)
+  }
+  dayIndexes.set(events as object, index)
+  return index
+}
+
+export function dayStats(
+  product: Product,
+  day: Date,
+  events: readonly OrderEvent[] = [],
+): DayStats {
   const key = dayKey(day)
   const det = new Deterministic(`day|${product.nmId}|${key}`)
-  // Разброс дня: спрос не бывает ровным, но и не скачет на порядок.
-  const factor = det.float('factor', 0.55, 1.45)
-  const per = (monthly: number) => Math.round((monthly / BASE_PERIOD_DAYS) * factor)
 
-  const orderCount = per(product.orderCount)
-  const buyoutCount = Math.min(orderCount, per(product.buyoutCount))
-  const cancelCount = Math.min(orderCount - buyoutCount, per(product.cancelCount))
+  // Заказы дня берутся из журнала: клиент, сложивший записи из выгрузки заказов,
+  // обязан получить то же число, что стоит в аналитике. Пока эти два ответа
+  // считались по отдельности, они расходились в сотни раз — и сверить выгрузку
+  // с витриной было нельзя.
+  const cell = dayIndex(events).get(`${product.nmId}|${key}`)
+  const orderCount = cell?.orders ?? 0
+  const buyoutCount = cell?.buyouts ?? 0
+  const cancelCount = cell?.cancels ?? 0
+
+  // Показы и корзины журнал не хранит — их не бывает «событием». Выводим их
+  // из заказов теми же соотношениями, что стоят в карточке товара: воронка
+  // сужается от показов к заказам, а не живёт тремя независимыми числами.
+  const viewsPerOrder = det.int('views', 40, 90)
+  const cartPerOrder = det.int('cart', 4, 9)
   return {
     date: key,
-    openCount: per(product.openCount),
-    cartCount: per(product.cartCount),
+    openCount: orderCount * viewsPerOrder,
+    cartCount: orderCount * cartPerOrder,
     orderCount,
     orderSum: orderCount * product.discountedPrice,
     buyoutCount,
     buyoutSum: buyoutCount * product.discountedPrice,
     cancelCount,
     cancelSum: cancelCount * product.discountedPrice,
-    addToWishlistCount: per(Math.round(product.cartCount / 3)),
+    addToWishlistCount: Math.round(orderCount * cartPerOrder / 3),
   }
 }
 
@@ -276,9 +339,14 @@ export function daysOf(from: Date, to: Date): Date[] {
 }
 
 /** Сумма дневных показателей за окно: воронка за запрошенный период, а не за чужой. */
-export function statsInWindow(product: Product, from: Date, to: Date): DayStats {
+export function statsInWindow(
+  product: Product,
+  from: Date,
+  to: Date,
+  events: readonly OrderEvent[] = [],
+): DayStats {
   const days = daysOf(from, to)
-  const total = days.map((d) => dayStats(product, d)).reduce(
+  const total = days.map((d) => dayStats(product, d, events)).reduce(
     (acc, d) => ({
       date: acc.date,
       openCount: acc.openCount + d.openCount,

@@ -11,6 +11,7 @@ import { projectExample } from './project.ts'
 import { productPool } from './dataset.ts'
 import { isDefaultPage, readPage } from './page.ts'
 import { endOfWindow, readWindow } from './window.ts'
+import { readSelection } from './selection.ts'
 import { eventsInWindow, orderTimeline } from './timeline.ts'
 import { advertCampaigns, readAdvertIds, requestedCampaigns } from './adverts.ts'
 import { LruCache } from './cache.ts'
@@ -203,6 +204,7 @@ export class MockEngine {
     const cacheable = isDefaultPage(page)
       && !readWindow(req.query, req.body, req.now).explicit
       && readAdvertIds(req.query, req.body).length === 0
+      && readSelection(req.query, req.body, productPool(req.salt)).length === 0
     const cached = cacheable ? this.bodyCache.get(cacheKey) : undefined
     if (cached) {
       return {
@@ -223,14 +225,22 @@ export class MockEngine {
     const window = readWindow(req.query, req.body, req.now)
     // Журнал собирается лениво и только для методов, которым он нужен: методов
     // статистики в каталоге десятки, а всего методов — две с половиной тысячи.
-    const events = () => eventsInWindow(orderTimeline(req.salt, pool, req.now), window.from, endOfWindow(window))
+    // Спросили про конкретные карточки — и события отбираются по ним: заказы
+    // по чужому товару в ответе на вопрос про свой не нужны никому.
+    const selection = readSelection(req.query, req.body, pool)
+    const selected = new Set(selection.map((p) => p.nmId))
+    const events = () => {
+      const window7 = eventsInWindow(orderTimeline(req.salt, pool, req.now), window.from, endOfWindow(window))
+      return selected.size === 0 ? window7 : window7.filter((e) => selected.has(e.product.nmId))
+    }
     // Кампании — тоже лениво: они нужны десятку рекламных методов из двух с
     // половиной тысяч, и собирать их на каждом ответе каталога незачем.
     const campaigns = () => requestedCampaigns(
       advertCampaigns(req.salt, pool, req.now),
       readAdvertIds(req.query, req.body),
     )
-    const ctx = { det, now: req.now, pool, page, window, events, campaigns }
+    const timeline = () => orderTimeline(req.salt, pool, req.now)
+    const ctx = { det, now: req.now, pool, page, window, events, timeline, campaigns, selection }
     const built = this.buildBody(index, method, ctx)
     // Даты — последним шагом, поверх любого яруса: и пример из документации,
     // и сгенерированное по схеме тело одинаково датированы днём, когда писали

@@ -830,3 +830,113 @@ describe('цена — свойство предмета, а не случайн
     }
   })
 })
+
+
+describe('у каждой карточки есть все зависимые данные', () => {
+  const now = new Date()
+  const day = (offset: number) => new Date(now.getTime() - offset * 86_400_000).toISOString().slice(0, 10)
+  const wb = (path: string, httpMethod: string, query: Record<string, string> = {}, body: unknown = null) =>
+    JSON.parse(engine.handle({
+      service: 'wildberries', httpMethod, path, query, headers: {}, body,
+      requestId: 'r', scenario: 'success', now, salt: 'medium',
+    }).serialized) as any
+
+  it('заказы и продажи покрывают весь каталог, а не его часть', () => {
+    const pool = productPool('medium')
+    const orders = wb('/api/v1/supplier/orders', 'GET', { dateFrom: day(89) }) as Array<Record<string, number>>
+    const sales = wb('/api/v1/supplier/sales', 'GET', { dateFrom: day(89) }) as Array<Record<string, any>>
+    const ordered = new Set(orders.map((o) => o.nmId))
+    const sold = new Set(sales.filter((s) => Number(s.forPay) > 0).map((s) => s.nmId))
+
+    // При случайной раздаче товаров каждый девятый артикул за девяносто дней
+    // не получал ни одного заказа: продавец открывал карточку и видел «продаж
+    // нет» там, где их обязано быть хоть сколько-то.
+    expect(pool.filter((p) => !ordered.has(p.nmId))).toHaveLength(0)
+    expect(pool.filter((p) => !sold.has(p.nmId))).toHaveLength(0)
+  })
+
+  it('возвраты случаются, а не выводятся остатком в ноль', () => {
+    const sales = wb('/api/v1/supplier/sales', 'GET', { dateFrom: day(89) }) as Array<Record<string, any>>
+    const returns = sales.filter((s) => Number(s.forPay) < 0)
+    // Доли складывались в единицу, и возврата не случалось ни у одного товара:
+    // процент возврата по карточке всегда выходил нулём.
+    expect(returns.length).toBeGreaterThan(10)
+    expect(returns.every((s) => String(s.saleID).startsWith('R'))).toBe(true)
+  })
+
+  it('выгрузка заказов сходится с аналитикой по тому же товару', () => {
+    const product = productPool('medium')[42]!
+    const orders = (wb('/api/v1/supplier/orders', 'GET', { dateFrom: day(29) }) as Array<Record<string, number>>)
+      .filter((o) => o.nmId === product.nmId)
+    const funnel = wb('/api/analytics/v3/sales-funnel/products', 'POST', {}, {
+      nmIDs: [product.nmId], currentPeriod: { start: day(29), end: day(0) },
+    })
+    // Два ответа об одном товаре за один период обязаны сойтись: пока витрина
+    // и выгрузка считались по отдельности, они расходились в сотни раз.
+    expect(funnel.data.products[0].statistic.selected.orderCount).toBe(orders.length)
+  })
+
+  it('вопрос про конкретную карточку получает ответ про неё', () => {
+    const product = productPool('medium')[137]!
+    const nm = product.nmId
+    const contains = (body: unknown): boolean => JSON.stringify(body).includes(String(nm))
+
+    // Клиент спрашивал про рюкзак, получал первую страницу каталога — кофе —
+    // и делал вывод, что по рюкзаку данных нет.
+    expect(contains(wb('/content/v2/get/cards/list', 'POST', {}, {
+      settings: { filter: { textSearch: String(nm) } },
+    }))).toBe(true)
+    expect(contains(wb('/api/analytics/v3/sales-funnel/products', 'POST', {}, {
+      nmIDs: [nm], currentPeriod: { start: day(30), end: day(0) },
+    }))).toBe(true)
+    expect(contains(wb('/api/analytics/v3/sales-funnel/products/history', 'POST', {}, {
+      nmIDs: [nm], period: { start: day(7), end: day(0) },
+    }))).toBe(true)
+    expect(contains(wb('/api/v2/stocks-report/products/products', 'POST', {}, { nmIDs: [nm] }))).toBe(true)
+    expect(contains(wb('/api/v1/feedbacks', 'GET', { nmId: String(nm) }))).toBe(true)
+    expect(contains(wb('/api/v2/list/goods/filter', 'GET', { filterNmID: String(nm) }))).toBe(true)
+  })
+
+  it('артикул продавца и поисковая строка находят ту же карточку', () => {
+    const product = productPool('medium')[88]!
+    const byVendorCode = wb('/content/v2/get/cards/list', 'POST', {}, {
+      settings: { filter: { textSearch: product.vendorCode } },
+    })
+    expect(JSON.stringify(byVendorCode)).toContain(String(product.nmId))
+
+    // Артикул внутри поисковой фразы — обычный способ найти карточку.
+    const bySearch = wb('/content/v2/get/cards/list', 'POST', {}, {
+      settings: { filter: { textSearch: `купить ${product.nmId}` } },
+    })
+    expect(JSON.stringify(bySearch)).toContain(String(product.nmId))
+  })
+
+  it('курсор пагинации не путается с фильтром по карточке', () => {
+    // `settings.cursor.nmID` — это «продолжи с этой карточки», а не «покажи
+    // только её»: спутав их, обход каталога свёлся бы к одной записи.
+    const page = wb('/content/v2/get/cards/list', 'POST', {}, {
+      settings: { cursor: { limit: 10, nmID: productPool('medium')[5]!.nmId, updatedAt: day(1) } },
+    })
+    expect((page.cards as unknown[]).length).toBe(10)
+  })
+
+  it('у каждой карточки есть кампания, комиссия и остаток', () => {
+    const pool = productPool('medium')
+    const campaigns = wb('/adv/v1/adverts', 'GET', { limit: '50' }) as Array<Record<string, number>>
+    const covered = new Set<number>()
+    for (const c of campaigns) {
+      const one = wb('/api/advert/v2/adverts', 'GET', { ids: String(c.advertId) })
+      for (const nm of one.adverts[0]?.nm_settings ?? []) covered.add(nm.nm_id)
+    }
+    expect(pool.filter((p) => !covered.has(p.nmId))).toHaveLength(0)
+
+    const subjects = new Set(
+      (wb('/api/v1/tariffs/commission', 'GET').report as Array<Record<string, number>>).map((r) => r.subjectID),
+    )
+    expect(pool.filter((p) => !subjects.has(p.subjectId))).toHaveLength(0)
+
+    // Остаток — свойство карточки, и он есть у каждой: нулевой тоже ответ,
+    // но отсутствие карточки в отчёте по складам ответом не является.
+    expect(pool.every((p) => typeof p.stock === 'number')).toBe(true)
+  })
+})
