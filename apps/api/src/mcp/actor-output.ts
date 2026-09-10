@@ -1,6 +1,6 @@
 import { Deterministic } from '@apistend/mock-engine'
 import type { ActorSnapshotEntry } from './apify-actors.ts'
-import { applyProduct, looksLikeProductRow, selectProducts } from './catalog-overlay.ts'
+import { applyOffer, looksLikeProductRow, selectMarket } from './catalog-overlay.ts'
 
 /**
  * Результат запуска актора — по его собственному описанию выхода.
@@ -144,10 +144,11 @@ export interface ActorOutput {
  *   2) примеры строк из readme, если схемы нет.
  *
  * Дальше форма проверяется на «это карточка товара»: название рядом с ценой,
- * артикулом, рейтингом. Если да — значения берутся из общего каталога товаров
- * песочницы, того же, из которого отвечают моки Wildberries и Ozon, и выдача
- * начинает зависеть от `queries` и `maxItems`. Иначе (профили соцсетей, точки
- * на карте, вакансии) остаётся то, что показал автор: подменять там нечего.
+ * артикулом, рейтингом. Если да — строки заполняются рынком конкурентов вокруг
+ * каталога песочницы: чужие предложения того же предмета, у каждого свой
+ * продавец с реквизитами, а цены сгруппированы вокруг цены своей карточки.
+ * Выдача при этом зависит от `queries` и `maxItems`. Иначе (профили соцсетей,
+ * точки на карте, вакансии) остаётся то, что показал автор: подменять нечего.
  *
  * Пустой массив означает честное «форму выхода актор не описал» — у 326 акторов
  * снимка нет ни схемы, ни примеров. Придумывать за автора поля его результата —
@@ -173,10 +174,9 @@ export function sampleFromActorOutput(
     : (actor.outputExamples ?? []).find(looksLikeProductRow) ?? null
 
   if (shape && looksLikeProductRow(shape)) {
-    const det = new Deterministic(`${seed}|catalog`)
-    const selection = selectProducts(input, count, seed)
+    const selection = selectMarket(input, count, seed)
     return {
-      items: selection.products.map((product) => applyProduct(shape, product, det)),
+      items: selection.offers.map((offer) => applyOffer(shape, offer)),
       fromCatalog: true,
       matchedQuery: selection.matched,
     }

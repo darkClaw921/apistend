@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import type { ServiceCode } from '@apistend/shared'
 import { MockEngine } from './engine.ts'
+import { competitorsFor } from './competitors.ts'
 import { productPool } from './dataset.ts'
 import { DEFAULT_LIMIT } from './page.ts'
 import type { MockRequest } from './engine.ts'
@@ -659,5 +660,81 @@ describe('аналитика отвечает за запрошенный пер
     expect(booster.every((b) => pool.has(b.nm!))).toBe(true)
     const days = (stats[0]!.days as Array<Record<string, string>>).map((d) => d.date!.slice(0, 10))
     expect(days.every((d) => d >= day(14) && d <= day(0))).toBe(true)
+  })
+})
+
+
+describe('рынок конкурентов вокруг каталога', () => {
+  const pool = productPool('medium')
+
+  it('у карточки есть чужие предложения того же предмета', () => {
+    const product = pool[0]!
+    const market = competitorsFor(product, 'medium')
+    expect(market.length).toBeGreaterThan(5)
+    expect(market.every((c) => c.subjectName === product.subjectName)).toBe(true)
+    // Продавцов несколько: рынок из одного магазина рынком не является.
+    expect(new Set(market.map((c) => c.sellerName)).size).toBeGreaterThan(2)
+  })
+
+  it('цены конкурентов группируются вокруг своей, а не по всему прайсу', () => {
+    const product = pool[3]!
+    const market = competitorsFor(product, 'medium')
+    for (const c of market) {
+      // Разброс в пределах трети в обе стороны: коридор цен, а не «айфон против коврика».
+      expect(c.price).toBeGreaterThan(product.price * 0.6)
+      expect(c.price).toBeLessThan(product.price * 1.45)
+      expect(c.discountedPrice).toBeLessThanOrEqual(c.price)
+    }
+  })
+
+  it('артикулы конкурентов не пересекаются с каталогом продавца', () => {
+    const own = new Set(pool.map((p) => p.nmId))
+    const market = pool.slice(0, 20).flatMap((p) => competitorsFor(p, 'medium'))
+    // Иначе собранный «конкурент» окажется собственной карточкой, и наценка
+    // будет считаться относительно самого себя.
+    expect(market.some((c) => own.has(c.nmId))).toBe(false)
+  })
+
+  it('ИНН и ОГРН проходят проверку контрольной суммы', () => {
+    const market = pool.slice(0, 12).flatMap((p) => competitorsFor(p, 'medium'))
+    const checksum = (digits: number[], weights: number[]) =>
+      (weights.reduce((acc, w, i) => acc + w * digits[i]!, 0) % 11) % 10
+
+    for (const c of market) {
+      const digits = [...c.inn].map(Number)
+      if (digits.length === 10) {
+        expect(digits[9]).toBe(checksum(digits.slice(0, 9), [2, 4, 10, 3, 5, 9, 4, 6, 8]))
+      } else {
+        expect(digits).toHaveLength(12)
+        expect(digits[10]).toBe(checksum(digits.slice(0, 10), [7, 2, 4, 10, 3, 5, 9, 4, 6, 8]))
+        expect(digits[11]).toBe(checksum(digits.slice(0, 11), [3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8]))
+      }
+      // ОГРН: последняя цифра — остаток от деления числа без неё.
+      const divisor = c.ogrn.length === 13 ? 11n : 13n
+      expect(Number(c.ogrn.slice(-1))).toBe(Number(BigInt(c.ogrn.slice(0, -1)) % divisor) % 10)
+    }
+  })
+
+  it('рынок детерминирован: тот же товар — те же предложения', () => {
+    const a = competitorsFor(pool[7]!, 'medium')
+    const b = competitorsFor(pool[7]!, 'medium')
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b))
+  })
+})
+
+describe('цена — свойство предмета, а не случайное число', () => {
+  it('товары одного предмета стоят одного порядка', () => {
+    const pool = productPool('medium')
+    const bySubject = new Map<string, number[]>()
+    for (const p of pool) {
+      bySubject.set(p.subjectName, [...(bySubject.get(p.subjectName) ?? []), p.price])
+    }
+    for (const [subject, prices] of bySubject) {
+      const min = Math.min(...prices)
+      const max = Math.max(...prices)
+      // Коврик для йоги стоил то 563 ₽, то 21 869 ₽ — медиана по такой категории
+      // считается по величинам, которые вместе не встречаются.
+      expect(max / min, `${subject}: ${min}..${max}`).toBeLessThan(12)
+    }
   })
 })

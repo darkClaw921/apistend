@@ -1,24 +1,31 @@
-import { Deterministic, productPool, type Product } from '@apistend/mock-engine'
+import {
+  Deterministic, competitorMarket, productPool, type Competitor, type Product,
+} from '@apistend/mock-engine'
 
 /**
- * Выдача скрапера маркетплейса — из общего каталога товаров песочницы.
+ * Выдача скрапера маркетплейса — рынок вокруг каталога песочницы.
  *
  * Форму строки задаёт автор актора: схема полей датасета или пример в readme.
- * Но форма — это ещё не проверка. Пока любой запрос возвращает один и тот же
- * товар из примера, конвейер сбора конкурентов проверяется целиком, а ценовая
- * логика — нет: iPhone за 29 514 ₽ как конкурент коврика для йоги за 10 125 ₽
- * не даёт ни коридора цен, ни медианы, ни отклонения от неё.
+ * Значения — рынок: чужие предложения того же предмета, что и карточка продавца.
+ * За скрапером маркетплейса приходят ровно за этим — собрать КОНКУРЕНТОВ, а не
+ * свои же товары, и посчитать по ним коридор цен, медиану и отклонение от неё.
  *
- * Поэтому значения товарных полей берутся из того же каталога, из которого
- * отвечают моки Wildberries и Ozon: «кофе в зёрнах» находит кофе, «коврик для
- * йоги» — коврики, и цены внутри выдачи одного порядка. Тот же каталог, те же
- * артикулы — значит собранный конкурент сходится с товаром, который отдаёт мок
- * маркетплейса, а не живёт в своей вселенной.
+ * Что это даёт по сравнению с выдачей из каталога продавца:
  *
- * Что НЕ подменяется: поля, которых в каталоге нет (ИНН продавца, штрихкод
- * склада, идентификаторы внутренних сущностей актора). Там остаётся значение
- * автора: подставить туда своё значило бы выдумать данные, а не пересобрать
- * известные.
+ *   • у каждой строки свой продавец, своё юрлицо, ИНН и ОГРН — выдачу можно
+ *     группировать по продавцу и проверять реквизиты;
+ *   • цены сгруппированы вокруг цены своей карточки: коридор осмысленный,
+ *     а не «айфон против коврика»;
+ *   • артикулы из чужого диапазона: собранный конкурент не окажется
+ *     собственной карточкой продавца.
+ *
+ * Связь со своим каталогом при этом сохраняется: «кофе в зёрнах» находит рынок
+ * кофе, «коврик для йоги» — рынок ковриков, и сравнивать есть с чем, потому что
+ * тот же предмет отдают моки Wildberries и Ozon.
+ *
+ * Что НЕ подменяется: поля, которых у предложения нет (штрихкод склада,
+ * внутренние идентификаторы актора). Там остаётся значение автора: подставить
+ * туда своё значило бы выдумать данные, а не пересобрать известные.
  */
 
 /** Сколько товаров каталога перебирать. Средний объём — 300 артикулов. */
@@ -50,16 +57,26 @@ function queryTerms(input: Record<string, unknown>): string[] {
     .filter((word) => word.length >= 3)
 }
 
-/** Насколько товар отвечает запросу: сколько слов запроса встретилось в его описании. */
+/**
+ * Насколько товар отвечает запросу.
+ *
+ * Совпадение в названии и предмете весит больше, чем в бренде и категории.
+ * Иначе «кофе» находит чай: у чая бренд «Северный кофе», и по одному лишь
+ * подсчёту вхождений он равен настоящему кофе.
+ */
 function relevance(product: Product, terms: readonly string[]): number {
   if (terms.length === 0) return 0
-  const haystack =
-    `${product.title} ${product.subjectName} ${product.category} ${product.brand}`.toLowerCase()
-  return terms.filter((term) => haystack.includes(term)).length
+  const strong = `${product.title} ${product.subjectName}`.toLowerCase()
+  const weak = `${product.category} ${product.brand}`.toLowerCase()
+  return terms.reduce(
+    (score, term) => score + (strong.includes(term) ? 2 : weak.includes(term) ? 1 : 0),
+    0,
+  )
 }
 
-export interface CatalogSelection {
-  readonly products: readonly Product[]
+export interface MarketSelection {
+  /** Предложения конкурентов — то, что и отдаётся строками выдачи. */
+  readonly offers: readonly Competitor[]
   /** Нашлось ли в каталоге песочницы хоть что-то по фразе запроса. */
   readonly matched: boolean
 }
@@ -72,11 +89,11 @@ export interface CatalogSelection {
  * оборвать выдачу на восьми означало бы проверить пагинацию клиента не на том,
  * на чём она ломается.
  */
-export function selectProducts(
+export function selectMarket(
   input: Record<string, unknown>,
   count: number,
   seed: string,
-): CatalogSelection {
+): MarketSelection {
   const terms = queryTerms(input)
   const det = new Deterministic(`catalog|${seed}`)
   const scored = productPool(SALT).map((product) => ({
@@ -87,8 +104,18 @@ export function selectProducts(
     shuffle: det.int(`order|${product.nmId}`, 0, 1_000_000),
   }))
   scored.sort((a, b) => b.score - a.score || a.shuffle - b.shuffle)
+  // Только то, что отвечает запросу. Добирать «ещё немного каталога» нельзя:
+  // в выдаче по фразе «кофе в зёрнах» появился бы чай, и клиент посчитал бы
+  // по нему свой коридор цен — а это уже не конкуренты.
+  // Берём только лучших по релевантности: у предмета двенадцать предложений,
+  // и десяти строк выдачи хватает рынка одной-двух карточек. Разбавлять его
+  // соседними предметами значит подмешать в конкурентов чужой товар.
+  const best = scored[0]?.score ?? 0
+  const relevant = best > 0 ? scored.filter((x) => x.score === best) : scored
+  const wanted = Math.max(2, Math.ceil(count / 6))
+  const products = relevant.slice(0, wanted).map((x) => x.product)
   return {
-    products: scored.slice(0, count).map((x) => x.product),
+    offers: competitorMarket(products, SALT, seed).slice(0, count),
     matched: (scored[0]?.score ?? 0) > 0,
   }
 }
@@ -113,72 +140,85 @@ function normalize(name: string): string {
  * цены со скидкой и для остатка, и попытка угадать одно каноничное имя оставила
  * бы половину полей примера нетронутой.
  */
-const FIELD_VALUE: Record<string, (p: Product, det: Deterministic) => unknown> = {
+const FIELD_VALUE: Record<string, (c: Competitor) => unknown> = {
   // Названия и описания.
-  name: (p) => p.title,
-  title: (p) => p.title,
-  productname: (p) => p.title,
-  producttitle: (p) => p.title,
-  fulltitle: (p) => p.title,
-  description: (p) => p.description,
-  brand: (p) => p.brand,
-  brandname: (p) => p.brand,
-  category: (p) => p.category,
-  categoryname: (p) => p.category,
-  subject: (p) => p.subjectName,
-  subjectname: (p) => p.subjectName,
-  // Идентификаторы.
-  productid: (p) => p.nmId,
-  nmid: (p) => p.nmId,
-  nmidnumber: (p) => p.nmId,
-  sku: (p) => p.nmId,
-  article: (p) => p.nmId,
-  articul: (p) => p.nmId,
-  imtid: (p) => p.imtId,
-  vendorcode: (p) => p.vendorCode,
-  barcode: (p) => p.barcode,
+  name: (c) => c.title,
+  title: (c) => c.title,
+  productname: (c) => c.title,
+  producttitle: (c) => c.title,
+  fulltitle: (c) => c.title,
+  description: (c) => `${c.title}. ${c.subjectName}, категория «${c.category}». Предложение продавца ${c.sellerName}.`,
+  brand: (c) => c.brand,
+  brandname: (c) => c.brand,
+  trademark: (c) => c.brand,
+  category: (c) => c.category,
+  categoryname: (c) => c.category,
+  subject: (c) => c.subjectName,
+  subjectname: (c) => c.subjectName,
+  // Идентификаторы товара.
+  productid: (c) => c.nmId,
+  nmid: (c) => c.nmId,
+  nm: (c) => c.nmId,
+  sku: (c) => c.nmId,
+  article: (c) => c.nmId,
+  articul: (c) => c.nmId,
   // Деньги. `price` у скраперов — та цена, что видит покупатель, то есть уже
   // со скидкой; цена до скидки живёт под именем old/original/basic. Перепутать
   // их значит выдать скидку нулём там, где она есть.
-  price: (p) => p.discountedPrice,
-  pricebasic: (p) => p.price,
-  basicprice: (p) => p.price,
-  oldprice: (p) => p.price,
-  listprice: (p) => p.price,
-  priceoriginal: (p) => p.price,
-  originalprice: (p) => p.price,
-  pricesale: (p) => p.discountedPrice,
-  saleprice: (p) => p.discountedPrice,
-  finalprice: (p) => p.discountedPrice,
-  currentprice: (p) => p.discountedPrice,
-  discountedprice: (p) => p.discountedPrice,
-  pricewithdiscount: (p) => p.discountedPrice,
-  discount: (p) => p.discountPercent,
-  discountpercent: (p) => p.discountPercent,
-  discountpercentage: (p) => p.discountPercent,
+  price: (c) => c.discountedPrice,
+  pricebasic: (c) => c.price,
+  basicprice: (c) => c.price,
+  oldprice: (c) => c.price,
+  listprice: (c) => c.price,
+  priceoriginal: (c) => c.price,
+  originalprice: (c) => c.price,
+  pricesale: (c) => c.discountedPrice,
+  saleprice: (c) => c.discountedPrice,
+  finalprice: (c) => c.discountedPrice,
+  currentprice: (c) => c.discountedPrice,
+  discountedprice: (c) => c.discountedPrice,
+  pricewithdiscount: (c) => c.discountedPrice,
+  discount: (c) => c.discountPercent,
+  discountpercent: (c) => c.discountPercent,
+  discountpercentage: (c) => c.discountPercent,
   // Витринные показатели.
-  rating: (p) => p.rating,
-  ratingvalue: (p) => p.rating,
-  reviewrating: (p) => p.rating,
-  averagerating: (p) => p.rating,
-  reviewscount: (p, det) => det.int(`reviews|${p.nmId}`, 3, 4_000),
-  reviewcount: (p, det) => det.int(`reviews|${p.nmId}`, 3, 4_000),
-  feedbacks: (p, det) => det.int(`reviews|${p.nmId}`, 3, 4_000),
-  feedbackcount: (p, det) => det.int(`reviews|${p.nmId}`, 3, 4_000),
+  rating: (c) => c.rating,
+  ratingvalue: (c) => c.rating,
+  reviewrating: (c) => c.rating,
+  averagerating: (c) => c.rating,
+  reviewscount: (c) => c.reviewsCount,
+  reviewcount: (c) => c.reviewsCount,
+  feedbacks: (c) => c.reviewsCount,
+  feedbackcount: (c) => c.reviewsCount,
   // Склад.
-  stock: (p) => p.stock,
-  stocktotal: (p) => p.stock,
-  quantity: (p) => p.stock,
-  totalquantity: (p) => p.stock,
-  instock: (p) => p.stock > 0,
-  available: (p) => p.stock > 0,
-  // Продавец. Своего продавца в каталоге нет — берём бренд: у большинства
-  // артикулов песочницы бренд и продавец совпадают, как у живого продавца WB.
-  suppliername: (p) => p.brand,
-  sellername: (p) => p.brand,
-  seller: (p) => p.brand,
-  shopname: (p) => p.brand,
-  merchantname: (p) => p.brand,
+  stock: (c) => c.stock,
+  stocktotal: (c) => c.stock,
+  quantity: (c) => c.stock,
+  totalquantity: (c) => c.stock,
+  instock: (c) => c.stock > 0,
+  available: (c) => c.stock > 0,
+  // Продавец. Ради него скрапер и запускают: конкурент — это не строка прайса,
+  // а компания, у которой есть имя, реквизиты и репутация.
+  suppliername: (c) => c.sellerName,
+  sellername: (c) => c.sellerName,
+  seller: (c) => c.sellerName,
+  shopname: (c) => c.sellerName,
+  merchantname: (c) => c.sellerName,
+  supplierid: (c) => c.sellerId,
+  sellerid: (c) => c.sellerId,
+  shopid: (c) => c.sellerId,
+  merchantid: (c) => c.sellerId,
+  supplierrating: (c) => c.sellerRating,
+  sellerrating: (c) => c.sellerRating,
+  shoprating: (c) => c.sellerRating,
+  fullname: (c) => c.sellerFullName,
+  legalname: (c) => c.sellerFullName,
+  companyname: (c) => c.sellerFullName,
+  organizationname: (c) => c.sellerFullName,
+  inn: (c) => c.inn,
+  taxid: (c) => c.inn,
+  ogrn: (c) => c.ogrn,
+  ogrnip: (c) => c.ogrn,
 }
 
 /** Поля, которые распознаются как товарные, — по ним и решается, накладывать ли каталог. */
@@ -198,7 +238,7 @@ export function looksLikeProductRow(row: Record<string, unknown>): boolean {
  * поверх коврика для йоги читается как настоящая ссылка на айфон, и агент,
  * который берёт название из адреса, соберёт чужой товар.
  */
-function rewriteUrl(value: string, product: Product): string {
+function rewriteUrl(value: string, offer: Competitor): string {
   if (!/^https?:\/\//i.test(value)) return value
   let url: URL
   try {
@@ -206,17 +246,17 @@ function rewriteUrl(value: string, product: Product): string {
   } catch {
     return value
   }
-  const slug = product.vendorCode.toLowerCase()
+  const slug = `offer-${offer.sellerId}`
   url.pathname = url.pathname
     .split('/')
     .map((segment) => {
-      if (/^\d{6,}$/.test(segment)) return String(product.nmId)
-      if (/\d{6,}/.test(segment)) return `${slug}-${product.nmId}`
+      if (/^\d{6,}$/.test(segment)) return String(offer.nmId)
+      if (/\d{6,}/.test(segment)) return `${slug}-${offer.nmId}`
       return segment
     })
     .join('/')
   for (const [key, param] of [...url.searchParams]) {
-    if (/^\d{6,}$/.test(param)) url.searchParams.set(key, String(product.nmId))
+    if (/^\d{6,}$/.test(param)) url.searchParams.set(key, String(offer.nmId))
   }
   return url.toString()
 }
@@ -238,20 +278,19 @@ function coerce(value: unknown, sample: unknown): unknown {
  * характеристик и вариантов размеров, у каталога такого разреза нет, и
  * переписывать их наугад значило бы портить пример автора без выигрыша.
  */
-export function applyProduct(
+export function applyOffer(
   row: Record<string, unknown>,
-  product: Product,
-  det: Deterministic,
+  offer: Competitor,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, sample] of Object.entries(row)) {
     const build = FIELD_VALUE[normalize(key)]
     if (build) {
-      out[key] = coerce(build(product, det), sample)
+      out[key] = coerce(build(offer), sample)
       continue
     }
     if (typeof sample === 'string' && /url|link/i.test(key)) {
-      out[key] = rewriteUrl(sample, product)
+      out[key] = rewriteUrl(sample, offer)
       continue
     }
     out[key] = sample

@@ -340,34 +340,57 @@ describe('мок mcp.apify.com', () => {
     expect(product).toHaveProperty('supplierName')
   })
 
-  it('выдача отвечает на поисковую фразу и на запрошенное количество', async () => {
-    // Ради этого мок и нужен: без реакции на queries конвейер сбора конкурентов
-    // проверяется целиком, а ценовая логика — нет. Коврик за 10 125 ₽ и айфон
-    // за 29 514 ₽ в одном коридоре цен не дают ни медианы, ни отклонения.
+  it('выдача — конкуренты по запросу, а не свои же товары', async () => {
+    // Ради этого скрапер маркетплейса и запускают: собрать чужие предложения
+    // того же предмета и посчитать по ним коридор цен. На фикстуре из примера
+    // автора считать было нечего — один и тот же iPhone на любой запрос.
     const run = await rpc('/apify/mcp', 'tools/call', {
       name: 'call-actor',
       arguments: {
         actor: 'memo23/wildberries-scraper',
-        input: { queries: ['коврик для йоги'], maxItems: 5 },
+        input: { queries: ['коврик для йоги'], maxItems: 10 },
       },
     })
     const structured = (run.frame as { result: { structuredContent: Run } }).result.structuredContent
     const items = await datasetItems(structured.storages.datasets.default.id)
+    expect(items).toHaveLength(10)
 
-    expect(items).toHaveLength(5)
+    // Продавцов много: выдачу можно группировать по продавцу, а «дешевле рынка»
+    // считать относительно чужих предложений, а не одного магазина.
+    expect(new Set(items.map((i) => i.supplierName)).size).toBeGreaterThan(2)
+
+    const own = new Set(productPool('medium').map((p) => p.nmId))
     for (const item of items) {
-      expect(String(item.name)).toContain('Коврик для йоги')
-      // Цена со скидкой не выше цены до скидки — иначе коридор цен считается
-      // по числам, которые не могли встретиться вместе.
+      // Предмет тот же, что спросили.
+      expect(String(item.name)).toContain('Коврик')
+      // Артикул чужой: собранный конкурент не должен оказаться своей карточкой.
+      expect(own.has(Number(item.productId))).toBe(false)
       expect(Number(item.priceSale)).toBeLessThanOrEqual(Number(item.priceBasic))
-      // Артикул — из общего каталога песочницы, того же, из которого отвечают
-      // моки Wildberries и Ozon.
-      expect(productPool('medium').some((p) => p.nmId === item.productId)).toBe(true)
-      // Ссылка ведёт на свой товар, а не на товар из примера автора.
       expect(String(item.url)).toContain(String(item.productId))
     }
-    // Товары одной категории — цены одного порядка, а не «айфон против коврика».
-    expect(new Set(items.map((i) => i.supplierName)).size).toBe(1)
+
+    // Коридор цен осмысленный: край от края отличается в разы, а не на порядки.
+    const prices = items.map((i) => Number(i.priceSale)).sort((a, b) => a - b)
+    expect(prices[prices.length - 1]! / prices[0]!).toBeLessThan(5)
+  })
+
+  it('количество и фраза слышны: другой запрос — другой рынок', async () => {
+    const market = async (query: string, maxItems: number) => {
+      const run = await rpc('/apify/mcp', 'tools/call', {
+        name: 'call-actor',
+        arguments: { actor: 'memo23/wildberries-scraper', input: { queries: [query], maxItems } },
+      })
+      const structured = (run.frame as { result: { structuredContent: Run } }).result.structuredContent
+      return datasetItems(structured.storages.datasets.default.id)
+    }
+    const coffee = await market('кофе в зёрнах', 6)
+    const mats = await market('коврик для йоги', 3)
+    expect(coffee).toHaveLength(6)
+    expect(mats).toHaveLength(3)
+    expect(coffee.every((i) => String(i.name).includes('Кофе'))).toBe(true)
+    // Рынки разных предметов не пересекаются по артикулам.
+    const ids = new Set(coffee.map((i) => i.productId))
+    expect(mats.some((i) => ids.has(i.productId))).toBe(false)
   })
 
   it('нетоварному актору каталог не подмешивается', async () => {
