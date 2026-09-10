@@ -28,7 +28,9 @@ export function registerLogRoutes(app: FastifyInstance): void {
     const offset = Math.max(Number(q.offset ?? 0), 0)
 
     const where: Prisma.RequestLogWhereInput = { sandboxId: ctx.sandbox.id, timestamp: { gte: since } }
-    if (q.service && isServiceCode(q.service)) where.serviceCode = q.service
+    // `apistend` — собственный MCP-сервер стенда: код сервиса в журнале есть,
+    // а в списке мокаемых сервисов его нет и быть не должно.
+    if (q.service && (isServiceCode(q.service) || q.service === 'apistend')) where.serviceCode = q.service
     if (q.apiKeyId) where.apiKeyId = q.apiKeyId
     if (q.status && q.status !== 'all') {
       const group = Number(q.status)
@@ -115,7 +117,9 @@ export function registerLogRoutes(app: FastifyInstance): void {
       sandboxId: ctx.sandbox.id,
       timestamp: { gte: new Date(Date.now() - hours * 3_600_000) },
     }
-    if (q.service && isServiceCode(q.service)) where.serviceCode = q.service
+    // `apistend` — собственный MCP-сервер стенда: код сервиса в журнале есть,
+    // а в списке мокаемых сервисов его нет и быть не должно.
+    if (q.service && (isServiceCode(q.service) || q.service === 'apistend')) where.serviceCode = q.service
 
     const stamp = new Date().toISOString().slice(0, 10)
     reply

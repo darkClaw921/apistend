@@ -401,6 +401,10 @@ const SANDBOX_INSTRUCTIONS = [
 ].join('\n')
 
 export const apifyMcpServer: McpServerDefinition = {
+  // Вызовы этого сервера попадают в журнал песочницы как вызовы Apify: для
+  // разработчика это тот же сервис, только другой протокол.
+  logServiceCode: 'apify',
+  upstreamUrl: 'https://mcp.apify.com',
   protocolVersion: vendored.protocolVersion,
   // serverInfo и capabilities сняты с боевого сервера: по ним клиент решает,
   // что сервер умеет, и подменённое здесь имя сломало бы совместимость сразу.

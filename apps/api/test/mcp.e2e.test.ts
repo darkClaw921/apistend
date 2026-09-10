@@ -515,6 +515,66 @@ describe('мок mcp.apify.com', () => {
   })
 })
 
+describe('вызовы MCP видны в журнале песочницы', () => {
+  it('каждый вызов записан с именем инструмента', async () => {
+    const { flushRequestLogs } = await import('../src/lib/log-buffer.ts')
+    await rpc('/apify/mcp', 'tools/call', {
+      name: 'search-actors',
+      arguments: { keywords: 'wildberries' },
+    })
+    await rpc('/mcp', 'tools/call', { name: 'list_services', arguments: {} })
+    await flushRequestLogs()
+
+    // Ищем по имени инструмента, а не в первых десяти записях: тестов в файле
+    // много, и свежие вызовы вытесняют друг друга из любой короткой выборки.
+    const rows = await prisma.requestLog.findMany({
+      where: { responseSource: 'mcp', OR: [
+        { endpoint: { contains: 'search-actors' } },
+        { endpoint: { contains: 'list_services' } },
+      ] },
+      orderBy: { timestamp: 'desc' },
+      select: { serviceCode: true, endpoint: true, statusCode: true, responseBody: true },
+    })
+    // Половина работы агента шла мимо кабинета: разработчик видел REST-вызовы,
+    // а обращения агента к акторам — нет, и спрашивал, почему запросов нет,
+    // хотя они есть.
+    const apify = rows.find((r) => r.endpoint.includes('search-actors'))
+    expect(apify?.serviceCode).toBe('apify')
+    expect(apify?.statusCode).toBe(200)
+    // Тело сохранено: ответ MCP собран из снимка магазина и реестра запусков,
+    // и движком он не восстанавливается — без тела в журнале смотреть нечего.
+    expect(apify?.responseBody).toContain('actors')
+
+    const own = rows.find((r) => r.endpoint.includes('list_services'))
+    expect(own?.serviceCode).toBe('apistend')
+  })
+
+  it('вызов без ключа песочницы не теряется молча', async () => {
+    const res = await api.inject({
+      method: 'POST',
+      url: '/apify/mcp',
+      headers: { 'content-type': 'application/json', accept: ACCEPT },
+      payload: { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+    })
+    // Приписать такой вызов некому: запись журнала живёт при песочнице.
+    // Но и молчать нельзя — иначе «вызовы есть, а журнал пуст» без объяснения.
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['x-apistend-log']).toBe('skipped-no-sandbox-key')
+  })
+
+  it('ключ в журнале не оседает открытым текстом', async () => {
+    const { flushRequestLogs } = await import('../src/lib/log-buffer.ts')
+    await rpc('/apify/mcp', 'tools/list')
+    await flushRequestLogs()
+    const row = await prisma.requestLog.findFirst({
+      where: { responseSource: 'mcp' },
+      orderBy: { timestamp: 'desc' },
+      select: { requestHeaders: true },
+    })
+    expect(JSON.stringify(row?.requestHeaders)).not.toContain(key)
+  })
+})
+
 describe('собственный MCP-сервер APIStend', () => {
   it('instructions предупреждают, что данные демонстрационные, и называют мок MCP Apify', async () => {
     const res = await rpc('/mcp', 'initialize', { protocolVersion: '2025-06-18' })

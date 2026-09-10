@@ -268,7 +268,13 @@ function LogsScreen() {
         <div className="flex shrink-0 flex-wrap items-center gap-[10px] rounded-[10px] border border-border bg-surface px-[14px] py-[10px]">
           <SearchField value={query} onValueChange={setQuery} placeholder="Поиск по пути эндпоинта" width={240} />
           <Select label="Сервис" value={service} onChange={(v) => { setService(v); setPage(0) }}
-            options={[{ value: 'all', label: 'Все' }, ...Object.values(SERVICE_PROFILES).map((p) => ({ value: p.code, label: p.title }))]} />
+            options={[
+              { value: 'all', label: 'Все' },
+              ...Object.values(SERVICE_PROFILES).map((p) => ({ value: p.code, label: p.title })),
+              // Собственный MCP-сервер стенда: его вызовы тоже принадлежат
+              // песочнице, но подменой чужого сервиса не являются.
+              { value: 'apistend', label: 'APIStend MCP' },
+            ]} />
           <Select label="Код ответа" value={status} onChange={(v) => { setStatus(v); setPage(0) }} options={[...STATUSES]} />
           <Select label="Ключ" value={apiKeyId} onChange={(v) => { setApiKeyId(v); setPage(0) }}
             options={[{ value: 'all', label: 'Все' }, ...keys.map((k) => ({ value: k.id, label: k.name }))]} />
