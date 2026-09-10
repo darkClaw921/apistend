@@ -403,6 +403,7 @@ const SANDBOX_INSTRUCTIONS = [
 export const apifyMcpServer: McpServerDefinition = {
   // Вызовы этого сервера попадают в журнал песочницы как вызовы Apify: для
   // разработчика это тот же сервис, только другой протокол.
+  requiresKey: true,
   logServiceCode: 'apify',
   upstreamUrl: 'https://mcp.apify.com',
   protocolVersion: vendored.protocolVersion,
