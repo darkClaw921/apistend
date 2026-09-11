@@ -168,6 +168,45 @@ describe('Wildberries — контент карточки', () => {
   })
 })
 
+describe('Wildberries — справочник характеристик предмета', () => {
+  it('отдаёт характеристики только запрошенного предмета — с их настоящими именами', async () => {
+    const product = pool[8]!
+    const res = await call(`/wb/content/v2/object/charcs/${product.subjectId}`)
+    expect(res.status).toBe(200)
+    const data = res.body!.data as any[]
+    expect(data.length).toBeGreaterThan(0)
+    // Один и тот же subjectID у всех строк — тот, что спросили, а не вперемешку.
+    expect(new Set(data.map((c) => c.subjectID))).toEqual(new Set([product.subjectId]))
+    expect(data.every((c) => c.subjectName === product.subjectName)).toBe(true)
+    // name — название характеристики («Цвет»), а не название товара.
+    expect(data.map((c) => c.name)).toContain('Цвет')
+    expect(data.map((c) => c.name)).not.toContain(product.title)
+  })
+
+  it('характеристика из справочника — та же, что принимает cards/update и отдаёт cards/list', async () => {
+    const product = pool[9]!
+    const directory = await call(`/wb/content/v2/object/charcs/${product.subjectId}`)
+    const color = (directory.body!.data as any[]).find((c) => c.name === 'Цвет')
+    expect(color).toBeTruthy()
+
+    const update = await call('/wb/content/v2/cards/update', {
+      method: 'POST',
+      body: [{
+        nmID: product.nmId, vendorCode: product.vendorCode, sizes: [{ skus: ['1'] }],
+        characteristics: [{ id: color.charcID, value: ['зелёный'] }],
+      }],
+    })
+    expect(update.status).toBe(200)
+
+    const list = await call('/wb/content/v2/get/cards/list', {
+      method: 'POST',
+      body: { settings: { filter: { textSearch: String(product.nmId) } } },
+    })
+    const card = list.body!.cards.find((c: any) => c.nmID === product.nmId)
+    expect(card.characteristics).toEqual([{ id: color.charcID, name: 'Цвет', value: ['зелёный'] }])
+  })
+})
+
 describe('Wildberries — цены', () => {
   const product = pool[1]!
 
