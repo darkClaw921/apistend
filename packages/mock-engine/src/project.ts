@@ -1,8 +1,9 @@
 import type { FillContext } from './sampler.ts'
 import { byFieldName, isIdentityField, pageSize } from './sampler.ts'
 import {
-  accountReviewSummary, hasProductKey, looksLikeEvent, looksLikeProduct, looksLikeSeriesPoint,
-  looksLikeSubjectRecord, productField, reviewBreakdown, subjectsOf, type Product,
+  accountReviewPeriod, accountReviewSummary, hasProductKey, looksLikeEvent, looksLikeProduct,
+  looksLikeSeriesPoint, looksLikeSubjectRecord, productField, reviewBreakdown, reviewPeriodBreakdown,
+  subjectsOf, type Product, type StarCounts,
 } from './dataset.ts'
 import { dayStats, daysOf, statsInWindow, type OrderEvent } from './timeline.ts'
 import { advertDayStats, advertTotals, type AdvertCampaign } from './adverts.ts'
@@ -370,14 +371,14 @@ function reviewPeriodFraction(ctx: FillContext): number {
 }
 
 /** Число нужного «уровня звёзд» из разбивки — по нормализованному имени поля-родителя. */
-function starCountOf(b: ReturnType<typeof reviewBreakdown>, key: string): number {
+function starCountOf(stars: StarCounts, key: string): number {
   switch (key) {
-    case 'fivestar': return b.fiveStar
-    case 'fourstar': return b.fourStar
-    case 'threestar': return b.threeStar
-    case 'twostar': return b.twoStar
-    case 'onestar': return b.oneStar
-    default: return b.total
+    case 'fivestar': return stars.fiveStar
+    case 'fourstar': return stars.fourStar
+    case 'threestar': return stars.threeStar
+    case 'twostar': return stars.twoStar
+    case 'onestar': return stars.oneStar
+    default: return 0
   }
 }
 
@@ -386,6 +387,11 @@ function starCountOf(b: ReturnType<typeof reviewBreakdown>, key: string): number
  * внутри карточки товара. Форма — та, что показал пример документации:
  * обходятся её собственные ключи, известные имена (`current`, `dynamics`,
  * `percentile`) заполняются из разбивки, остальное остаётся как было.
+ *
+ * Рейтинг и звёзды здесь берутся из ОДНОЙ и той же периодной разбивки
+ * (`reviewPeriodBreakdown`), а не рейтинг — из жизни товара целиком, а
+ * звёзды — из периода: клиент, пересчитавший средний балл по показанным
+ * пяти числам, обязан получить ровно показанный рейтинг.
  */
 function feedbackItemObject(
   node: Record<string, unknown>,
@@ -393,17 +399,20 @@ function feedbackItemObject(
   product: Product,
   ctx: FillContext,
 ): Record<string, unknown> {
-  const b = reviewBreakdown(product)
+  const period = reviewPeriodBreakdown(product, reviewPeriodFraction(ctx))
+  // Процент по каталогу предмета и колебание к прошлому периоду — витринные
+  // показатели без периодного смысла, берутся из карточки целиком.
+  const lifetime = reviewBreakdown(product)
   const isRating = key === 'feedbackrating'
-  const periodCount = isRating ? 0 : Math.round(starCountOf(b, key) * reviewPeriodFraction(ctx))
+  const periodCount = isRating ? 0 : (key === 'feedbackcount' ? period.total : starCountOf(period, key))
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(node)) {
     const nk = k.toLowerCase()
     const asString = typeof v === 'string'
-    if (isRating && nk === 'current') { out[k] = asString ? String(b.rating) : b.rating; continue }
-    if (isRating && nk === 'percentile') { out[k] = asString ? String(b.percentile) : b.percentile; continue }
+    if (isRating && nk === 'current') { out[k] = asString ? String(period.rating) : period.rating; continue }
+    if (isRating && nk === 'percentile') { out[k] = asString ? String(lifetime.percentile) : lifetime.percentile; continue }
     if (!isRating && nk === 'current') { out[k] = asString ? String(periodCount) : periodCount; continue }
-    if (nk === 'dynamics') { out[k] = asString ? String(b.dynamicsPercent) : b.dynamicsPercent; continue }
+    if (nk === 'dynamics') { out[k] = asString ? String(lifetime.dynamicsPercent) : lifetime.dynamicsPercent; continue }
     out[k] = v
   }
   return out
@@ -411,11 +420,13 @@ function feedbackItemObject(
 
 /**
  * `feedbackIncrease` — прирост оценок целиком по аккаунту продавца: сумма
- * разбивок всех товаров каталога, а не одной карточки.
+ * ПЕРИОДНЫХ разбивок всех товаров каталога (`accountReviewPeriod`), а не
+ * отдельное округление агрегата, — иначе пять звёздных сумм расходились бы
+ * с общим числом ровно так же, как расходились у одной карточки.
  */
 function feedbackIncreaseObject(node: Record<string, unknown>, ctx: FillContext): Record<string, unknown> {
   const summary = accountReviewSummary(ctx.pool)
-  const fraction = reviewPeriodFraction(ctx)
+  const period = accountReviewPeriod(ctx.pool, reviewPeriodFraction(ctx))
   const tierTotals: Record<string, number> = {
     fivestar: summary.fiveStar,
     fourstar: summary.fourStar,
@@ -423,19 +434,26 @@ function feedbackIncreaseObject(node: Record<string, unknown>, ctx: FillContext)
     twostar: summary.twoStar,
     onestar: summary.oneStar,
   }
+  const tierCurrents: Record<string, number> = {
+    fivestar: period.fiveStar,
+    fourstar: period.fourStar,
+    threestar: period.threeStar,
+    twostar: period.twoStar,
+    onestar: period.oneStar,
+  }
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(node)) {
     const nk = k.toLowerCase()
     const tierTotal = tierTotals[nk]
     if (tierTotal !== undefined && v !== null && typeof v === 'object' && !Array.isArray(v)) {
       const tierOut: Record<string, unknown> = {}
+      const tierCurrent = tierCurrents[nk]!
       for (const [tk, tv] of Object.entries(v as Record<string, unknown>)) {
         const tnk = tk.toLowerCase()
         const asString = typeof tv === 'string'
         if (tnk === 'total') { tierOut[tk] = asString ? String(tierTotal) : tierTotal; continue }
         if (tnk === 'current') {
-          const cur = Math.round(tierTotal * fraction)
-          tierOut[tk] = asString ? String(cur) : cur
+          tierOut[tk] = asString ? String(tierCurrent) : tierCurrent
           continue
         }
         tierOut[tk] = tv
@@ -445,11 +463,7 @@ function feedbackIncreaseObject(node: Record<string, unknown>, ctx: FillContext)
     }
     const asString = typeof v === 'string'
     if (nk === 'total') { out[k] = asString ? String(summary.totalReviews) : summary.totalReviews; continue }
-    if (nk === 'current') {
-      const cur = Math.round(summary.totalReviews * fraction)
-      out[k] = asString ? String(cur) : cur
-      continue
-    }
+    if (nk === 'current') { out[k] = asString ? String(period.total) : period.total; continue }
     out[k] = v
   }
   return out

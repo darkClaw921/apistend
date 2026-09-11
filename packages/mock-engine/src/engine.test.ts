@@ -953,7 +953,7 @@ describe('рейтинг и отзывы кабинета продавца — �
   const itemRating = (body: unknown) =>
     wb('/api/analytics/v2/item-rating', 'POST', {}, body).data as {
       sellerRating: { current: number }
-      feedbackIncrease: { total: number }
+      feedbackIncrease: { current: number; total: number } & Record<string, any>
       items: Array<Record<string, any>>
     }
 
@@ -993,7 +993,11 @@ describe('рейтинг и отзывы кабинета продавца — �
     expect(data.items.map((i) => Number(i.nmId)).sort()).toEqual([a.nmId, b.nmId].sort())
   })
 
-  it('звёзды складываются в число отзывов периода, а не расходятся', () => {
+  it('звёзды складываются в число отзывов периода ровно, а рейтинг — их среднее', () => {
+    // Ровно то, что нашёл клиент: у части карточек сумма звёзд не совпадала
+    // с feedbackCount.current, у большинства рейтинг не совпадал со средним
+    // по звёздам — потому что рейтинг брался из отзывов за всё время, а
+    // звёзды в ответе — из запрошенного периода, и это два разных числа.
     const pool = productPool('medium')
     const data = itemRating({
       currentPeriod: { start: day(30), end: day(0) },
@@ -1004,9 +1008,15 @@ describe('рейтинг и отзывы кабинета продавца — �
     for (const item of data.items) {
       const stars = item.fiveStar.current + item.fourStar.current + item.threeStar.current
         + item.twoStar.current + item.oneStar.current
-      // Округление каждой звезды отдельно от общего счёта иногда даёт разницу
-      // в единицу — но не в порядки, как было бы у пяти независимых фикстур.
-      expect(Math.abs(stars - item.feedbackCount.current)).toBeLessThanOrEqual(1)
+      expect(stars, `nmId ${item.nmId}: сумма звёзд`).toBe(item.feedbackCount.current)
+
+      if (item.feedbackCount.current > 0) {
+        const expectedRating = Number((
+          (5 * item.fiveStar.current + 4 * item.fourStar.current + 3 * item.threeStar.current
+            + 2 * item.twoStar.current + item.oneStar.current) / item.feedbackCount.current
+        ).toFixed(2))
+        expect(item.feedbackRating.current, `nmId ${item.nmId}: рейтинг из звёзд`).toBe(expectedRating)
+      }
     }
   })
 
@@ -1023,6 +1033,13 @@ describe('рейтинг и отзывы кабинета продавца — �
     expect(rating.valuation).toBe(data.sellerRating.current)
     expect(rating.feedbackCount).toBe(data.feedbackIncrease.total)
     expect(rating.feedbackCount).toBeGreaterThan(0)
+
+    // Прирост по аккаунту тоже обязан сойтись по звёздам с общим числом —
+    // ту же арифметику клиент проверяет и здесь, не только у одной карточки.
+    const inc = data.feedbackIncrease
+    const tierSum = inc.fiveStar.current + inc.fourStar.current + inc.threeStar.current
+      + inc.twoStar.current + inc.oneStar.current
+    expect(tierSum).toBe(inc.current)
   })
 
   it('ответ детерминирован: тот же запрос — те же оценки', () => {
