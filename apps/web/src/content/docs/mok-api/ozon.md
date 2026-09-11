@@ -95,6 +95,29 @@ x-apistend-did-you-mean: /v3/product/info/list, /v3/product/list, /v4/product/in
   в каталог не входят.
 :::
 
+## Запись сохраняется
+
+Три метода меняют то, что видит следующий запрос той же песочницы:
+
+- `POST /v1/product/attributes/update` — характеристики товара по `offer_id`.
+  Название (`name`) этим методом не задаётся — и в бою тоже: это отдельное
+  поле карточки, которое трогает только тяжёлый `/v3/product/import`
+  (обязательны категория, тип, цена и объёмно-весовые характеристики), он
+  не реализован. Описание — характеристика `id: 4191` («Аннотация» — тот же
+  ID, что и в примере спецификации, не выдуманный). Отвечает `task_id`,
+  который сразу же обработан (`status: "imported"` в `POST /v1/product/
+  import/info`) — песочница не моделирует очередь.
+- `POST /v1/product/import/prices` — цена и старая цена по `offer_id` или
+  `product_id`; в отличие от WB метод синхронный, результат приходит тем же
+  ответом.
+- `POST /v1/product/pictures/import` — изображения по `product_id`; новый
+  список полностью заменяет прежний, как и в бою.
+
+`POST /v4/product/info/attributes`, `POST /v5/product/info/prices` и
+`POST /v3/product/info/list` отдают уже сохранённое. Изменения приватны для
+ключа, которым записаны, и переживают перезапуск стенда — до `POST /api/
+sandbox/reset`.
+
 :::next
 - [Wildberries](/docs/mok-api/wildberries) — тот же разбор для WB
 - [Заголовки ответа](/docs/mok-api/zagolovki-chestnosti) — как отличить `schema` от `example`

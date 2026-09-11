@@ -15,6 +15,7 @@ import { appTokenExpired, resolveAppToken, type AppContext } from './b24/tokens.
 import { callAppMethod, buildTimeEnvelope, scopeForMethod } from './b24/app-methods.ts'
 import { B24_APP_ERRORS } from '@apistend/shared'
 import { expandBracketKeys, runBatch } from './b24/batch.ts'
+import { applyOverlayToRead, interceptOverlayWrite } from './overlay/dispatch.ts'
 
 /**
  * Мок-шлюз.
@@ -273,6 +274,43 @@ async function handle(
     }
   }
 
+  // Запись поверх каталога: «Применить» в разборе карточки и его аналоги
+  // (цены, фото, характеристики Ozon). Движок каталога общий на все песочницы
+  // и на чтение — состояние правки лежит в overlay песочницы и отвечает само,
+  // минуя движок целиком, тем же приёмом, что и respondAsApp выше.
+  if (scenario === 'success' && (service === 'wildberries' || service === 'ozon')) {
+    const overlayAnswer = await interceptOverlayWrite(
+      service, req.method, path, sandbox, parsedBody,
+      req.headers as Record<string, string | string[] | undefined>,
+      query as Record<string, unknown>,
+    )
+    if (overlayAnswer) {
+      const payload = JSON.stringify(overlayAnswer.body)
+      enqueueRequestLog({
+        sandboxId: sandbox.id,
+        apiKeyId: resolved?.apiKey.id ?? null,
+        publicId: reqId,
+        serviceCode: service,
+        httpMethod: req.method,
+        endpoint: path,
+        statusCode: overlayAnswer.status,
+        durationMs: Math.round(Number(process.hrtime.bigint() - startedAt) / 1_000_000),
+        sizeBytes: Buffer.byteLength(payload),
+        upstreamUrl: `${profile.replacesUrl}${path}`,
+        clientIp: req.ip,
+        scenario,
+        responseSource: 'overlay-write',
+        requestHeaders: sanitizeHeaders(req.headers as Record<string, unknown>),
+        requestBody: parsedBody ? maskSecretsInText(JSON.stringify(parsedBody)).slice(0, 8_000) : null,
+        responseHeaders: {},
+        // Состояние песочницы, а не то, что восстановит движок по каталогу, —
+        // тело записи держим так же, как ответ приложения Bitrix24 выше.
+        responseBody: payload.slice(0, 8_000),
+      })
+      return reply.code(overlayAnswer.status).type(profile.native.contentType).send(payload)
+    }
+  }
+
   const result = engine.handle({
     service,
     httpMethod: req.method,
@@ -326,15 +364,27 @@ async function handle(
     : Math.min(sandbox.latencyMs, result.latencyMs)
   await sleep(delay)
 
+  // Наложение overlay на чтение: карточка, цена или фото, которые сохранила
+  // запись выше (в этом или в одном из прошлых вызовов), обязаны быть видны
+  // в списке — иначе «Применить» выглядело бы принятым, а на самом деле
+  // ничего не менявшим. Для песочницы без единой правки merge ничего не
+  // находит и тело остаётся тем, что отдал движок, — второй сериализации нет.
+  const overlaidBody =
+    (service === 'wildberries' || service === 'ozon') && result.responseSource !== 'error'
+      && (await applyOverlayToRead(service, path, sandbox.id, result.body))
+      ? JSON.stringify(result.body)
+      : null
+
   // Движок уже отдал готовую строку — второй JSON.stringify под нагрузкой лишний.
   // У Битрикс24 к ней добавляется живой конверт time: портал прикладывает его
   // к КАЖДОМУ ответу, и клиентские библиотеки (тот же bitrix24-php-sdk) разбирают
   // его как обязательное поле. Без него интеграция, работавшая в бою, падала бы
   // на разборе ответа мока — ровно то, чего быть не должно.
   const payload =
-    service === 'bitrix24' && result.responseSource !== 'error'
+    overlaidBody ??
+    (service === 'bitrix24' && result.responseSource !== 'error'
       ? withLiveTime(result.serialized, startedMs)
-      : result.serialized
+      : result.serialized)
   const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000
 
   enqueueRequestLog({
