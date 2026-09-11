@@ -396,6 +396,71 @@ describe('мок mcp.apify.com', () => {
     expect(mats.some((i) => ids.has(i.productId))).toBe(false)
   })
 
+  it('startUrls и productIds адресуют конкретного конкурента, а не случайный товар', async () => {
+    // Живая жалоба: «startUrls игнорируются — мок возвращает случайные товары
+    // вместо запрошенных». Ссылка называет конкретный артикул конкурента —
+    // ответ обязан назвать его же, а не что попало из каталога песочницы.
+    const byUrl = await rpc('/apify/mcp', 'tools/call', {
+      name: 'call-actor',
+      arguments: {
+        actor: 'memo23/wildberries-scraper',
+        input: { startUrls: [{ url: 'https://www.wildberries.ru/catalog/1210207492/detail.aspx' }] },
+      },
+    })
+    const urlStructured = (byUrl.frame as { result: { structuredContent: Run } }).result.structuredContent
+    const urlItems = await datasetItems(urlStructured.storages.datasets.default.id)
+    expect(urlItems).toHaveLength(1)
+    expect(Number(urlItems[0]!.productId)).toBe(1210207492)
+    expect(String(urlItems[0]!.url)).toContain('1210207492')
+
+    // Несколько ссылок сразу — по строке на каждую, в том же порядке.
+    const byIds = await rpc('/apify/mcp', 'tools/call', {
+      name: 'call-actor',
+      arguments: { actor: 'memo23/wildberries-scraper', input: { productIds: [1210207492, 905990512] } },
+    })
+    const idsStructured = (byIds.frame as { result: { structuredContent: Run } }).result.structuredContent
+    const idsItems = await datasetItems(idsStructured.storages.datasets.default.id)
+    expect(idsItems.map((i) => Number(i.productId))).toEqual([1210207492, 905990512])
+  })
+
+  it('фото, характеристики и описание не повторяются от строки к строке', async () => {
+    // Живая жалоба: «ровно 1 фото, 2 характеристики, описание ~97 знаков» —
+    // у автора в readme одна карточка с одним фото, и она копировалась в
+    // каждую строку выдачи. Разброс — то, по чему вообще есть смысл считать
+    // медиану.
+    const run = await rpc('/apify/mcp', 'tools/call', {
+      name: 'call-actor',
+      arguments: { actor: 'memo23/wildberries-scraper', input: { queries: ['ноутбук'], maxItems: 8 } },
+    })
+    const structured = (run.frame as { result: { structuredContent: Run } }).result.structuredContent
+    const items = await datasetItems(structured.storages.datasets.default.id)
+    expect(items).toHaveLength(8)
+
+    const photoCounts = new Set(items.map((i) => (i.imageUrls as unknown[]).length))
+    const specCounts = new Set(items.map((i) => (i.characteristics as unknown[]).length))
+    const descLengths = new Set(items.map((i) => String(i.description).length))
+    expect(photoCounts.size).toBeGreaterThan(1)
+    expect(specCounts.size).toBeGreaterThan(1)
+    expect(descLengths.size).toBeGreaterThan(1)
+  })
+
+  it('видео у конкурентов встречается, а не отсутствует поголовно', async () => {
+    // Живая жалоба: «поля видео в выдаче конкурентов нет вовсе, хотя у своих
+    // карточек стенда video есть». У актора оно показано отдельным куском
+    // readme — примером, который раньше терялся при выборе формы строки.
+    const run = await rpc('/apify/mcp', 'tools/call', {
+      name: 'call-actor',
+      arguments: { actor: 'zen-studio/ozon-scraper-pro', input: { queries: ['ноутбук'], maxResults: 12 } },
+    })
+    const structured = (run.frame as { result: { structuredContent: Run } }).result.structuredContent
+    const items = await datasetItems(structured.storages.datasets.default.id)
+    expect(items.length).toBeGreaterThan(0)
+    expect(items[0]).toHaveProperty('descriptionVideos')
+    const withVideo = items.filter((i) => (i.descriptionVideos as unknown[]).length > 0)
+    expect(withVideo.length).toBeGreaterThan(0)
+    expect(withVideo.length).toBeLessThan(items.length)
+  })
+
   it('нетоварному актору каталог не подмешивается', async () => {
     // У instagram-scraper строка выдачи — пост, а не карточка товара: подставить
     // туда цену и артикул значило бы испортить пример автора без выигрыша.

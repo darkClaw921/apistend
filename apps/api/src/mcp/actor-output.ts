@@ -1,6 +1,6 @@
 import { Deterministic } from '@apistend/mock-engine'
 import type { ActorSnapshotEntry } from './apify-actors.ts'
-import { applyOffer, looksLikeProductRow, selectMarket } from './catalog-overlay.ts'
+import { applyOffer, looksLikeProductRow, mergeProductExamples, selectMarket } from './catalog-overlay.ts'
 
 /**
  * Результат запуска актора — по его собственному описанию выхода.
@@ -166,12 +166,15 @@ export function sampleFromActorOutput(
   const count = requestedCount(input)
   const fields = (actor.datasetFields as { fields?: JsonSchema } | null)?.fields
 
-  // Форма строки: сгенерированная по схеме либо показанная автором в readme.
-  // Из примеров берётся товарный — у скраперов маркетплейсов в readme рядом
-  // с карточкой товара лежат ещё отзыв и продавец, а спросили про товары.
+  // Форма строки: сгенерированная по схеме либо сшитая из примеров readme.
+  // Раньше отсюда брался ОДИН пример — тот, что первым проходил проверку
+  // «это карточка товара», — и поля, показанные автором в ДРУГОМ примере
+  // (то же видео отдельным куском), терялись целиком. Слияние читает все
+  // примеры сразу и уважает дискриминант, если он есть, — подробности в
+  // mergeProductExamples.
   const shape = fields?.properties
     ? buildObject('', fields, new Deterministic(`${seed}|0`), 0)
-    : (actor.outputExamples ?? []).find(looksLikeProductRow) ?? null
+    : mergeProductExamples(actor.outputExamples ?? [])
 
   if (shape && looksLikeProductRow(shape)) {
     const selection = selectMarket(input, count, seed)

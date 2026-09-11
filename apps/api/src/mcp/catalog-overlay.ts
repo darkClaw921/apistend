@@ -1,5 +1,5 @@
 import {
-  Deterministic, competitorMarket, productPool, type Competitor, type Product,
+  Deterministic, competitorMarket, competitorsFor, productPool, type Competitor, type Product,
 } from '@apistend/mock-engine'
 
 /**
@@ -32,29 +32,122 @@ import {
 const SALT = 'medium'
 
 /** Поля входа, в которых акторы держат поисковую фразу. */
-const QUERY_FIELDS = [
-  'queries', 'query', 'search', 'searchQueries', 'keywords', 'keyword',
-  'searchTerms', 'terms', 'productNames',
-]
+const QUERY_FIELDS = new Set([
+  'queries', 'query', 'search', 'searchqueries', 'keywords', 'keyword',
+  'searchterms', 'terms', 'productnames',
+])
+
+/**
+ * Поля входа, в которых акторы держат прямой адрес конкурента: артикул или
+ * ссылку на его карточку — а не поисковую фразу.
+ *
+ * `startUrls` у скраперов маркетплейсов почти всегда `requestListSources`:
+ * массив `{ url }`, а не голых строк, поэтому строки внутри разбираются обеими
+ * формами. Раньше эти поля не читались вовсе, и запрос «собери вот эти ссылки
+ * конкурентов» отрабатывал как «страница каталога без фильтра» — выдавал
+ * произвольные товары песочницы вместо адресованных.
+ */
+const URL_FIELDS = new Set(['starturls', 'urls', 'directurls', 'producturls', 'links', 'urllist', 'requesturls'])
+const ID_FIELDS = new Set(['productids', 'productid', 'nmids', 'nmid', 'skus', 'sku', 'articuls', 'articul'])
+
+/**
+ * Значения полей входа по нормализованному имени ключа.
+ *
+ * Имена полей у акторов пишутся то `startUrls`, то `start_urls`, то
+ * `START_URLS` — то же расхождение написаний, что и у окна дат с адресацией
+ * карточки. Сравнивать с нормализованным множеством имён и не глядеть на
+ * то, как именно автор расставил регистр и подчёркивания.
+ */
+function byNormalizedKey(input: Record<string, unknown>, names: ReadonlySet<string>): unknown[] {
+  const found: unknown[] = []
+  for (const [key, value] of Object.entries(input)) {
+    if (names.has(normalize(key))) found.push(value)
+  }
+  return found
+}
 
 /**
  * Слова запроса.
  *
  * Короткие слова отбрасываются: «в», «на», «для» есть в половине названий
- * каталога и превращают ранжирование в шум.
+ * каталога и превращают ранжирование в шум. Ссылка без цифрового артикула
+ * (категория, поиск) тоже даёт слова: сегменты её пути читаются так же, как
+ * текст поисковой фразы, — `/catalog/smartfony-i-telefony` находит рынок
+ * смартфонов не хуже, чем строка `queries: ["смартфоны"]`.
  */
 function queryTerms(input: Record<string, unknown>): string[] {
   const raw: string[] = []
-  for (const field of QUERY_FIELDS) {
-    const value = input[field]
+  for (const value of byNormalizedKey(input, QUERY_FIELDS)) {
     if (typeof value === 'string') raw.push(value)
     else if (Array.isArray(value)) raw.push(...value.filter((v): v is string => typeof v === 'string'))
+  }
+  for (const value of byNormalizedKey(input, URL_FIELDS)) {
+    if (!Array.isArray(value)) continue
+    for (const entry of value) {
+      const url = requestUrl(entry)
+      // Ссылка на конкретный товар обрабатывается адресно (см. directIds) —
+      // её слова в поиск не идут, чтобы не размывать точный запрос.
+      if (url && !/\d{6,}/.test(url)) raw.push(url.replace(/^https?:\/\/[^/]+/i, ''))
+    }
   }
   return raw
     .join(' ')
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter((word) => word.length >= 3)
+}
+
+/** Ссылка из строки или из `{ url }` — `requestListSources` держит именно вторую форму. */
+function requestUrl(entry: unknown): string | null {
+  if (typeof entry === 'string') return entry
+  if (entry !== null && typeof entry === 'object') {
+    const url = (entry as Record<string, unknown>).url
+    if (typeof url === 'string') return url
+  }
+  return null
+}
+
+/**
+ * Конкретные конкуренты, которых назвал клиент: по артикулу или по ссылке
+ * на карточку. Возвращается пусто, если адрес не назван, — тогда в дело идёт
+ * поиск по фразе.
+ */
+function directIds(input: Record<string, unknown>): number[] {
+  const ids = new Set<number>()
+  for (const value of byNormalizedKey(input, ID_FIELDS)) {
+    const values = Array.isArray(value) ? value : value !== undefined ? [value] : []
+    for (const raw of values) {
+      const n = typeof raw === 'number' ? raw : Number(String(raw).trim())
+      if (Number.isFinite(n) && n > 0) ids.add(Math.trunc(n))
+    }
+  }
+  for (const value of byNormalizedKey(input, URL_FIELDS)) {
+    if (!Array.isArray(value)) continue
+    for (const entry of value) {
+      const url = requestUrl(entry)
+      const match = url?.match(/\d{6,}/)
+      if (match) ids.add(Number(match[0]))
+    }
+  }
+  return [...ids]
+}
+
+/**
+ * Конкурент под конкретный запрошенный адрес.
+ *
+ * Артикул из ссылки клиента чужой каталогу песочницы — своего товара под ним
+ * нет. Поэтому карточка строится вокруг СЛУЧАЙНОГО (но детерминированного по
+ * этому же id) товара каталога — цена и категория остаются согласованными —
+ * а идентификатор и адрес в ответе остаются ТЕМИ, что назвал клиент: он
+ * запросил конкретную ссылку и обязан узнать её в ответе, а не получить
+ * карточку с чужим артикулом вместо своей.
+ */
+function competitorForId(id: number, pool: readonly Product[], seed: string): Competitor {
+  const det = new Deterministic(`direct|${seed}`)
+  const base = pool[det.int(`base|${id}`, 0, pool.length - 1)]!
+  const variants = competitorsFor(base, SALT)
+  const picked = variants[det.int(`variant|${id}`, 0, variants.length - 1)]!
+  return { ...picked, nmId: id }
 }
 
 /**
@@ -94,6 +187,16 @@ export function selectMarket(
   count: number,
   seed: string,
 ): MarketSelection {
+  // Клиент назвал конкретных конкурентов — артикулом или ссылкой. Это не
+  // поиск, а адрес: каждый запрошенный id должен получить СВОЮ строку в ответе,
+  // а не потеряться среди случайно подобранных по фразе.
+  const ids = directIds(input)
+  if (ids.length > 0) {
+    const pool = productPool(SALT)
+    const offers = ids.map((id) => competitorForId(id, pool, seed))
+    return { offers: offers.slice(0, count), matched: true }
+  }
+
   const terms = queryTerms(input)
   const det = new Deterministic(`catalog|${seed}`)
   const scored = productPool(SALT).map((product) => ({
@@ -147,7 +250,18 @@ const FIELD_VALUE: Record<string, (c: Competitor) => unknown> = {
   productname: (c) => c.title,
   producttitle: (c) => c.title,
   fulltitle: (c) => c.title,
-  description: (c) => `${c.title}. ${c.subjectName}, категория «${c.category}». Предложение продавца ${c.sellerName}.`,
+  description: (c) => {
+    // Длина не фиксирована: она зависит от числа характеристик и остатка
+    // конкретного предложения — тех же полей, что и в остальной выдаче.
+    // Одинаковая длина у всех строк была тем самым дефектом, из-за которого
+    // медиана по описаниям ничего не показывала.
+    const base = `${c.title}. ${c.subjectName}, категория «${c.category}». Предложение продавца ${c.sellerName}.`
+    const specs = c.characteristics
+      .map((s) => `${s.name.toLowerCase()}: ${s.value}`)
+      .join(', ')
+    const stockLine = c.stock > 0 ? ` В наличии ${c.stock} шт.` : ' Товара нет в наличии.'
+    return specs.length > 0 ? `${base} Характеристики: ${specs}.${stockLine}` : `${base}${stockLine}`
+  },
   brand: (c) => c.brand,
   brandname: (c) => c.brand,
   trademark: (c) => c.brand,
@@ -197,6 +311,7 @@ const FIELD_VALUE: Record<string, (c: Competitor) => unknown> = {
   totalquantity: (c) => c.stock,
   instock: (c) => c.stock > 0,
   available: (c) => c.stock > 0,
+  isavailable: (c) => c.stock > 0,
   // Продавец. Ради него скрапер и запускают: конкурент — это не строка прайса,
   // а компания, у которой есть имя, реквизиты и репутация.
   suppliername: (c) => c.sellerName,
@@ -221,12 +336,179 @@ const FIELD_VALUE: Record<string, (c: Competitor) => unknown> = {
   ogrnip: (c) => c.ogrn,
 }
 
+/**
+ * Поля-коллекции: фото, видео, характеристики, история цены.
+ *
+ * У `FIELD_VALUE` builder получает только конкурента — правильно для плоского
+ * значения, но не для массива: сколько фото и что внутри каждого зависит ещё
+ * и от того, как автор actor'а показал поле в своём примере (строкой, объектом
+ * с { url, type, width, height }, вложенным `{ items: [...] }`). Здесь builder
+ * получает ещё и `sample` — форму, которую показал автор, — и подгоняет под
+ * неё СВОЁ содержимое, а не структуру примера под своё.
+ *
+ * Без этого разбора поле оставалось нетронутым (ветка `out[key] = sample` в
+ * applyOffer) — отсюда и жалоба «ровно одно фото, две характеристики у всех»:
+ * автор показал в readme одну карточку с одним фото, и она же копировалась
+ * в каждую строку выдачи.
+ */
+const SHAPE_FIELD_VALUE: Record<string, (c: Competitor, sample: unknown) => unknown> = {
+  images: (c, sample) => shapeList(sample, c.images),
+  image: (c, sample) => shapeList(sample, c.images),
+  imageurls: (c, sample) => shapeList(sample, c.images),
+  imageurl: (c) => c.images[0] ?? null,
+  photos: (c, sample) => shapeList(sample, c.images),
+  photo: (c, sample) => shapeList(sample, c.images),
+  gallery: (c, sample) => shapeList(sample, c.images),
+  media: (c, sample) => shapeList(sample, c.images),
+  picturelinks: (c, sample) => shapeList(sample, c.images),
+  pictures: (c, sample) => shapeList(sample, c.images),
+  descriptionimages: (c, sample) => shapeList(sample, c.images),
+  descriptionimagelinks: (c, sample) => shapeList(sample, c.images),
+  coverimageurl: (c) => c.images[0] ?? null,
+  mainimage: (c) => c.images[0] ?? null,
+
+  video: (c, sample) => shapeVideo(sample, c.video),
+  videos: (c, sample) => shapeVideo(sample, c.video),
+  productvideo: (c, sample) => shapeVideo(sample, c.video),
+  videourl: (c) => c.video?.url ?? null,
+  mediavideo: (c, sample) => shapeVideo(sample, c.video),
+  descriptionvideos: (c, sample) => shapeVideo(sample, c.video),
+
+  characteristics: (c, sample) => shapeCharacteristics(sample, c.characteristics),
+  shortcharacteristics: (c, sample) => shapeCharacteristics(sample, c.characteristics),
+  attributes: (c, sample) => shapeCharacteristics(sample, c.characteristics),
+  specs: (c, sample) => shapeCharacteristics(sample, c.characteristics),
+  specifications: (c, sample) => shapeCharacteristics(sample, c.characteristics),
+  params: (c, sample) => shapeCharacteristics(sample, c.characteristics),
+  characteristicscount: (c) => c.characteristics.length,
+
+  pricehistory: (c, sample) => (Array.isArray(sample) ? c.priceHistory : sample),
+}
+
+/** Список строк или объектов — форму объекта задаёт первый элемент примера. */
+function shapeList(sample: unknown, values: readonly string[]): unknown {
+  if (!Array.isArray(sample)) return values[0] ?? null
+  const template = sample[0]
+  if (template !== null && typeof template === 'object') {
+    // Пример — массив объектов вроде { url, alt }: url заменяем, остальное
+    // (тип, размеры) оставляем таким, каким его показал автор.
+    return values.map((url) => ({ ...(template as Record<string, unknown>), url }))
+  }
+  return values
+}
+
+/** Видео: форма произвольная — массив объектов, объект или голая ссылка. */
+function shapeVideo(
+  sample: unknown,
+  video: Competitor['video'],
+): unknown {
+  if (Array.isArray(sample)) {
+    if (!video) return []
+    const template = sample[0]
+    return [template !== null && typeof template === 'object' ? { ...(template as object), ...video } : video.url]
+  }
+  if (sample !== null && typeof sample === 'object') {
+    return video ? { ...(sample as object), ...video } : null
+  }
+  return video?.url ?? null
+}
+
+/** Характеристики: пары `{ name, value }` — именами полей автора, значениями своими. */
+function shapeCharacteristics(
+  sample: unknown,
+  pairs: Competitor['characteristics'],
+): unknown {
+  if (!Array.isArray(sample)) return pairs.length
+  const template = (sample[0] ?? { name: 'name', value: 'value' }) as Record<string, unknown>
+  const [nameKey, valueKey] = Object.keys(template)
+  if (!nameKey || !valueKey) return pairs
+  return pairs.map((pair) => ({ [nameKey]: pair.name, [valueKey]: pair.value }))
+}
+
+/**
+ * Поля, которые сами по себе значат «это карточка товара»: цена, скидка,
+ * артикул, рейтинг с числом отзывов, продавец. У профиля в соцсети, поста
+ * или точки на карте таких не бывает вместе.
+ *
+ * Остальные распознанные поля — `name`, `category`, `images`, `video` —
+ * весят меньше: они встречаются и у совсем других сущностей (имя есть у
+ * профиля, фото — у поста), и набора из одних них достаточно, чтобы
+ * инстаграм-пост с полем `images` и профиль с полем `fullName` в одной
+ * закорючке датасета накопили порог «это товар» на пустом месте.
+ */
+const STRONG_KEYS = new Set([
+  'price', 'pricebasic', 'basicprice', 'oldprice', 'listprice', 'priceoriginal', 'originalprice',
+  'pricesale', 'saleprice', 'finalprice', 'currentprice', 'discountedprice', 'pricewithdiscount',
+  'discount', 'discountpercent', 'discountpercentage',
+  'productid', 'nmid', 'nm', 'sku', 'article', 'articul',
+  'rating', 'ratingvalue', 'reviewrating', 'averagerating',
+  'reviewscount', 'reviewcount', 'feedbacks', 'feedbackcount',
+  'suppliername', 'sellername', 'seller', 'shopname', 'merchantname',
+  'supplierid', 'sellerid', 'shopid', 'merchantid',
+  'supplierrating', 'sellerrating', 'shoprating',
+  'inn', 'taxid', 'ogrn', 'ogrnip',
+])
+
+/** Сколько полей строки распознаются как товарные — мера того, насколько это карточка. */
+function knownFieldCount(row: Record<string, unknown>): number {
+  return Object.keys(row).filter(
+    (key) => FIELD_VALUE[normalize(key)] !== undefined || SHAPE_FIELD_VALUE[normalize(key)] !== undefined,
+  ).length
+}
+
 /** Поля, которые распознаются как товарные, — по ним и решается, накладывать ли каталог. */
 export function looksLikeProductRow(row: Record<string, unknown>): boolean {
-  const known = Object.keys(row).filter((key) => FIELD_VALUE[normalize(key)] !== undefined)
-  // Одного совпадения мало: поле `name` есть и у профиля в соцсети. Цена или
-  // артикул рядом с названием — уже карточка товара.
-  return known.length >= 3
+  const strong = Object.keys(row).filter((key) => STRONG_KEYS.has(normalize(key))).length
+  // Слабых совпадений мало, даже трёх: поле `name` есть и у профиля в
+  // соцсети. Хотя бы два сильных признака — цена, артикул, рейтинг с
+  // отзывами, продавец — надёжно отличают карточку товара от чего угодно.
+  return strong >= 2 && knownFieldCount(row) >= 3
+}
+
+/** Название поля, которым автор помечает разные сущности одного датасета. */
+const DISCRIMINANT_KEYS = new Set(['rowtype', 'type', 'kind', 'recordtype', 'entitytype', 'resulttype'])
+
+/**
+ * Сшивает примеры автора в одну форму карточки товара.
+ *
+ * Readme показывает не всегда одну карточку целиком, а несколько кусков —
+ * «вот блок с видео», «вот статус недоступного товара», «вот сама карточка
+ * со всеми полями». Взять только лучший из них значит потерять поля, которых
+ * в НЁМ не было: ровно так пропадало поле видео, показанное отдельным
+ * примером, — оно есть у актора, просто не в том куске, что выбрал .find().
+ *
+ * Смешивать можно не всегда. Если у датасета несколько РАЗНЫХ сущностей —
+ * товар, отзыв, продавец, — это обычно видно по полю-дискриминанту вроде
+ * `rowType`, и оно стоит хотя бы у ОДНОГО примера набора: у профиля Instagram
+ * дискриминанта нет, но он есть у постов того же актора, и этого достаточно,
+ * чтобы понять — примеры описывают разные сущности, а не разные грани одной.
+ * Тогда сшивать нельзя вовсе: слияние поста и профиля тремя-четырьмя общими
+ * словами вроде `name`/`fullName` набрало бы порог «это карточка товара» на
+ * пустом месте — ровно так `apify/instagram-scraper` чуть не обзавёлся ценой.
+ * Годится это правило лишь при полном отсутствии дискриминанта у ВСЕХ
+ * примеров сразу: тогда куски readme — грани одного и того же объекта.
+ */
+export function mergeProductExamples(
+  examples: readonly Record<string, unknown>[],
+): Record<string, unknown> | null {
+  if (examples.length === 0) return null
+  const scored = examples
+    .map((row) => ({ row, score: knownFieldCount(row) }))
+    .sort((a, b) => b.score - a.score)
+  const anchor = scored[0]!
+  if (anchor.score === 0) return null
+
+  const heterogeneous = examples.some((row) =>
+    Object.keys(row).some((key) => DISCRIMINANT_KEYS.has(normalize(key))))
+  if (heterogeneous) return anchor.row
+
+  const merged: Record<string, unknown> = { ...anchor.row }
+  for (const { row } of scored.slice(1)) {
+    for (const [key, value] of Object.entries(row)) {
+      if (!(key in merged)) merged[key] = value
+    }
+  }
+  return merged
 }
 
 /**
@@ -284,7 +566,13 @@ export function applyOffer(
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, sample] of Object.entries(row)) {
-    const build = FIELD_VALUE[normalize(key)]
+    const norm = normalize(key)
+    const shapeBuild = SHAPE_FIELD_VALUE[norm]
+    if (shapeBuild) {
+      out[key] = shapeBuild(offer, sample)
+      continue
+    }
+    const build = FIELD_VALUE[norm]
     if (build) {
       out[key] = coerce(build(offer), sample)
       continue
