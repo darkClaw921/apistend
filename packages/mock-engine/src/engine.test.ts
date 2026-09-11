@@ -941,6 +941,102 @@ describe('у каждой карточки есть все зависимые д
   })
 })
 
+describe('рейтинг и отзывы кабинета продавца — по всем товарам, а не фикстурой', () => {
+  const now = new Date()
+  const day = (offset: number) => new Date(now.getTime() - offset * 86_400_000).toISOString().slice(0, 10)
+  const wb = (path: string, httpMethod: string, query: Record<string, string> = {}, body: unknown = null) =>
+    JSON.parse(engine.handle({
+      service: 'wildberries', httpMethod, path, query, headers: {}, body,
+      requestId: 'r', scenario: 'success', now, salt: 'medium',
+    }).serialized) as any
+
+  const itemRating = (body: unknown) =>
+    wb('/api/analytics/v2/item-rating', 'POST', {}, body).data as {
+      sellerRating: { current: number }
+      feedbackIncrease: { total: number }
+      items: Array<Record<string, any>>
+    }
+
+  it('отдаёт оценку по КАЖДОМУ товару каталога, а не одну и ту же карточку', () => {
+    const pool = productPool('medium')
+    const data = itemRating({
+      currentPeriod: { start: day(30), end: day(0) },
+      orderBy: { field: 'feedbackCount', mode: 'desc' },
+      limit: pool.length, offset: 0,
+    })
+    expect(data.items).toHaveLength(pool.length)
+    const seen = new Set(data.items.map((i) => Number(i.nmId)))
+    // Раньше карточка в отчёте была фикстурой из документации — один и тот же
+    // артикул на любой запрос. Теперь каждый товар каталога назван своим именем.
+    expect(pool.every((p) => seen.has(p.nmId))).toBe(true)
+
+    // Рейтинг и число отзывов не могут быть одним и тем же числом у всех —
+    // ровно так выглядела фикстура, из-за которой вердикт по рейтингу
+    // невозможно было проверить.
+    const ratings = new Set(data.items.map((i) => i.feedbackRating.current))
+    const counts = new Set(data.items.map((i) => i.feedbackCount.current))
+    expect(ratings.size).toBeGreaterThan(5)
+    expect(counts.size).toBeGreaterThan(5)
+  })
+
+  it('вопрос про конкретную карточку получает её собственную оценку', () => {
+    const pool = productPool('medium')
+    const a = pool[10]!
+    const b = pool[200]!
+    const data = itemRating({
+      currentPeriod: { start: day(30), end: day(0) },
+      orderBy: { field: 'feedbackCount', mode: 'desc' },
+      nmIds: [a.nmId, b.nmId],
+      limit: 100,
+      offset: 0,
+    })
+    expect(data.items.map((i) => Number(i.nmId)).sort()).toEqual([a.nmId, b.nmId].sort())
+  })
+
+  it('звёзды складываются в число отзывов периода, а не расходятся', () => {
+    const pool = productPool('medium')
+    const data = itemRating({
+      currentPeriod: { start: day(30), end: day(0) },
+      orderBy: { field: 'feedbackCount', mode: 'desc' },
+      limit: pool.length,
+      offset: 0,
+    })
+    for (const item of data.items) {
+      const stars = item.fiveStar.current + item.fourStar.current + item.threeStar.current
+        + item.twoStar.current + item.oneStar.current
+      // Округление каждой звезды отдельно от общего счёта иногда даёт разницу
+      // в единицу — но не в порядки, как было бы у пяти независимых фикстур.
+      expect(Math.abs(stars - item.feedbackCount.current)).toBeLessThanOrEqual(1)
+    }
+  })
+
+  it('рейтинг продавца сходится между отчётом об оценках и отдельным методом', () => {
+    const data = itemRating({
+      currentPeriod: { start: day(30), end: day(0) },
+      orderBy: { field: 'feedbackCount', mode: 'desc' },
+      limit: 1,
+      offset: 0,
+    })
+    const rating = wb('/api/common/v1/rating', 'GET') as { feedbackCount: number; valuation: number }
+    // Два метода про один и тот же аккаунт обязаны сойтись — как воронка
+    // сходится с выгрузкой заказов по одному и тому же товару.
+    expect(rating.valuation).toBe(data.sellerRating.current)
+    expect(rating.feedbackCount).toBe(data.feedbackIncrease.total)
+    expect(rating.feedbackCount).toBeGreaterThan(0)
+  })
+
+  it('ответ детерминирован: тот же запрос — те же оценки', () => {
+    const body = {
+      currentPeriod: { start: day(30), end: day(0) },
+      orderBy: { field: 'feedbackCount', mode: 'desc' },
+      nmIds: [productPool('medium')[3]!.nmId],
+      limit: 10,
+      offset: 0,
+    }
+    expect(itemRating(body)).toEqual(itemRating(body))
+  })
+})
+
 
 describe('страница не обрезает ответ молча', () => {
   const wb = (path: string, httpMethod: string, query: Record<string, string> = {}, body: unknown = null) =>

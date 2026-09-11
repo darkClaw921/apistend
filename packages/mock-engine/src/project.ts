@@ -1,8 +1,8 @@
 import type { FillContext } from './sampler.ts'
 import { byFieldName, isIdentityField, pageSize } from './sampler.ts'
 import {
-  hasProductKey, looksLikeEvent, looksLikeProduct, looksLikeSeriesPoint, looksLikeSubjectRecord,
-  productField, subjectsOf, type Product,
+  accountReviewSummary, hasProductKey, looksLikeEvent, looksLikeProduct, looksLikeSeriesPoint,
+  looksLikeSubjectRecord, productField, reviewBreakdown, subjectsOf, type Product,
 } from './dataset.ts'
 import { dayStats, daysOf, statsInWindow, type OrderEvent } from './timeline.ts'
 import { advertDayStats, advertTotals, type AdvertCampaign } from './adverts.ts'
@@ -191,6 +191,30 @@ function walk(
     }
 
     const own = product ?? (hasProductKey(node) ? anchor : null)
+    // Ключи в путях приходят в родном регистре документации (`feedbackRating`,
+    // `sellerRating`) — сравнивать их нужно приведёнными, как и остальные
+    // разборы по имени поля (см. `boosterStats` ниже).
+    const key = lastKey(path).toLowerCase()
+
+    // Оценки товара: разбивка по звёздам внутри карточки. До этой ветки
+    // рейтинг и число отзывов были одной и той же цифрой из документации на
+    // любой артикул — кабинет продавца искал их своим товаром и не находил
+    // ни в одном методе реестра.
+    if (own && FEEDBACK_ITEM_KEYS.has(key)) {
+      return feedbackItemObject(node as Record<string, unknown>, key, own, ctx)
+    }
+    // Прирост оценок целиком по аккаунту — сумма по всему каталогу продавца,
+    // а не по одной карточке: у этого объекта нет своего товара.
+    if (own === null && key === 'feedbackincrease') {
+      return feedbackIncreaseObject(node as Record<string, unknown>, ctx)
+    }
+    // Рейтинг продавца — двумя формами сразу: объект `{current, dynamics}`
+    // внутри отчёта об оценках и плоская пара `{feedbackCount, valuation}`
+    // у отдельного метода «получить рейтинг продавца».
+    if (own === null && (key === 'sellerrating' || looksLikeSellerRatingPair(node as Record<string, unknown>))) {
+      return sellerRatingObject(node as Record<string, unknown>, ctx)
+    }
+
     // Площадку читаем из самой записи и передаём детям: по ней считается доля
     // дня, и без неё сумма по площадкам разошлась бы с днём.
     const appType = (node as Record<string, unknown>).appType ?? (node as Record<string, unknown>).app_type
@@ -269,7 +293,10 @@ function fixCounters(
 
   for (const [k, v] of Object.entries(out)) {
     if (typeof v === 'number' && COUNTER_KEYS.has(k.toLowerCase())) out[k] = expanded
-    if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+    // «Прирост оценок» уже посчитан своей веткой (feedbackIncreaseObject) —
+    // его собственное поле `total` значит «отзывов за всё время», а не
+    // «страниц в списке», и совпадение имени с пагинацией здесь случайно.
+    if (v !== null && typeof v === 'object' && !Array.isArray(v) && k.toLowerCase() !== 'feedbackincrease') {
       const nested = v as Record<string, unknown>
       for (const [nk, nv] of Object.entries(nested)) {
         if (typeof nv === 'number' && COUNTER_KEYS.has(nk.toLowerCase())) nested[nk] = expanded
@@ -318,6 +345,134 @@ interface EventContext {
 function endOfDay(date: Date): Date {
   const midnight = date.getUTCHours() === 0 && date.getUTCMinutes() === 0
   return midnight ? new Date(date.getTime() + 86_399_999) : date
+}
+
+/**
+ * Оценки товара: рейтинг и отзывы по всему каталогу.
+ *
+ * Отчёт об оценках товара («кабинет продавца») — единственное место в трёх
+ * API, где рейтинг и число отзывов по СВОЕЙ карточке вообще можно спросить:
+ * ни каталог, ни воронка их не отдают. Раньше строка отчёта разворачивалась
+ * по каталогу (артикул, название, предмет — обычные поля товара), но сама
+ * оценка внутри неё оставалась фикстурой из документации: одно и то же число
+ * на любой артикул. Разбивка по звёздам берётся из reviewBreakdown() —
+ * там же, где посчитан рейтинг из отзывов, а не рядом случайной величиной.
+ */
+const FEEDBACK_ITEM_KEYS = new Set(['feedbackrating', 'feedbackcount', 'fivestar', 'fourstar', 'threestar', 'twostar', 'onestar'])
+
+/** Сколько отзывов из времени жизни товара пришлось на запрошенный период. */
+function reviewPeriodFraction(ctx: FillContext): number {
+  const days = Math.max(1, Math.round((endOfDay(ctx.window.to).getTime() - ctx.window.from.getTime()) / 86_400_000))
+  // 365 суток — верхняя граница периода у самого метода («не ранее 364 суток
+  // от вчерашнего дня»): она и берётся за «всё время», из которого период —
+  // пропорциональный кусок.
+  return Math.min(1, days / 365)
+}
+
+/** Число нужного «уровня звёзд» из разбивки — по нормализованному имени поля-родителя. */
+function starCountOf(b: ReturnType<typeof reviewBreakdown>, key: string): number {
+  switch (key) {
+    case 'fivestar': return b.fiveStar
+    case 'fourstar': return b.fourStar
+    case 'threestar': return b.threeStar
+    case 'twostar': return b.twoStar
+    case 'onestar': return b.oneStar
+    default: return b.total
+  }
+}
+
+/**
+ * `feedbackRating`/`feedbackCount`/пятизвёздочные-однозвёздочные объекты
+ * внутри карточки товара. Форма — та, что показал пример документации:
+ * обходятся её собственные ключи, известные имена (`current`, `dynamics`,
+ * `percentile`) заполняются из разбивки, остальное остаётся как было.
+ */
+function feedbackItemObject(
+  node: Record<string, unknown>,
+  key: string,
+  product: Product,
+  ctx: FillContext,
+): Record<string, unknown> {
+  const b = reviewBreakdown(product)
+  const isRating = key === 'feedbackrating'
+  const periodCount = isRating ? 0 : Math.round(starCountOf(b, key) * reviewPeriodFraction(ctx))
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(node)) {
+    const nk = k.toLowerCase()
+    const asString = typeof v === 'string'
+    if (isRating && nk === 'current') { out[k] = asString ? String(b.rating) : b.rating; continue }
+    if (isRating && nk === 'percentile') { out[k] = asString ? String(b.percentile) : b.percentile; continue }
+    if (!isRating && nk === 'current') { out[k] = asString ? String(periodCount) : periodCount; continue }
+    if (nk === 'dynamics') { out[k] = asString ? String(b.dynamicsPercent) : b.dynamicsPercent; continue }
+    out[k] = v
+  }
+  return out
+}
+
+/**
+ * `feedbackIncrease` — прирост оценок целиком по аккаунту продавца: сумма
+ * разбивок всех товаров каталога, а не одной карточки.
+ */
+function feedbackIncreaseObject(node: Record<string, unknown>, ctx: FillContext): Record<string, unknown> {
+  const summary = accountReviewSummary(ctx.pool)
+  const fraction = reviewPeriodFraction(ctx)
+  const tierTotals: Record<string, number> = {
+    fivestar: summary.fiveStar,
+    fourstar: summary.fourStar,
+    threestar: summary.threeStar,
+    twostar: summary.twoStar,
+    onestar: summary.oneStar,
+  }
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(node)) {
+    const nk = k.toLowerCase()
+    const tierTotal = tierTotals[nk]
+    if (tierTotal !== undefined && v !== null && typeof v === 'object' && !Array.isArray(v)) {
+      const tierOut: Record<string, unknown> = {}
+      for (const [tk, tv] of Object.entries(v as Record<string, unknown>)) {
+        const tnk = tk.toLowerCase()
+        const asString = typeof tv === 'string'
+        if (tnk === 'total') { tierOut[tk] = asString ? String(tierTotal) : tierTotal; continue }
+        if (tnk === 'current') {
+          const cur = Math.round(tierTotal * fraction)
+          tierOut[tk] = asString ? String(cur) : cur
+          continue
+        }
+        tierOut[tk] = tv
+      }
+      out[k] = tierOut
+      continue
+    }
+    const asString = typeof v === 'string'
+    if (nk === 'total') { out[k] = asString ? String(summary.totalReviews) : summary.totalReviews; continue }
+    if (nk === 'current') {
+      const cur = Math.round(summary.totalReviews * fraction)
+      out[k] = asString ? String(cur) : cur
+      continue
+    }
+    out[k] = v
+  }
+  return out
+}
+
+/** Плоская пара `{feedbackCount, valuation}` — метод «получить рейтинг продавца». */
+function looksLikeSellerRatingPair(node: Record<string, unknown>): boolean {
+  const keys = new Set(Object.keys(node).map((k) => k.toLowerCase()))
+  return keys.has('feedbackcount') && keys.has('valuation')
+}
+
+/** Рейтинг продавца: `{current, dynamics}` внутри отчёта или плоская пара отдельным методом. */
+function sellerRatingObject(node: Record<string, unknown>, ctx: FillContext): Record<string, unknown> {
+  const summary = accountReviewSummary(ctx.pool)
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(node)) {
+    const nk = k.toLowerCase()
+    const asString = typeof v === 'string'
+    if (nk === 'current' || nk === 'valuation') { out[k] = asString ? String(summary.rating) : summary.rating; continue }
+    if (nk === 'feedbackcount') { out[k] = asString ? String(summary.totalReviews) : summary.totalReviews; continue }
+    out[k] = v
+  }
+  return out
 }
 
 /**

@@ -63,6 +63,8 @@ export interface Product {
   /** Скидка постоянного покупателя, проценты. */
   spp: number
   rating: number
+  /** Отзывов за всё время. Из него выводится разбивка по звёздам — см. reviewBreakdown(). */
+  reviewsCount: number
   /** Остаток на складах WB. */
   stock: number
   /** Остаток на складе продавца (FBS). */
@@ -126,6 +128,9 @@ function buildProduct(det: Deterministic, i: number): Product {
   const cartCount = Math.round((openCount * det.int(k('cartRate'), 3, 18)) / 100)
   const orderCount = Math.round((cartCount * det.int(k('orderRate'), 20, 70)) / 100)
   const buyoutCount = Math.round((orderCount * det.int(k('buyoutRate'), 55, 95)) / 100)
+  // Отзыв оставляет не каждый покупатель — обычно 4–18 % выкупивших. Товар без
+  // единого выкупа честно остаётся без отзывов, а не получает их из ниоткуда.
+  const reviewsCount = Math.round(buyoutCount * det.float(k('reviewRate'), 0.04, 0.18, 3))
 
   return {
     // Идентификаторы разнесены по номеру товара, а случайность добавляется внутри шага.
@@ -152,6 +157,7 @@ function buildProduct(det: Deterministic, i: number): Product {
     discountedPrice,
     spp: det.int(k('spp'), 0, 25),
     rating: det.int(k('rating'), 3, 5),
+    reviewsCount,
     stock: det.int(k('stock'), 0, 240),
     sellerStock: det.int(k('sellerStock'), 0, 120),
     commissionPercent: det.int(k('commission'), 12, 25),
@@ -242,8 +248,139 @@ export function productField(name: string, p: Product, inRecord: boolean): numbe
   if (n === 'wb') return p.stock
   if (n === 'balancesum' || n === 'stocksum') return p.stock * p.discountedPrice
   if (n === 'sum' || n === 'sumrub' || n === 'advertsum') return p.advertSum
+  // Отзывы, исключённые из рейтинга модерацией, — сбоку от самой разбивки
+  // по звёздам (см. reviewBreakdown), но по имени поля это плоское число.
+  if (n === 'disqualified') return reviewBreakdown(p).disqualified
 
   return undefined
+}
+
+export interface ReviewBreakdown {
+  /** Отзывов за всё время. */
+  readonly total: number
+  /** Средний рейтинг по отзывам: взвешенное среднее звёзд, а не отдельная величина. */
+  readonly rating: number
+  /** Сколько товаров того же предмета у других продавцов имеют рейтинг ниже, %. */
+  readonly percentile: number
+  /** Небольшое колебание «к прошлому периоду» — своё у каждого товара, не общее число. */
+  readonly dynamicsPercent: number
+  readonly fiveStar: number
+  readonly fourStar: number
+  readonly threeStar: number
+  readonly twoStar: number
+  readonly oneStar: number
+  /** Отзывы, исключённые из рейтинга модерацией (накрутка, не по товару). */
+  readonly disqualified: number
+}
+
+/**
+ * Разбивка отзывов товара по звёздам и рейтинг из них — для отчёта об оценках
+ * товара («кабинет продавца») и родственных методов.
+ *
+ * Рейтинг ЗДЕСЬ — взвешенное среднее самих звёзд, а не отдельная случайная
+ * величина: иначе кабинет показывал бы 4.6 при том, что три звезды набрали
+ * девять голосов из десяти, и первая же проверка арифметики нашла бы разрыв.
+ * Доля пятёрок растёт вместе с рейтинговым «уровнем» товара (`p.rating`,
+ * 3..5) линейно от «средний магазин» до «почти без нареканий» — у здоровых
+ * продавцов, которых и моделирует эта песочница, средний счёт ложится
+ * в коридор 4.2–5.0, а не мечется между «отлично» и «единица».
+ */
+export function reviewBreakdown(p: Product): ReviewBreakdown {
+  const total = p.reviewsCount
+  // Уровень 3..5 -> доля пятизвёздочных 55..98 %, остаток размазан по
+  // четырём-единице в фиксированной пропорции 50/25/15/10.
+  const q = 55 + (p.rating - 3) * 21.5
+  const p5 = q / 100
+  const rest = 1 - p5
+  const [fiveStar, fourStar, threeStar, twoStar, oneStar] = largestRemainder(
+    total,
+    [p5, rest * 0.5, rest * 0.25, rest * 0.15, rest * 0.1],
+  ) as [number, number, number, number, number]
+  const rating = total === 0
+    // Без единого отзыва рейтинг — это оценка карточки, а не отзывов: тот же
+    // «уровень» товара, переложенный на пятибалльную шкалу.
+    ? Number((q / 20).toFixed(1))
+    : Number(((5 * fiveStar + 4 * fourStar + 3 * threeStar + 2 * twoStar + oneStar) / total).toFixed(2))
+  const det = new Deterministic(`review|${p.nmId}`)
+  return {
+    total,
+    rating,
+    percentile: Math.round(Math.min(99, Math.max(1, q))),
+    dynamicsPercent: det.float('dynamics', -12, 12, 1),
+    fiveStar,
+    fourStar,
+    threeStar,
+    twoStar,
+    oneStar,
+    // Немного отзывов не считаются в рейтинге — модерация их не пропустила.
+    disqualified: Math.round(total * 0.03),
+  }
+}
+
+/**
+ * Целые доли суммы `total`, сходящиеся ровно в неё: округление вниз плюс
+ * добавка избытка тем долям, у которых остаток от округления был больше всего.
+ * Без этого пять округлённых чисел почти никогда не давали бы в сумме ровно
+ * количество отзывов, которое сами же и объясняют.
+ */
+function largestRemainder(total: number, weights: readonly number[]): number[] {
+  if (total === 0) return weights.map(() => 0)
+  const raw = weights.map((w) => w * total)
+  const floors = raw.map(Math.floor)
+  let remainder = total - floors.reduce((a, b) => a + b, 0)
+  const order = raw
+    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .sort((a, b) => b.frac - a.frac)
+  const out = [...floors]
+  for (let idx = 0; idx < order.length && remainder > 0; idx++, remainder--) {
+    out[order[idx]!.i]! += 1
+  }
+  return out
+}
+
+export interface AccountReviewSummary {
+  /** Отзывов за всё время по всему каталогу продавца. */
+  readonly totalReviews: number
+  /** Рейтинг продавца — среднее по отзывам, взвешенное их числом у каждого товара. */
+  readonly rating: number
+  readonly fiveStar: number
+  readonly fourStar: number
+  readonly threeStar: number
+  readonly twoStar: number
+  readonly oneStar: number
+}
+
+/**
+ * Свод отзывов по всему каталогу — для «рейтинга продавца» и «прироста
+ * оценок» целиком по аккаунту, а не по одной карточке.
+ */
+export function accountReviewSummary(pool: readonly Product[]): AccountReviewSummary {
+  let totalReviews = 0
+  let weighted = 0
+  let fiveStar = 0
+  let fourStar = 0
+  let threeStar = 0
+  let twoStar = 0
+  let oneStar = 0
+  for (const p of pool) {
+    const b = reviewBreakdown(p)
+    totalReviews += b.total
+    weighted += b.rating * b.total
+    fiveStar += b.fiveStar
+    fourStar += b.fourStar
+    threeStar += b.threeStar
+    twoStar += b.twoStar
+    oneStar += b.oneStar
+  }
+  return {
+    totalReviews,
+    rating: totalReviews === 0 ? 5 : Number((weighted / totalReviews).toFixed(2)),
+    fiveStar,
+    fourStar,
+    threeStar,
+    twoStar,
+    oneStar,
+  }
 }
 
 /** Поля, которые описывают товар. Используется, чтобы узнать товарный список в примере. */
