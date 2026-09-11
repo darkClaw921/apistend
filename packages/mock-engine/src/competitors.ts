@@ -63,6 +63,18 @@ const TITLE_SUFFIX = [
   'улучшенный', 'compact', 'classic', 'плюс',
 ] as const
 
+/** Названия характеристик — общие для любого предмета, значения привязаны к товару. */
+const SPEC_NAMES = [
+  'Материал', 'Страна производства', 'Гарантия', 'Комплектация', 'Вес, г',
+  'Сезон', 'Упаковка', 'Артикул производителя', 'Тип товара', 'Бренд',
+] as const
+
+const MATERIALS = ['пластик', 'хлопок', 'металл', 'дерево', 'полиэстер', 'керамика'] as const
+const COUNTRIES = ['Россия', 'Китай', 'Турция', 'Беларусь', 'Вьетнам'] as const
+const WARRANTIES = ['6 месяцев', '12 месяцев', '24 месяца', 'без гарантии'] as const
+const SEASONS = ['всесезонный', 'лето', 'зима', 'демисезон'] as const
+const PACKAGING = ['коробка', 'пакет', 'блистер', 'подарочная упаковка'] as const
+
 export interface Competitor {
   /** Артикул конкурента. Из чужого диапазона: это не карточка продавца. */
   readonly nmId: number
@@ -84,6 +96,21 @@ export interface Competitor {
   readonly inn: string
   readonly ogrn: string
   readonly sellerRating: number
+  /**
+   * Фотографии предложения. Число варьируется от карточки к карточке — иначе
+   * «ровно одно фото у всех» превращает выборку в один и тот же снимок.
+   */
+  readonly images: readonly string[]
+  /**
+   * Видео карточки. Не у всех предложений оно есть — часть продавцов видео
+   * не снимает, и на боевом рынке так и есть; но у части оно ЕСТЬ, а не
+   * отсутствует поголовно, как было бы, останься поле совсем без значения.
+   */
+  readonly video: { readonly url: string; readonly type: string; readonly width: number; readonly height: number } | null
+  /** Характеристики предложения: набор «имя-значение», разного размера у разных карточек. */
+  readonly characteristics: ReadonlyArray<{ readonly name: string; readonly value: string }>
+  /** Короткая история цены: несколько точек за последние недели. */
+  readonly priceHistory: ReadonlyArray<{ readonly date: string; readonly price: number }>
   /** Товар каталога, вокруг которого построено предложение. */
   readonly reference: Product
 }
@@ -139,9 +166,58 @@ function build(product: Product, det: Deterministic, i: number): Competitor {
   // Название — тот же предмет, другой акцент: по нему клиент и сопоставляет
   // чужое предложение со своей карточкой.
   const title = `${product.subjectName} ${shop.name} ${suffix}`
+  const nmId = COMPETITOR_NM_BASE + det.int(`nm|${k}`, 0, 89_999_999)
+
+  // Фото: от двух до шести на предложение — иначе у любой выборки в один
+  // снимок, и медиана по числу фото ничего не показывает.
+  const imageCount = det.int(`imageCount|${k}`, 2, 6)
+  const images = Array.from(
+    { length: imageCount },
+    (_, idx) => `https://cdn.apistend.sandbox/media/${sellerId}/${nmId}/${idx + 1}.webp`,
+  )
+
+  // Видео есть не у всех предложений — как и в бою, часть продавцов его не
+  // снимает, — но у трети оно есть, а не отсутствует у всех подряд.
+  const hasVideo = det.bool(`hasVideo|${k}`, 0.35)
+  const video = hasVideo
+    ? {
+        url: `https://cdn.apistend.sandbox/media/${sellerId}/${nmId}/video.mp4`,
+        type: 'video/mp4',
+        width: 1280,
+        height: det.pick(`videoOrientation|${k}`, [720, 1600] as const),
+      }
+    : null
+
+  // Характеристики: от двух до шести пар, часть — общие для любого предмета
+  // (материал, страна, гарантия), часть — сам предмет и бренд конкурента.
+  const specCount = det.int(`specCount|${k}`, 2, 6)
+  const specPool: ReadonlyArray<{ name: string; value: string }> = [
+    { name: 'Бренд', value: shop.name },
+    { name: 'Тип товара', value: product.subjectName },
+    { name: 'Материал', value: MATERIALS[det.int(`material|${k}`, 0, MATERIALS.length - 1)]! },
+    { name: 'Страна производства', value: COUNTRIES[det.int(`country|${k}`, 0, COUNTRIES.length - 1)]! },
+    { name: 'Гарантия', value: WARRANTIES[det.int(`warranty|${k}`, 0, WARRANTIES.length - 1)]! },
+    { name: 'Вес, г', value: String(det.int(`weight|${k}`, 80, 8_000)) },
+    { name: 'Сезон', value: SEASONS[det.int(`season|${k}`, 0, SEASONS.length - 1)]! },
+    { name: 'Упаковка', value: PACKAGING[det.int(`packaging|${k}`, 0, PACKAGING.length - 1)]! },
+    { name: 'Артикул производителя', value: `${sellerId}-${nmId % 1000}` },
+    { name: SPEC_NAMES[det.int(`extraSpec|${k}`, 0, SPEC_NAMES.length - 1)]!, value: product.category },
+  ]
+  const characteristics = specPool.slice(0, specCount)
+
+  // История цены: две-пять точек за последние недели, идущих к нынешней цене.
+  const historyLength = det.int(`historyLength|${k}`, 2, 5)
+  const priceHistory = Array.from({ length: historyLength }, (_, idx) => {
+    const daysAgo = (historyLength - idx) * det.int(`historyGap|${k}|${idx}`, 5, 14)
+    const drift = det.float(`historyDrift|${k}|${idx}`, 0.85, 1.2)
+    return {
+      date: new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10),
+      price: Math.max(100, Math.round((price * drift) / 10) * 10),
+    }
+  })
 
   return {
-    nmId: COMPETITOR_NM_BASE + det.int(`nm|${k}`, 0, 89_999_999),
+    nmId,
     title,
     brand: shop.name,
     subjectName: product.subjectName,
@@ -162,6 +238,10 @@ function build(product: Product, det: Deterministic, i: number): Competitor {
     inn: isSoleTrader ? innIndividual(det, k) : innCompany(det, k),
     ogrn: isSoleTrader ? ogrnIp(det, k) : ogrnCompany(det, k),
     sellerRating: Number((det.int(`sellerRating|${k}`, 35, 50) / 10).toFixed(1)),
+    images,
+    video,
+    characteristics,
+    priceHistory,
     reference: product,
   }
 }
