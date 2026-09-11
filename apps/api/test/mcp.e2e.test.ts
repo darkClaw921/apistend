@@ -461,6 +461,29 @@ describe('мок mcp.apify.com', () => {
     expect(withVideo.length).toBeLessThan(items.length)
   })
 
+  it('описание и характеристики есть, хотя ни один пример readme их не показывал', async () => {
+    // Живая жалоба: при skipDetails:false в выдаче нет ни описания, ни
+    // характеристик — автор объявляет их колонками своего датасета
+    // (Apify Dataset views), просто ни один сохранённый кусок readme не
+    // показал их значением.
+    const run = await rpc('/apify/mcp', 'tools/call', {
+      name: 'call-actor',
+      arguments: {
+        actor: 'zen-studio/ozon-scraper-pro',
+        input: { queries: ['термокружка'], maxResults: 10, skipDetails: false },
+      },
+    })
+    const structured = (run.frame as { result: { structuredContent: Run } }).result.structuredContent
+    const items = await datasetItems(structured.storages.datasets.default.id)
+    expect(items.length).toBe(10)
+    for (const item of items) {
+      expect(String(item.description).length).toBeGreaterThan(0)
+      expect((item.characteristics as unknown[]).length).toBeGreaterThan(0)
+    }
+    // Разброс, а не одна и та же строка на все десять карточек.
+    expect(new Set(items.map((i) => i.description)).size).toBeGreaterThan(1)
+  })
+
   it('нетоварному актору каталог не подмешивается', async () => {
     // У instagram-scraper строка выдачи — пост, а не карточка товара: подставить
     // туда цену и артикул значило бы испортить пример автора без выигрыша.

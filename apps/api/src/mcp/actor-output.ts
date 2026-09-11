@@ -1,6 +1,8 @@
 import { Deterministic } from '@apistend/mock-engine'
 import type { ActorSnapshotEntry } from './apify-actors.ts'
-import { applyOffer, looksLikeProductRow, mergeProductExamples, selectMarket } from './catalog-overlay.ts'
+import {
+  applyOffer, enrichWithDeclaredColumns, looksLikeProductRow, mergeProductExamples, selectMarket,
+} from './catalog-overlay.ts'
 
 /**
  * Результат запуска актора — по его собственному описанию выхода.
@@ -117,6 +119,29 @@ function requestedCount(input: Record<string, unknown>): number {
   return DEFAULT_ITEMS
 }
 
+/**
+ * Колонки, которые автор объявил в представлении датасета (Apify «Dataset
+ * views» — `views.<name>.transformation.fields`), — список ИМЁН без образцов
+ * значений.
+ *
+ * Это отдельный от readme источник, и он не заменяет его: readme показывает
+ * содержимое, а views — только то, что колонка вообще существует. Вместе они
+ * закрывают случай, когда автор описал форму строки полнее, чем показал
+ * примером, — `zen-studio/ozon-scraper-pro` объявляет так `description` и
+ * `characteristics`, которых нет ни в одном из трёх кусков его readme.
+ */
+function declaredViewColumns(actor: ActorSnapshotEntry): readonly string[] {
+  const views = (actor.datasetFields as { views?: Record<string, unknown> } | null)?.views
+  if (!views || typeof views !== 'object') return []
+  const names = new Set<string>()
+  for (const view of Object.values(views)) {
+    const fields = (view as { transformation?: { fields?: unknown } } | null)?.transformation?.fields
+    if (!Array.isArray(fields)) continue
+    for (const field of fields) if (typeof field === 'string') names.add(field)
+  }
+  return [...names]
+}
+
 /** Откуда взята форма выхода актора. Уходит в ответ инструмента: агенту важно, чему верить. */
 export type ActorOutputSource = 'dataset-schema' | 'readme-examples' | 'none'
 
@@ -172,9 +197,14 @@ export function sampleFromActorOutput(
   // (то же видео отдельным куском), терялись целиком. Слияние читает все
   // примеры сразу и уважает дискриминант, если он есть, — подробности в
   // mergeProductExamples.
+  const merged = fields?.properties ? null : mergeProductExamples(actor.outputExamples ?? [])
+  // Автор мог объявить колонку в представлении датасета, не показав её
+  // значением ни в одном куске readme, — например, description и
+  // characteristics у zen-studio/ozon-scraper-pro. Схема датасета уже
+  // формальна и полна сама по себе, дополнять здесь нечем.
   const shape = fields?.properties
     ? buildObject('', fields, new Deterministic(`${seed}|0`), 0)
-    : mergeProductExamples(actor.outputExamples ?? [])
+    : merged && enrichWithDeclaredColumns(merged, declaredViewColumns(actor))
 
   if (shape && looksLikeProductRow(shape)) {
     const selection = selectMarket(input, count, seed)

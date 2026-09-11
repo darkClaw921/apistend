@@ -512,6 +512,53 @@ export function mergeProductExamples(
 }
 
 /**
+ * Заготовки для полей, которых нет ни в одном примере readme, но мы знаем,
+ * чем их заполнить, — описание и характеристики уже строятся для карточки
+ * конкурента (см. FIELD_VALUE/SHAPE_FIELD_VALUE выше), не хватало только
+ * самого поля в форме строки.
+ *
+ * Значение здесь — не содержимое, а ЗАГОТОВКА нужного типа для applyOffer:
+ * пустая строка для скалярного поля, пустой массив для поля-коллекции.
+ * Настоящее содержимое подставит уже он, по имени поля.
+ */
+const ENRICHABLE_TEMPLATES: Record<string, unknown> = {
+  description: '',
+  characteristics: [],
+  shortcharacteristics: [],
+}
+
+/**
+ * Добавляет в форму строки поля, которые АВТОР ЖЕ объявил как колонки своего
+ * датасета (Apify «Dataset views» — `datasetFields.views.*.transformation.fields`),
+ * но не показал примером ни в одном куске readme.
+ *
+ * Это не то же самое, что выдумать поле: имя колонки — слова самого автора,
+ * а не наши. Разница с readme только в том, что там нет образца ЗНАЧЕНИЯ —
+ * и разрыв заполняется одним из полей, для которых у песочницы есть готовое
+ * содержимое (`ENRICHABLE_TEMPLATES`), а не произвольно. Ровно так актор
+ * `zen-studio/ozon-scraper-pro` объявляет `description`/`characteristics`
+ * колонками своего вывода, но ни один сохранённый пример их не показывает —
+ * без этой сшивки строка выдачи оставалась без описания и характеристик
+ * даже там, где сам актор ими не скупится.
+ */
+export function enrichWithDeclaredColumns(
+  shape: Record<string, unknown>,
+  declaredColumns: readonly string[],
+): Record<string, unknown> {
+  const present = new Set(Object.keys(shape).map(normalize))
+  const out = { ...shape }
+  for (const name of declaredColumns) {
+    const key = normalize(name)
+    if (present.has(key)) continue
+    const template = ENRICHABLE_TEMPLATES[key]
+    if (template === undefined) continue
+    out[name] = template
+    present.add(key)
+  }
+  return out
+}
+
+/**
  * Ссылка на карточку: адрес из примера автора, но на товар песочницы.
  *
  * Домен и форма пути — авторские, они говорят, какую площадку актор скрапит.
