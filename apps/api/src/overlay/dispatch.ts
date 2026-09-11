@@ -1,6 +1,7 @@
 import type { Sandbox } from '@prisma/client'
 import type { ServiceCode } from '@apistend/shared'
-import { handleCardsUpdate, applyWbCardOverlay } from './wb-content.ts'
+import { productPool } from '@apistend/mock-engine'
+import { handleCardsUpdate, handleCharacteristicsDirectory, applyWbCardOverlay } from './wb-content.ts'
 import { handlePriceUpload, handleTaskHistory, applyWbPriceOverlay } from './wb-prices.ts'
 import { handleMediaSave, handleMediaFile } from './wb-media.ts'
 import { handleAttributesUpdate, handleImportInfo, applyOzonAttributesOverlay } from './ozon-content.ts'
@@ -8,13 +9,20 @@ import { handlePriceImport, applyOzonPriceInfoOverlay, applyOzonPriceListOverlay
 import { handlePicturesImport, applyOzonImagesOverlay } from './ozon-pictures.ts'
 
 /**
- * Точка входа для операций записи «Применить» в разборе карточки (название,
- * описание, характеристики, цена, фото) и их аналогов на Ozon.
+ * Точка входа для операций, которые общая проекция каталога не умеет:
+ * запись «Применить» в разборе карточки (название, описание, характеристики,
+ * цена, фото) и их аналоги на Ozon, а ещё один особый случай чтения —
+ * справочник характеристик предмета (см. ниже).
  *
  * Устроено как `respondAsApp` для локальных приложений Bitrix24 в gateway.ts:
- * запись отвечает сама, минуя движок моков вовсе, — движок работает с общим
- * для всех песочниц каталогом на чтение, а состояние правок песочницы лежит
- * в overlay (см. store.ts) и не имеет отношения к тому, что генерирует движок.
+ * ответ строится сам, минуя движок моков вовсе. Для записи это потому, что
+ * состояние правок песочницы лежит в overlay (см. store.ts) и не имеет
+ * отношения к тому, что генерирует движок. Для справочника характеристик —
+ * потому, что общая проекция каталога путает его с товарным списком: запись
+ * `{subjectID, subjectName, name}` похожа на запись справочника по предметам
+ * (комиссии, тарифы), и движок разворачивал бы её по ОДНОЙ НА КАЖДЫЙ предмет
+ * каталога сразу, вперемешку, игнорируя запрошенный `{subjectId}` из пути, —
+ * а `name` получал бы значение «название товара», а не «название характеристики».
  */
 
 export interface OverlayResult {
@@ -26,6 +34,8 @@ function firstValue(v: unknown): string | undefined {
   if (Array.isArray(v)) return typeof v[0] === 'string' ? v[0] : undefined
   return typeof v === 'string' ? v : undefined
 }
+
+const CHARCS_PATH = /^\/content\/v2\/object\/charcs\/(\d+)$/
 
 export async function interceptOverlayWrite(
   service: ServiceCode,
@@ -44,6 +54,12 @@ export async function interceptOverlayWrite(
     }
     if (httpMethod === 'POST' && path === '/content/v3/media/save') return handleMediaSave(sandbox, body)
     if (httpMethod === 'POST' && path === '/content/v3/media/file') return handleMediaFile(sandbox, headers)
+    if (httpMethod === 'GET') {
+      const subjectMatch = CHARCS_PATH.exec(path)
+      if (subjectMatch) {
+        return handleCharacteristicsDirectory(Number(subjectMatch[1]), productPool(sandbox.dataVolume))
+      }
+    }
     return null
   }
   if (service === 'ozon') {

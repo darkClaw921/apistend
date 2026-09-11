@@ -71,6 +71,52 @@ export const WB_CHARACTERISTICS: ReadonlyArray<{
 
 const CHARACTERISTIC_BY_ID = new Map(WB_CHARACTERISTICS.map((c) => [c.id, c]))
 
+/** Единица измерения — только там, где характеристика числовая (`charcType: 4`). */
+const CHARACTERISTIC_UNIT: Partial<Record<number, string>> = { 14208987: 'г' }
+
+/**
+ * Обрабатывает `GET /content/v2/object/charcs/{subjectId}`.
+ *
+ * Раньше этот путь уходил в общую проекцию каталога: запись отчёта похожа
+ * на справочник по предмету (`subjectID`/`subjectName`), и движок разворачивал
+ * её по одной строке на КАЖДЫЙ предмет каталога сразу — вперемешку, без
+ * фильтра по запрошенному `{subjectId}`, а `name` заполнялся названием
+ * товара вместо названия характеристики (то же самое общее имя поля, которое
+ * у карточки значит «название товара», у характеристики значит другое).
+ * Здесь то же не подходит: справочник конкретного предмета — не то же самое,
+ * что список товаров, у него другая семантика самого имени поля.
+ *
+ * Отвечает ровно тем набором характеристик, которые понимает
+ * `content/v2/cards/update` (WB_CHARACTERISTICS), — иначе продавец получил бы
+ * из справочника характеристику, которую при сохранении карточки отклонили
+ * бы как неизвестную.
+ */
+export function handleCharacteristicsDirectory(subjectId: number, pool: readonly Product[]): WbEnvelope {
+  const subject = pool.find((p) => p.subjectId === subjectId)
+  if (!subject) {
+    // Такого предмета в каталоге продавца нет — пустой справочник, а не чужие
+    // характеристики: подставить сюда данные другого предмета значило бы
+    // соврать про то, что именно этот subjectId умеет.
+    return { status: 200, body: { data: [], error: false, errorText: '', additionalErrors: null } }
+  }
+  const data = WB_CHARACTERISTICS.map((c) => ({
+    charcID: c.id,
+    subjectName: subject.subjectName,
+    subjectID: subjectId,
+    name: c.name,
+    required: false,
+    unitName: CHARACTERISTIC_UNIT[c.id] ?? '',
+    maxCount: c.maxCount,
+    // Ровно те же две, что чаще всего встречаются в примерах документации.
+    popular: c.id === 14177449 || c.id === 14177450,
+    charcType: c.type,
+    hasFilter: true,
+    isVariable: c.type === 1,
+    existNamedField: false,
+  }))
+  return { status: 200, body: { data, error: false, errorText: '', additionalErrors: null } }
+}
+
 interface CardInput {
   readonly nmID?: unknown
   readonly vendorCode?: unknown
