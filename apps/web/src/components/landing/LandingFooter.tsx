@@ -156,6 +156,20 @@ export function LandingFooter() {
             и используются исключительно для указания совместимости.
           </p>
         </div>
+
+        {/* Авторство площадки — отдельной строкой под правовой отбивкой, той же
+            приглушённой стилистикой, что и копирайт над ней. */}
+        <p className="text-center text-[12px] text-code-muted">
+          Сделано командой{' '}
+          <a
+            href="https://alteran.tech"
+            target="_blank"
+            rel="noreferrer"
+            className="text-code-muted underline underline-offset-[3px] transition-colors hover:text-white"
+          >
+            alteran.tech
+          </a>
+        </p>
       </div>
     </footer>
   )
